@@ -1,7 +1,10 @@
 package org.nodriver4j.core;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -33,10 +36,32 @@ public class Browser {
 
     /**
      * Closes the browser and terminates the process.
+     * Also deletes the temporary user data directory.
      */
     public void close() {
         if (process.isAlive()) {
             process.destroy();
+        }
+        deleteUserDataDir();
+    }
+
+    private void deleteUserDataDir() {
+        Path userDataDir = config.getUserDataDir();
+        if (userDataDir == null || !Files.exists(userDataDir)) {
+            return;
+        }
+        try {
+            Files.walk(userDataDir)
+                    .sorted(Comparator.reverseOrder())
+                    .forEach(path -> {
+                        try {
+                            Files.delete(path);
+                        } catch (IOException e) {
+                            System.err.println("Failed to delete: " + path);
+                        }
+                    });
+        } catch (IOException e) {
+            System.err.println("Failed to delete user data directory: " + userDataDir);
         }
     }
 
@@ -57,7 +82,7 @@ public class Browser {
         List<String> args = new ArrayList<>();
         args.add(config.getExecutablePath());
         args.add("--remote-debugging-port=" + config.getPort());
-        //args.add("--disable-blink-features=AutomationControlled");
+        args.add("--user-data-dir=" + config.getUserDataDir().toAbsolutePath());
         args.add("--no-first-run");
         args.add("--no-default-browser-check");
         args.add("--homepage=google.com");
