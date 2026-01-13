@@ -8,7 +8,7 @@ import java.io.IOException;
 public class App {
 
     public static void main(String[] args) {
-        String executablePath = "C:\\Users\\leofo\\Documents\\NoDriver4j\\src\\main\\resources\\chrome\\chrome-win64\\chrome.exe"; // <-- Update this
+        String executablePath = System.getenv("chromepath");
 
         BrowserConfig config = BrowserConfig.builder()
                 .executablePath(executablePath)
