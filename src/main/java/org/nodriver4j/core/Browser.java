@@ -1,5 +1,8 @@
 package org.nodriver4j.core;
 
+import org.nodriver4j.cdp.CDPClient;
+import org.nodriver4j.cdp.ProfileWarmer;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -12,12 +15,17 @@ import java.util.List;
  */
 public class Browser {
 
+    private static final int CDP_CONNECTION_RETRY_DELAY_MS = 500;
+    private static final int CDP_CONNECTION_MAX_RETRIES = 20;
+
     private final BrowserConfig config;
     private final Process process;
+    private final CDPClient cdpClient;
 
-    private Browser(BrowserConfig config, Process process) {
+    private Browser(BrowserConfig config, Process process, CDPClient cdpClient) {
         this.config = config;
         this.process = process;
+        this.cdpClient = cdpClient;
     }
 
     /**
@@ -31,7 +39,44 @@ public class Browser {
         List<String> arguments = buildArguments(config);
         ProcessBuilder processBuilder = new ProcessBuilder(arguments);
         Process process = processBuilder.start();
-        return new Browser(config, process);
+
+        // Connect to CDP with retries (Chrome needs time to start)
+        CDPClient cdpClient = connectWithRetry(config.getPort());
+
+        Browser browser = new Browser(config, process, cdpClient);
+
+        // Warm profile if enabled
+        if (config.isWarmProfile()) {
+            System.out.println("[Browser] Profile warming enabled, starting...");
+            ProfileWarmer warmer = new ProfileWarmer(cdpClient);
+            ProfileWarmer.WarmingResult result = warmer.warm();
+            if (result.hasWarnings()) {
+                System.err.println("[Browser] Profile warming completed with " + result.getWarnings().size() + " warnings");
+            } else {
+                System.out.println("[Browser] Profile warming completed successfully");
+            }
+        }
+
+        return browser;
+    }
+
+    private static CDPClient connectWithRetry(int port) throws IOException {
+        for (int i = 0; i < CDP_CONNECTION_MAX_RETRIES; i++) {
+            try {
+                return CDPClient.connect(port);
+            } catch (Exception e) {
+                if (i == CDP_CONNECTION_MAX_RETRIES - 1) {
+                    throw new IOException("Failed to connect to CDP after " + CDP_CONNECTION_MAX_RETRIES + " retries", e);
+                }
+                try {
+                    Thread.sleep(CDP_CONNECTION_RETRY_DELAY_MS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("Interrupted while waiting to retry CDP connection", ie);
+                }
+            }
+        }
+        throw new IOException("Failed to connect to CDP");
     }
 
     /**
@@ -39,10 +84,24 @@ public class Browser {
      * Also deletes the temporary user data directory.
      */
     public void close() {
+        // Close CDP connection first
+        if (cdpClient != null) {
+            cdpClient.close();
+        }
+
         if (process.isAlive()) {
             process.destroy();
         }
         deleteUserDataDir();
+    }
+
+    /**
+     * Gets the CDP client for direct protocol access.
+     *
+     * @return the CDPClient instance
+     */
+    public CDPClient getCdpClient() {
+        return cdpClient;
     }
 
     private void deleteUserDataDir() {
@@ -104,4 +163,5 @@ public class Browser {
 
         return args;
     }
+
 }

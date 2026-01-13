@@ -14,12 +14,14 @@ public class BrowserConfig {
     private final int port;
     private final boolean headless;
     private final Path userDataDir;
+    private final boolean warmProfile;
 
     private BrowserConfig(Builder builder) {
         this.executablePath = builder.executablePath;
         this.port = builder.port;
         this.headless = builder.headless;
         this.userDataDir = builder.userDataDir;
+        this.warmProfile = builder.warmProfile;
     }
 
     public String getExecutablePath() {
@@ -38,6 +40,10 @@ public class BrowserConfig {
         return userDataDir;
     }
 
+    public boolean isWarmProfile() {
+        return warmProfile;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -54,6 +60,7 @@ public class BrowserConfig {
         private int port = DEFAULT_PORT;
         private boolean headless = false;
         private Path userDataDir;
+        private boolean warmProfile = false;
 
         private Builder() {}
 
@@ -72,6 +79,11 @@ public class BrowserConfig {
             return this;
         }
 
+        public Builder warmProfile(boolean warmProfile) {
+            this.warmProfile = warmProfile;
+            return this;
+        }
+
         public BrowserConfig build() {
             if (executablePath == null || executablePath.isBlank()) {
                 throw new IllegalStateException("executablePath is required");
@@ -80,7 +92,6 @@ public class BrowserConfig {
                 throw new IllegalStateException("port must be between 1 and 65535");
             }
             this.userDataDir = generateTempUserDataDir();
-            System.out.println(this.userDataDir);
             return new BrowserConfig(this);
         }
     }
