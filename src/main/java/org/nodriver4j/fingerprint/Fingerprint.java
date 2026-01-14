@@ -20,7 +20,7 @@ import java.util.List;
  */
 public final class Fingerprint {
 
-    private final UserAgentInfo userAgent;
+    private final PlatformInfo userAgent;
 
     // TODO: Uncomment as components are implemented
     // private final WebGLInfo webGL;
@@ -74,13 +74,13 @@ public final class Fingerprint {
     }
 
     /**
-     * Parses UserAgentInfo from the JSON data.
+     * Parses PlatformInfo from the JSON data.
      */
-    private UserAgentInfo parseUserAgentInfo(JsonObject json) {
+    private PlatformInfo parseUserAgentInfo(JsonObject json) {
         String ua = json.get("ua").getAsString();
         JsonObject clientHints = json.getAsJsonObject("clientHints");
 
-        return new UserAgentInfo(
+        return new PlatformInfo(
                 ua,
                 clientHints.get("navigatorPlatform").getAsString(),
                 parseBrandVersionList(clientHints.getAsJsonArray("brands")),
@@ -98,11 +98,11 @@ public final class Fingerprint {
     /**
      * Parses a JSON array of brand/version objects into a list.
      */
-    private List<UserAgentInfo.BrandVersion> parseBrandVersionList(JsonArray array) {
-        List<UserAgentInfo.BrandVersion> list = new ArrayList<>();
+    private List<PlatformInfo.BrandVersion> parseBrandVersionList(JsonArray array) {
+        List<PlatformInfo.BrandVersion> list = new ArrayList<>();
         for (int i = 0; i < array.size(); i++) {
             JsonObject obj = array.get(i).getAsJsonObject();
-            list.add(new UserAgentInfo.BrandVersion(
+            list.add(new PlatformInfo.BrandVersion(
                     obj.get("brand").getAsString(),
                     obj.get("version").getAsString()
             ));
@@ -113,7 +113,7 @@ public final class Fingerprint {
     /**
      * User-Agent string, navigator properties, and Client Hints metadata.
      */
-    public UserAgentInfo userAgent() {
+    public PlatformInfo userAgent() {
         return userAgent;
     }
 
