@@ -97,6 +97,7 @@ public final class UserAgentInfo {
         JsonObject metadata = new JsonObject();
         metadata.add("brands", buildBrandsArray(brands));
         metadata.add("fullVersionList", buildBrandsArray(fullVersionList));
+        metadata.addProperty("fullVersion", extractFullVersion()); // Deprecated but still checked
         metadata.addProperty("platform", chPlatform);
         metadata.addProperty("platformVersion", platformVersion);
         metadata.addProperty("architecture", architecture);
@@ -108,6 +109,25 @@ public final class UserAgentInfo {
         params.add("userAgentMetadata", metadata);
 
         cdp.send("Emulation.setUserAgentOverride", params);
+    }
+
+    /**
+     * Extracts the full Chrome version from fullVersionList.
+     * Used for the deprecated 'fullVersion' field which maps to uaFullVersion.
+     */
+    private String extractFullVersion() {
+        for (BrandVersion bv : fullVersionList) {
+            if ("Google Chrome".equals(bv.brand())) {
+                return bv.version();
+            }
+        }
+        // Fallback to Chromium if Google Chrome not found
+        for (BrandVersion bv : fullVersionList) {
+            if ("Chromium".equals(bv.brand())) {
+                return bv.version();
+            }
+        }
+        return "";
     }
 
     /**
