@@ -39,17 +39,17 @@ public class App {
             return;
         }
 
+        JsonObject json = fingerprint.getRawJson();
+
         System.out.println("==============================================");
-        System.out.println("  NoDriver4j - Platform Spoof Test");
+        System.out.println("  NoDriver4j - Hardware Fingerprint Test");
         System.out.println("==============================================");
         System.out.println();
         System.out.println("Loaded fingerprint:");
-        System.out.println("  Platform: " + fingerprint.platformInfo().platform());
-        System.out.println("  CH-Platform: " + fingerprint.platformInfo().chPlatform());
-        System.out.println("  PlatformVersion: " + fingerprint.platformInfo().platformVersion());
-        System.out.println("  Architecture: " + fingerprint.platformInfo().architecture());
-        System.out.println("  Bitness: " + fingerprint.platformInfo().bitness());
-        System.out.println("  WoW64: " + fingerprint.platformInfo().wow64());
+        System.out.println("  WebGL Vendor: " + getJsonString(json, "vendor"));
+        System.out.println("  WebGL Renderer: " + truncate(getJsonString(json, "renderer"), 60));
+        System.out.println("  Screen: " + getJsonInt(json, "width") + "x" + getJsonInt(json, "height"));
+        System.out.println("  Avail: " + getJsonInt(json, "availWidth") + "x" + getJsonInt(json, "availHeight"));
         System.out.println();
 
         BrowserConfig config = BrowserConfig.builder()
@@ -70,21 +70,18 @@ public class App {
 
             // Navigate to a test page
             System.out.println("Navigating to browser fingerprint test page...");
-            navigateAndWait(browser, "https://browserleaks.com/client-hints");
+            navigateAndWait(browser, "https://browserleaks.com/webgl");
 
             System.out.println();
             System.out.println("==============================================");
             System.out.println("  Browser is ready - verify spoofs manually");
             System.out.println("==============================================");
             System.out.println();
-            System.out.println("The page should show our spoofed platform info:");
-            System.out.println("  navigator.platform   => " + fingerprint.platformInfo().platform());
-            System.out.println("  Sec-CH-UA-Platform   => " + fingerprint.platformInfo().chPlatform());
-            System.out.println();
-            System.out.println("You can also verify in DevTools Console (F12):");
-            System.out.println("  navigator.platform");
-            System.out.println("  navigator.userAgentData.platform");
-            System.out.println("  navigator.userAgentData.getHighEntropyValues(['platformVersion', 'architecture', 'bitness'])");
+            System.out.println("Check the page for WebGL info. In DevTools Console (F12):");
+            System.out.println("  const gl = document.createElement('canvas').getContext('webgl');");
+            System.out.println("  const ext = gl.getExtension('WEBGL_debug_renderer_info');");
+            System.out.println("  gl.getParameter(ext.UNMASKED_VENDOR_WEBGL);");
+            System.out.println("  gl.getParameter(ext.UNMASKED_RENDERER_WEBGL);");
             System.out.println();
             System.out.println("Press Enter to close browser...");
             System.in.read();
@@ -148,6 +145,14 @@ public class App {
             e.printStackTrace();
             return null;
         }
+    }
+
+    private static String getJsonString(JsonObject json, String key) {
+        return json.has(key) ? json.get(key).getAsString() : "N/A";
+    }
+
+    private static int getJsonInt(JsonObject json, String key) {
+        return json.has(key) ? json.get(key).getAsInt() : 0;
     }
 
     private static String truncate(String str, int maxLen) {

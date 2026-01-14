@@ -89,12 +89,6 @@ public class Browser {
         // Enable required CDP domains
         cdpClient.send("Page.enable", null);
 
-        // Apply one-time spoofs from each component
-        if (fingerprint.platformInfo() != null) {
-            fingerprint.platformInfo().applyOnce(cdpClient);
-            System.out.println("[Browser] Platform spoof applied");
-        }
-
         // TODO: Uncomment as components are implemented
         // if (fingerprint.webGL() != null) {
         //     fingerprint.webGL().applyOnce(cdpClient);
