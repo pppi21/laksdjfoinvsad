@@ -122,7 +122,7 @@ public final class PlatformInfo {
         return List.of(
                 new BrandVersion("Google Chrome", majorVersion),
                 new BrandVersion("Chromium", majorVersion),
-                new BrandVersion("Not.A/Brand", "24")
+                new BrandVersion("Not A(Brand", "24")
         );
     }
 
@@ -134,7 +134,7 @@ public final class PlatformInfo {
         return List.of(
                 new BrandVersion("Google Chrome", fullVersion),
                 new BrandVersion("Chromium", fullVersion),
-                new BrandVersion("Not.A/Brand", "24.0.0.0")
+                new BrandVersion("Not A(Brand", "24.0.0.0")
         );
     }
 

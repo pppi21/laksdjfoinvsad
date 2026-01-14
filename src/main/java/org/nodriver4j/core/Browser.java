@@ -90,17 +90,19 @@ public class Browser {
         cdpClient.send("Page.enable", null);
 
         // Apply one-time spoofs from each component
-        if (fingerprint.userAgent() != null) {
-            fingerprint.userAgent().applyOnce(cdpClient);
-            System.out.println("[Browser] User-Agent spoof applied");
+        if (fingerprint.platformInfo() != null) {
+            fingerprint.platformInfo().applyOnce(cdpClient);
+            System.out.println("[Browser] Platform spoof applied");
         }
 
         // TODO: Uncomment as components are implemented
         // if (fingerprint.webGL() != null) {
         //     fingerprint.webGL().applyOnce(cdpClient);
+        //     System.out.println("[Browser] WebGL spoof applied");
         // }
         // if (fingerprint.screen() != null) {
         //     fingerprint.screen().applyOnce(cdpClient);
+        //     System.out.println("[Browser] Screen spoof applied");
         // }
 
         System.out.println("[Browser] Fingerprint spoofs applied successfully");

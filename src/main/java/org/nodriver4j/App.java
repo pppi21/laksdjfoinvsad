@@ -40,14 +40,16 @@ public class App {
         }
 
         System.out.println("==============================================");
-        System.out.println("  NoDriver4j - User Agent Spoof Test");
+        System.out.println("  NoDriver4j - Platform Spoof Test");
         System.out.println("==============================================");
         System.out.println();
         System.out.println("Loaded fingerprint:");
-        System.out.println("  UA: " + truncate(fingerprint.userAgent().userAgent(), 70));
-        System.out.println("  Platform: " + fingerprint.userAgent().platform());
-        System.out.println("  CH-Platform: " + fingerprint.userAgent().chPlatform());
-        System.out.println("  Brands: " + fingerprint.userAgent().brands());
+        System.out.println("  Platform: " + fingerprint.platformInfo().platform());
+        System.out.println("  CH-Platform: " + fingerprint.platformInfo().chPlatform());
+        System.out.println("  PlatformVersion: " + fingerprint.platformInfo().platformVersion());
+        System.out.println("  Architecture: " + fingerprint.platformInfo().architecture());
+        System.out.println("  Bitness: " + fingerprint.platformInfo().bitness());
+        System.out.println("  WoW64: " + fingerprint.platformInfo().wow64());
         System.out.println();
 
         BrowserConfig config = BrowserConfig.builder()
@@ -75,15 +77,14 @@ public class App {
             System.out.println("  Browser is ready - verify spoofs manually");
             System.out.println("==============================================");
             System.out.println();
-            System.out.println("The page should show our spoofed User-Agent:");
-            System.out.println("  " + truncate(fingerprint.userAgent().userAgent(), 60));
+            System.out.println("The page should show our spoofed platform info:");
+            System.out.println("  navigator.platform   => " + fingerprint.platformInfo().platform());
+            System.out.println("  Sec-CH-UA-Platform   => " + fingerprint.platformInfo().chPlatform());
             System.out.println();
             System.out.println("You can also verify in DevTools Console (F12):");
-            System.out.println("  navigator.userAgent");
-            System.out.println("  navigator.platform        // Should be: " + fingerprint.userAgent().platform());
-            System.out.println("  navigator.vendor          // Should be: Google Inc.");
-            System.out.println("  navigator.userAgentData.brands");
+            System.out.println("  navigator.platform");
             System.out.println("  navigator.userAgentData.platform");
+            System.out.println("  navigator.userAgentData.getHighEntropyValues(['platformVersion', 'architecture', 'bitness'])");
             System.out.println();
             System.out.println("Press Enter to close browser...");
             System.in.read();

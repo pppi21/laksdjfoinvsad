@@ -1,26 +1,26 @@
 package org.nodriver4j.fingerprint;
 
-import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * Immutable container for a complete browser fingerprint profile.
  *
  * A Fingerprint represents all the identifying characteristics of a browser
  * that can be used for tracking/detection. This class aggregates various
- * fingerprint components (User-Agent, WebGL, Screen, etc.) into a single
+ * fingerprint components (Platform, WebGL, Screen, etc.) into a single
  * cohesive profile that can be applied to a browser instance.
  *
  * Fingerprints are constructed from raw JSON data (typically loaded from
  * a JSONL file of pre-collected real-world fingerprints). The constructor
  * handles all parsing and sub-component creation internally.
+ *
+ * IMPORTANT: Fingerprint profiles do NOT contain Chrome-version-dependent data
+ * (ua, brands, fullVersionList). These values are queried from the actual
+ * browser at runtime to avoid detection by fingerprint scanners.
  */
 public final class Fingerprint {
 
-    private final PlatformInfo userAgent;
+    private final PlatformInfo platformInfo;
 
     // TODO: Uncomment as components are implemented
     // private final WebGLInfo webGL;
@@ -29,26 +29,22 @@ public final class Fingerprint {
     // private final CanvasInfo canvas;
     // private final PluginsInfo plugins;
     // private final FontsInfo fonts;
-    // private final HeadersInfo headers;
 
     /**
      * Creates a new Fingerprint by parsing raw JSON data.
      *
-     * Expected JSON structure (from Bablosoft API with enriched clientHints):
+     * Expected JSON structure (version-independent profile):
      * <pre>
      * {
-     *   "ua": "Mozilla/5.0 ...",
      *   "clientHints": {
-     *     "brands": [{"brand": "...", "version": "..."}],
-     *     "fullVersionList": [{"brand": "...", "version": "..."}],
      *     "platform": "Windows",
+     *     "navigatorPlatform": "Win32",
      *     "platformVersion": "10.0.0",
      *     "architecture": "x86",
      *     "bitness": "64",
      *     "mobile": false,
      *     "model": "",
-     *     "wow64": false,
-     *     "navigatorPlatform": "Win32"
+     *     "wow64": false
      *   },
      *   "vendor": "Google Inc. (NVIDIA)",
      *   "renderer": "ANGLE (...)",
@@ -61,7 +57,7 @@ public final class Fingerprint {
      * @param json the raw fingerprint JSON object
      */
     public Fingerprint(JsonObject json) {
-        this.userAgent = parseUserAgentInfo(json);
+        this.platformInfo = parsePlatformInfo(json);
 
         // TODO: Uncomment as components are implemented
         // this.webGL = parseWebGLInfo(json);
@@ -70,22 +66,21 @@ public final class Fingerprint {
         // this.canvas = parseCanvasInfo(json);
         // this.plugins = parsePluginsInfo(json);
         // this.fonts = parseFontsInfo(json);
-        // this.headers = parseHeadersInfo(json);
     }
 
     /**
      * Parses PlatformInfo from the JSON data.
+     *
+     * Extracts platform/OS-dependent fields from clientHints.
+     * Does NOT parse ua, brands, or fullVersionList as these are
+     * version-dependent and queried from the actual browser at runtime.
      */
-    private PlatformInfo parseUserAgentInfo(JsonObject json) {
-        String ua = json.get("ua").getAsString();
+    private PlatformInfo parsePlatformInfo(JsonObject json) {
         JsonObject clientHints = json.getAsJsonObject("clientHints");
 
         return new PlatformInfo(
-                ua,
-                clientHints.get("navigatorPlatform").getAsString(),
-                parseBrandVersionList(clientHints.getAsJsonArray("brands")),
-                parseBrandVersionList(clientHints.getAsJsonArray("fullVersionList")),
-                clientHints.get("platform").getAsString(),
+                clientHints.get("navigatorPlatform").getAsString(),  // navigator.platform
+                clientHints.get("platform").getAsString(),           // Client Hints platform
                 clientHints.get("platformVersion").getAsString(),
                 clientHints.get("architecture").getAsString(),
                 clientHints.get("bitness").getAsString(),
@@ -96,25 +91,13 @@ public final class Fingerprint {
     }
 
     /**
-     * Parses a JSON array of brand/version objects into a list.
+     * Platform metadata including navigator.platform and Client Hints platform info.
+     *
+     * Note: UA string and brand lists are NOT stored here. They are queried
+     * from the actual browser at runtime when applying spoofs.
      */
-    private List<PlatformInfo.BrandVersion> parseBrandVersionList(JsonArray array) {
-        List<PlatformInfo.BrandVersion> list = new ArrayList<>();
-        for (int i = 0; i < array.size(); i++) {
-            JsonObject obj = array.get(i).getAsJsonObject();
-            list.add(new PlatformInfo.BrandVersion(
-                    obj.get("brand").getAsString(),
-                    obj.get("version").getAsString()
-            ));
-        }
-        return list;
-    }
-
-    /**
-     * User-Agent string, navigator properties, and Client Hints metadata.
-     */
-    public PlatformInfo userAgent() {
-        return userAgent;
+    public PlatformInfo platformInfo() {
+        return platformInfo;
     }
 
     // TODO: Uncomment as components are implemented
@@ -124,12 +107,11 @@ public final class Fingerprint {
     // public CanvasInfo canvas() { return canvas; }
     // public PluginsInfo plugins() { return plugins; }
     // public FontsInfo fonts() { return fonts; }
-    // public HeadersInfo headers() { return headers; }
 
     @Override
     public String toString() {
         return "Fingerprint{" +
-                "userAgent=" + (userAgent != null ? userAgent.userAgent() : "null") +
+                "platformInfo=" + platformInfo +
                 '}';
     }
 }
