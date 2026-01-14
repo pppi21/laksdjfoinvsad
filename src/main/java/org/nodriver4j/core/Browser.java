@@ -2,6 +2,7 @@ package org.nodriver4j.core;
 
 import org.nodriver4j.cdp.CDPClient;
 import org.nodriver4j.cdp.ProfileWarmer;
+import org.nodriver4j.fingerprint.Fingerprint;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -9,6 +10,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Manages a Chrome browser process.
@@ -45,6 +47,16 @@ public class Browser {
 
         Browser browser = new Browser(config, process, cdpClient);
 
+        // Apply fingerprint spoofs if configured (before any navigation)
+        if (config.getFingerprint() != null) {
+            try {
+                browser.applyFingerprint();
+            } catch (TimeoutException e) {
+                browser.close();
+                throw new IOException("Timeout applying fingerprint spoofs", e);
+            }
+        }
+
         // Warm profile if enabled
         if (config.isWarmProfile()) {
             System.out.println("[Browser] Profile warming enabled, starting...");
@@ -58,6 +70,40 @@ public class Browser {
         }
 
         return browser;
+    }
+
+    /**
+     * Applies all configured fingerprint spoofs.
+     *
+     * Called automatically during launch() if a fingerprint is configured.
+     * This applies "one-time" spoofs that persist across navigations.
+     */
+    private void applyFingerprint() throws TimeoutException {
+        Fingerprint fingerprint = config.getFingerprint();
+        if (fingerprint == null) {
+            return;
+        }
+
+        System.out.println("[Browser] Applying fingerprint spoofs...");
+
+        // Enable required CDP domains
+        cdpClient.send("Page.enable", null);
+
+        // Apply one-time spoofs from each component
+        if (fingerprint.userAgent() != null) {
+            fingerprint.userAgent().applyOnce(cdpClient);
+            System.out.println("[Browser] User-Agent spoof applied");
+        }
+
+        // TODO: Uncomment as components are implemented
+        // if (fingerprint.webGL() != null) {
+        //     fingerprint.webGL().applyOnce(cdpClient);
+        // }
+        // if (fingerprint.screen() != null) {
+        //     fingerprint.screen().applyOnce(cdpClient);
+        // }
+
+        System.out.println("[Browser] Fingerprint spoofs applied successfully");
     }
 
     private static CDPClient connectWithRetry(int port) throws IOException {
@@ -135,6 +181,13 @@ public class Browser {
 
     public BrowserConfig getConfig() {
         return config;
+    }
+
+    /**
+     * Gets the fingerprint being used, or null if none configured.
+     */
+    public Fingerprint getFingerprint() {
+        return config.getFingerprint();
     }
 
     private static List<String> buildArguments(BrowserConfig config) {

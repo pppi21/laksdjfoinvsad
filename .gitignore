@@ -40,3 +40,4 @@ build/
 ### Project Specific ###
 /src/main/resources/chrome/chrome-headless-shell-win64/
 /src/main/resources/chrome/chrome-win64/
+/.env
