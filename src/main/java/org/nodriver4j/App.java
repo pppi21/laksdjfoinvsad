@@ -12,14 +12,15 @@ public class App {
 
         BrowserConfig config = BrowserConfig.builder()
                 .executablePath(executablePath)
+                .fingerprintEnabled(true)
+                .webrtcPolicy("default")
                 .warmProfile(true) // Enable profile warming
                 .build();
 
         try {
-            System.out.println("Launching browser with profile warming...");
-            System.out.println("User data dir: " + config.getUserDataDir());
-
             Browser browser = Browser.launch(config);
+            System.out.println("Browser launched with fingerprint: " + browser.getFingerprint());
+            System.out.println("User data dir: " + config.getUserDataDir());
 
             System.out.println("Browser launched successfully on port " + config.getPort());
             System.out.println("Browser is ready for use. Close manually when done.");
