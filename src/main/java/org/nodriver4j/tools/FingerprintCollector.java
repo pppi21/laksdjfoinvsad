@@ -1,9 +1,5 @@
 package org.nodriver4j.tools;
 
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
-import com.google.gson.JsonObject;
-
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -26,16 +22,6 @@ import java.util.Set;
  *
  * Output format: JSONL (JSON Lines) - one fingerprint JSON object per line.
  * This format allows safe append operations and crash recovery.
- *
- * IMPORTANT: This collector strips version-dependent and platform-dependent fields.
- * The following fields are EXCLUDED:
- * - ua (User-Agent string) - Chrome version dependent
- * - clientHints (all fields) - Platform/version dependent, too easy to detect spoofing
- * - headers (HTTP header order) - Version dependent
- * - plugins - Use actual browser's plugins
- *
- * The production library will use actual browser values for UA, platform, and plugins.
- * Only hardware-dependent fields (WebGL, screen, audio, canvas, fonts) are stored.
  */
 public class FingerprintCollector {
 
@@ -43,8 +29,6 @@ public class FingerprintCollector {
     private static final String OUTPUT_FILE = "data/fingerprints.jsonl";
     private static final int TARGET_COUNT = 1000;
     private static final int DELAY_MS = 1000;
-
-    private static final Gson GSON = new GsonBuilder().create();
 
     private final HttpClient httpClient;
     private final Set<String> existingFingerprints;
@@ -62,11 +46,6 @@ public class FingerprintCollector {
         System.out.println("  Target: " + TARGET_COUNT + " fingerprints");
         System.out.println("  Output: " + OUTPUT_FILE);
         System.out.println("  Delay: " + DELAY_MS + "ms between requests");
-        System.out.println("==============================================");
-        System.out.println("  EXCLUDED (version/platform dependent):");
-        System.out.println("    - ua, clientHints, headers, plugins");
-        System.out.println("  KEPT (hardware dependent):");
-        System.out.println("    - WebGL, screen, audio, canvas, fonts");
         System.out.println("==============================================\n");
 
         FingerprintCollector collector = new FingerprintCollector();
@@ -74,6 +53,7 @@ public class FingerprintCollector {
     }
 
     public void run() {
+        // Load existing fingerprints to support resume after crash
         loadExistingFingerprints();
 
         int collected = existingFingerprints.size();
@@ -87,38 +67,31 @@ public class FingerprintCollector {
             attempts++;
 
             try {
-                String rawFingerprint = fetchFingerprint();
+                String fingerprint = fetchFingerprint();
 
-                if (rawFingerprint == null) {
+                if (fingerprint == null) {
                     errors++;
                     System.err.println("[Collector] Empty/invalid response, skipping...");
                     Thread.sleep(DELAY_MS);
                     continue;
                 }
 
-                // Process and strip non-hardware fields
-                String processedFingerprint = processFingerprint(rawFingerprint);
-
-                if (processedFingerprint == null) {
-                    errors++;
-                    System.err.println("[Collector] Failed to process fingerprint, skipping...");
-                    Thread.sleep(DELAY_MS);
-                    continue;
-                }
-
-                // Check for exact duplicate (on processed version)
-                if (existingFingerprints.contains(processedFingerprint)) {
+                // Check for exact duplicate
+                if (existingFingerprints.contains(fingerprint)) {
                     duplicates++;
                     System.out.println("[Collector] Duplicate #" + duplicates + " (attempt " + attempts + "), skipping...");
                 } else {
-                    appendFingerprint(processedFingerprint);
-                    existingFingerprints.add(processedFingerprint);
+                    // Save immediately to file
+                    appendFingerprint(fingerprint);
+                    existingFingerprints.add(fingerprint);
                     collected++;
 
-                    String preview = extractPreview(processedFingerprint);
-                    System.out.println("[Collector] " + collected + "/" + TARGET_COUNT + " - " + preview);
+                    // Extract UA for logging (simple substring extraction)
+                    String uaPreview = extractUaPreview(fingerprint);
+                    System.out.println("[Collector] " + collected + "/" + TARGET_COUNT + " - " + uaPreview);
                 }
 
+                // Rate limit
                 Thread.sleep(DELAY_MS);
 
             } catch (InterruptedException e) {
@@ -139,6 +112,7 @@ public class FingerprintCollector {
             }
         }
 
+        // Final summary
         System.out.println("\n==============================================");
         System.out.println("  Collection Complete");
         System.out.println("==============================================");
@@ -150,37 +124,10 @@ public class FingerprintCollector {
         System.out.println("==============================================");
     }
 
-    // ==================== Fingerprint Processing ====================
-
     /**
-     * Processes a raw Bablosoft fingerprint:
-     * 1. Removes version-dependent fields (ua, clientHints, headers, plugins)
-     * 2. Keeps only hardware-dependent fields
-     * 3. Returns the cleaned profile
-     *
-     * @param rawJson the raw JSON response from Bablosoft API
-     * @return processed JSON string with only hardware fields, or null on error
+     * Loads existing fingerprints from the output file.
+     * This allows resuming collection after a crash or rate limit.
      */
-    private String processFingerprint(String rawJson) {
-        try {
-            JsonObject fingerprint = GSON.fromJson(rawJson, JsonObject.class);
-
-            // Remove version/platform-dependent fields
-            fingerprint.remove("ua");
-            fingerprint.remove("clientHints");
-            fingerprint.remove("headers");
-            fingerprint.remove("plugins");
-            fingerprint.remove("found");
-
-            return GSON.toJson(fingerprint);
-        } catch (Exception e) {
-            System.err.println("[Collector] Error processing fingerprint: " + e.getMessage());
-            return null;
-        }
-    }
-
-    // ==================== HTTP / File Operations ====================
-
     private void loadExistingFingerprints() {
         Path path = Path.of(OUTPUT_FILE);
 
@@ -203,10 +150,18 @@ public class FingerprintCollector {
         }
     }
 
+    /**
+     * Fetches a single fingerprint from the Bablosoft API.
+     *
+     * @return the raw JSON response, or null if invalid
+     */
     private String fetchFingerprint() throws IOException, InterruptedException {
+        // Generate random number for the rand parameter (mimics browser behavior)
         double rand = random.nextDouble();
+
         String url = API_URL + "?rand=" + rand + "&tags=Chrome,Microsoft%20Windows";
 
+        // Note: "Connection" header is restricted by Java HttpClient (managed internally)
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
                 .header("Accept", "*/*")
@@ -231,6 +186,7 @@ public class FingerprintCollector {
 
         String body = response.body();
 
+        // Basic validation - ensure we got a valid fingerprint response
         if (body == null || body.isBlank()) {
             return null;
         }
@@ -240,16 +196,27 @@ public class FingerprintCollector {
             return null;
         }
 
+        if (!body.contains("\"ua\":")) {
+            System.err.println("[Collector] Response missing 'ua' field");
+            return null;
+        }
+
         return body;
     }
 
+    /**
+     * Appends a fingerprint to the output file immediately.
+     * Uses JSONL format (one JSON object per line) for safe append operations.
+     */
     private void appendFingerprint(String fingerprint) throws IOException {
         Path path = Path.of(OUTPUT_FILE);
 
+        // Ensure parent directory exists
         if (path.getParent() != null) {
             Files.createDirectories(path.getParent());
         }
 
+        // Append to file with newline
         try (BufferedWriter writer = Files.newBufferedWriter(path,
                 StandardOpenOption.CREATE,
                 StandardOpenOption.APPEND)) {
@@ -259,26 +226,25 @@ public class FingerprintCollector {
     }
 
     /**
-     * Extracts a preview string for logging (shows WebGL renderer).
+     * Extracts a preview of the UA string for logging purposes.
      */
-    private String extractPreview(String json) {
+    private String extractUaPreview(String json) {
         try {
-            JsonObject obj = GSON.fromJson(json, JsonObject.class);
-            if (obj.has("renderer")) {
-                String renderer = obj.get("renderer").getAsString();
-                // Extract GPU name from ANGLE string
-                int start = renderer.indexOf("(");
-                int end = renderer.indexOf(",", start);
-                if (start >= 0 && end > start) {
-                    return renderer.substring(start + 1, end).trim();
+            int uaStart = json.indexOf("\"ua\":\"") + 6;
+            int uaEnd = json.indexOf("\"", uaStart);
+            if (uaStart > 5 && uaEnd > uaStart) {
+                String ua = json.substring(uaStart, uaEnd);
+                // Extract Chrome version for concise logging
+                int chromeIdx = ua.indexOf("Chrome/");
+                if (chromeIdx >= 0) {
+                    int versionEnd = ua.indexOf(" ", chromeIdx);
+                    if (versionEnd < 0) versionEnd = ua.length();
+                    return ua.substring(chromeIdx, Math.min(versionEnd, chromeIdx + 20));
                 }
-                return renderer.substring(0, Math.min(40, renderer.length()));
-            }
-            if (obj.has("vendor")) {
-                return obj.get("vendor").getAsString();
+                return ua.substring(0, Math.min(50, ua.length())) + "...";
             }
         } catch (Exception ignored) {
         }
-        return "(hardware fingerprint)";
+        return "(unknown UA)";
     }
 }

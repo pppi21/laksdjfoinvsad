@@ -1,7 +1,5 @@
 package org.nodriver4j.core;
 
-import org.nodriver4j.fingerprint.Fingerprint;
-
 import java.nio.file.Path;
 import java.util.UUID;
 
@@ -17,7 +15,6 @@ public class BrowserConfig {
     private final boolean headless;
     private final Path userDataDir;
     private final boolean warmProfile;
-    private final Fingerprint fingerprint;
 
     private BrowserConfig(Builder builder) {
         this.executablePath = builder.executablePath;
@@ -25,7 +22,6 @@ public class BrowserConfig {
         this.headless = builder.headless;
         this.userDataDir = builder.userDataDir;
         this.warmProfile = builder.warmProfile;
-        this.fingerprint = builder.fingerprint;
     }
 
     public String getExecutablePath() {
@@ -48,10 +44,6 @@ public class BrowserConfig {
         return warmProfile;
     }
 
-    public Fingerprint getFingerprint() {
-        return fingerprint;
-    }
-
     public static Builder builder() {
         return new Builder();
     }
@@ -69,7 +61,6 @@ public class BrowserConfig {
         private boolean headless = false;
         private Path userDataDir;
         private boolean warmProfile = false;
-        private Fingerprint fingerprint;
 
         private Builder() {}
 
@@ -90,11 +81,6 @@ public class BrowserConfig {
 
         public Builder warmProfile(boolean warmProfile) {
             this.warmProfile = warmProfile;
-            return this;
-        }
-
-        public Builder fingerprint(Fingerprint fingerprint) {
-            this.fingerprint = fingerprint;
             return this;
         }
 
