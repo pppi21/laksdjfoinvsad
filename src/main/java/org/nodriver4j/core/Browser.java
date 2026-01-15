@@ -22,13 +22,15 @@ public class Browser implements AutoCloseable {
 
     private final BrowserConfig config;
     private final Process process;
-    private final CDPClient cdpClient;
+    private final CDPClient cdpClient;           // Page-level connection (Emulation, Page, DOM, etc.)
+    private final CDPClient browserCdpClient;    // Browser-level connection (Fetch for proxy auth)
     private final Fingerprint fingerprint;
 
-    private Browser(BrowserConfig config, Process process, CDPClient cdpClient, Fingerprint fingerprint) {
+    private Browser(BrowserConfig config, Process process, CDPClient cdpClient, CDPClient browserCdpClient, Fingerprint fingerprint) {
         this.config = config;
         this.process = process;
         this.cdpClient = cdpClient;
+        this.browserCdpClient = browserCdpClient;
         this.fingerprint = fingerprint;
     }
 
@@ -55,8 +57,6 @@ public class Browser implements AutoCloseable {
             // Mask potentially sensitive or long strings for cleaner logging
             if (arg.startsWith("--fingerprint-gpu-renderer=")) {
                 System.out.println("  " + arg.substring(0, 60) + "...");
-            } else if (arg.startsWith("--proxy-server=")) {
-                System.out.println("  " + arg);
             } else {
                 System.out.println("  " + arg);
             }
@@ -65,13 +65,20 @@ public class Browser implements AutoCloseable {
         ProcessBuilder processBuilder = new ProcessBuilder(arguments);
         Process process = processBuilder.start();
 
-        // Connect to CDP with retries (Chrome needs time to start)
+        // Connect to CDP - browser level for proxy auth, page level for everything else
+        CDPClient browserCdpClient = null;
+        if (config.hasProxy() && config.getProxyConfig().requiresAuth()) {
+            System.out.println("[Browser] Connecting to browser target for proxy auth...");
+            browserCdpClient = connectToBrowserWithRetry(config.getPort());
+        }
+
+        System.out.println("[Browser] Connecting to page target...");
         CDPClient cdpClient = connectWithRetry(config.getPort());
 
-        Browser browser = new Browser(config, process, cdpClient, fingerprint);
+        Browser browser = new Browser(config, process, cdpClient, browserCdpClient, fingerprint);
 
-        // Setup proxy authentication handler if proxy is configured
-        if (config.hasProxy() && config.getProxyConfig().requiresAuth()) {
+        // Setup proxy authentication handler FIRST (before any requests are made)
+        if (browserCdpClient != null) {
             browser.setupProxyAuthentication();
         }
 
@@ -96,28 +103,47 @@ public class Browser implements AutoCloseable {
     }
 
     /**
-     * Sets up CDP-based proxy authentication handler.
+     * Sets up CDP-based proxy authentication handler on the browser-level connection.
      * This handler remains active for the entire browser session and responds
-     * to authentication challenges from the proxy server.
+     * to authentication challenges from the proxy server for ALL tabs/pages.
      */
     private void setupProxyAuthentication() {
         ProxyConfig proxy = config.getProxyConfig();
         System.out.println("[Browser] Setting up proxy authentication for " + proxy.getHost() + ":" + proxy.getPort());
 
         try {
-            // Enable Fetch domain with auth interception
+            // Enable Fetch domain with auth interception on BROWSER-level connection
             JsonObject enableParams = new JsonObject();
             enableParams.addProperty("handleAuthRequests", true);
-            cdpClient.send("Fetch.enable", enableParams);
+            browserCdpClient.send("Fetch.enable", enableParams);
 
-            // Register persistent event listener for auth challenges
-            cdpClient.addEventListener("Fetch.authRequired", this::handleProxyAuthRequired);
+            // Handle regular paused requests - continue them immediately
+            browserCdpClient.addEventListener("Fetch.requestPaused", this::handleRequestPaused);
 
-            System.out.println("[Browser] Proxy authentication handler registered");
+            // Handle auth challenges - provide credentials
+            browserCdpClient.addEventListener("Fetch.authRequired", this::handleProxyAuthRequired);
+
+            System.out.println("[Browser] Proxy authentication handler registered (browser-wide)");
 
         } catch (TimeoutException e) {
             throw new RuntimeException("Failed to setup proxy authentication: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Handles paused requests from CDP.
+     * Continues the request immediately without modification.
+     *
+     * @param event the Fetch.requestPaused event parameters
+     */
+    private void handleRequestPaused(JsonObject event) {
+        String requestId = event.get("requestId").getAsString();
+
+        // Continue the request without modification
+        JsonObject continueParams = new JsonObject();
+        continueParams.addProperty("requestId", requestId);
+
+        browserCdpClient.sendAsync("Fetch.continueRequest", continueParams);
     }
 
     /**
@@ -150,13 +176,14 @@ public class Browser implements AutoCloseable {
         authResponse.add("authChallengeResponse", authChallengeResponse);
 
         // Send credentials asynchronously (no need to wait for response)
-        cdpClient.sendAsync("Fetch.continueWithAuth", authResponse);
+        browserCdpClient.sendAsync("Fetch.continueWithAuth", authResponse);
 
         System.out.println("[Browser] Proxy credentials provided for request: " + requestId);
     }
 
     /**
      * Applies fingerprint settings that require CDP calls (screen dimensions, etc.)
+     * Uses the page-level CDP connection.
      */
     private void applyFingerprintViaCDP() {
         if (fingerprint == null) {
@@ -198,7 +225,7 @@ public class Browser implements AutoCloseable {
                 return CDPClient.connect(port);
             } catch (Exception e) {
                 if (i == CDP_CONNECTION_MAX_RETRIES - 1) {
-                    throw new IOException("Failed to connect to CDP after " + CDP_CONNECTION_MAX_RETRIES + " retries", e);
+                    throw new IOException("Failed to connect to CDP page target after " + CDP_CONNECTION_MAX_RETRIES + " retries", e);
                 }
                 try {
                     Thread.sleep(CDP_CONNECTION_RETRY_DELAY_MS);
@@ -208,7 +235,26 @@ public class Browser implements AutoCloseable {
                 }
             }
         }
-        throw new IOException("Failed to connect to CDP");
+        throw new IOException("Failed to connect to CDP page target");
+    }
+
+    private static CDPClient connectToBrowserWithRetry(int port) throws IOException {
+        for (int i = 0; i < CDP_CONNECTION_MAX_RETRIES; i++) {
+            try {
+                return CDPClient.connectToBrowser(port);
+            } catch (Exception e) {
+                if (i == CDP_CONNECTION_MAX_RETRIES - 1) {
+                    throw new IOException("Failed to connect to CDP browser target after " + CDP_CONNECTION_MAX_RETRIES + " retries", e);
+                }
+                try {
+                    Thread.sleep(CDP_CONNECTION_RETRY_DELAY_MS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("Interrupted while waiting to retry CDP connection", ie);
+                }
+            }
+        }
+        throw new IOException("Failed to connect to CDP browser target");
     }
 
     /**
@@ -217,7 +263,10 @@ public class Browser implements AutoCloseable {
      */
     @Override
     public void close() {
-        // Close CDP connection first (also clears event listeners)
+        // Close both CDP connections
+        if (browserCdpClient != null) {
+            browserCdpClient.close();
+        }
         if (cdpClient != null) {
             cdpClient.close();
         }
@@ -229,12 +278,23 @@ public class Browser implements AutoCloseable {
     }
 
     /**
-     * Gets the CDP client for direct protocol access.
+     * Gets the page-level CDP client for direct protocol access.
+     * Use this for page-specific commands (Page, DOM, Emulation, etc.)
      *
-     * @return the CDPClient instance
+     * @return the page-level CDPClient instance
      */
     public CDPClient getCdpClient() {
         return cdpClient;
+    }
+
+    /**
+     * Gets the browser-level CDP client, if available.
+     * Only present when proxy authentication is enabled.
+     *
+     * @return the browser-level CDPClient instance, or null if not using proxy
+     */
+    public CDPClient getBrowserCdpClient() {
+        return browserCdpClient;
     }
 
     /**

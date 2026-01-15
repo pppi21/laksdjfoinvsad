@@ -17,8 +17,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 /**
- * Minimal Chrome DevTools Protocol client.
- * Connects to a browser page via WebSocket and allows sending CDP commands.
+ * Chrome DevTools Protocol client.
+ * Supports both browser-level and page-level connections.
  */
 public class CDPClient implements AutoCloseable {
 
@@ -41,18 +41,42 @@ public class CDPClient implements AutoCloseable {
 
     /**
      * Connects to the first available page target on the given port.
+     * Use this for page-specific commands like Emulation, Page, DOM, etc.
      *
      * @param port the Chrome remote debugging port
-     * @return a connected CDPClient
+     * @return a connected CDPClient targeting a page
      * @throws IOException if connection fails
      * @throws InterruptedException if interrupted while connecting
      */
     public static CDPClient connect(int port) throws IOException, InterruptedException {
-        String wsUrl = discoverWebSocketUrl(port);
+        String wsUrl = discoverPageWebSocketUrl(port);
         return connectToWebSocket(wsUrl);
     }
 
-    private static String discoverWebSocketUrl(int port) throws IOException, InterruptedException {
+    /**
+     * Connects to the browser target on the given port.
+     * Use this for browser-wide commands like Fetch (for proxy auth).
+     * Commands sent via this connection apply to ALL pages/tabs.
+     *
+     * @param port the Chrome remote debugging port
+     * @return a connected CDPClient targeting the browser
+     * @throws IOException if connection fails
+     * @throws InterruptedException if interrupted while connecting
+     */
+    public static CDPClient connectToBrowser(int port) throws IOException, InterruptedException {
+        String wsUrl = discoverBrowserWebSocketUrl(port);
+        return connectToWebSocket(wsUrl);
+    }
+
+    /**
+     * Discovers a page-level WebSocket URL from Chrome's debug endpoint.
+     *
+     * @param port the Chrome remote debugging port
+     * @return the page WebSocket debugger URL
+     * @throws IOException if discovery fails
+     * @throws InterruptedException if interrupted
+     */
+    private static String discoverPageWebSocketUrl(int port) throws IOException, InterruptedException {
         HttpClient httpClient = HttpClient.newHttpClient();
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create("http://localhost:" + port + "/json"))
@@ -75,6 +99,36 @@ public class CDPClient implements AutoCloseable {
         }
 
         throw new IOException("No page target found");
+    }
+
+    /**
+     * Discovers the browser-level WebSocket URL from Chrome's debug endpoint.
+     *
+     * @param port the Chrome remote debugging port
+     * @return the browser WebSocket debugger URL
+     * @throws IOException if discovery fails
+     * @throws InterruptedException if interrupted
+     */
+    private static String discoverBrowserWebSocketUrl(int port) throws IOException, InterruptedException {
+        HttpClient httpClient = HttpClient.newHttpClient();
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:" + port + "/json/version"))
+                .GET()
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+        if (response.statusCode() != 200) {
+            throw new IOException("Failed to fetch browser version info: HTTP " + response.statusCode());
+        }
+
+        JsonObject versionInfo = GSON.fromJson(response.body(), JsonObject.class);
+
+        if (!versionInfo.has("webSocketDebuggerUrl")) {
+            throw new IOException("Browser WebSocket URL not found in version info");
+        }
+
+        return versionInfo.get("webSocketDebuggerUrl").getAsString();
     }
 
     private static CDPClient connectToWebSocket(String wsUrl) throws InterruptedException {
