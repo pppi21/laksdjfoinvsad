@@ -13,6 +13,7 @@ public class App {
         BrowserConfig config = BrowserConfig.builder()
                 .executablePath(executablePath)
                 .fingerprintEnabled(true)
+                .proxyFromEnv()
                 .webrtcPolicy("default")
                 .warmProfile(true) // Enable profile warming
                 .build();

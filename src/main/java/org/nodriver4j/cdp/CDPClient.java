@@ -11,8 +11,10 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
+import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 /**
  * Minimal Chrome DevTools Protocol client.
@@ -26,6 +28,12 @@ public class CDPClient implements AutoCloseable {
     private final AtomicInteger messageId = new AtomicInteger(0);
     private final ConcurrentHashMap<Integer, CompletableFuture<JsonObject>> pendingRequests = new ConcurrentHashMap<>();
     private final BlockingQueue<JsonObject> eventQueue = new LinkedBlockingQueue<>();
+
+    /**
+     * Event listeners mapped by event method name.
+     * Uses CopyOnWriteArrayList for thread-safe iteration during dispatch.
+     */
+    private final ConcurrentHashMap<String, List<Consumer<JsonObject>>> eventListeners = new ConcurrentHashMap<>();
 
     private CDPClient(WebSocket webSocket) {
         this.webSocket = webSocket;
@@ -132,9 +140,102 @@ public class CDPClient implements AutoCloseable {
                 future.complete(json);
             }
         } else if (json.has("method")) {
-            // Event
+            // Event - dispatch to listeners and queue
+            String method = json.get("method").getAsString();
+            JsonObject params = json.has("params") ? json.getAsJsonObject("params") : new JsonObject();
+
+            // Dispatch to registered listeners
+            dispatchEvent(method, params);
+
+            // Also add to queue for waitForEvent() compatibility
             eventQueue.offer(json);
         }
+    }
+
+    /**
+     * Dispatches an event to all registered listeners for that event type.
+     * Listeners are called synchronously on the WebSocket thread.
+     *
+     * @param eventName the CDP event method name
+     * @param params    the event parameters
+     */
+    private void dispatchEvent(String eventName, JsonObject params) {
+        List<Consumer<JsonObject>> listeners = eventListeners.get(eventName);
+        if (listeners == null || listeners.isEmpty()) {
+            return;
+        }
+
+        for (Consumer<JsonObject> listener : listeners) {
+            try {
+                listener.accept(params);
+            } catch (Exception e) {
+                System.err.println("[CDPClient] Error in event listener for '" + eventName + "': " + e.getMessage());
+                e.printStackTrace();
+            }
+        }
+    }
+
+    /**
+     * Registers an event listener for a specific CDP event.
+     * The listener will be called each time the event is received.
+     *
+     * <p>Note: Listeners are called on the WebSocket thread. Avoid blocking
+     * operations in listeners, or dispatch work to another thread.</p>
+     *
+     * @param eventName the CDP event method name (e.g., "Fetch.authRequired")
+     * @param listener  the callback to invoke when the event is received
+     */
+    public void addEventListener(String eventName, Consumer<JsonObject> listener) {
+        if (eventName == null || eventName.isBlank()) {
+            throw new IllegalArgumentException("Event name cannot be null or blank");
+        }
+        if (listener == null) {
+            throw new IllegalArgumentException("Listener cannot be null");
+        }
+
+        eventListeners.computeIfAbsent(eventName, k -> new CopyOnWriteArrayList<>()).add(listener);
+    }
+
+    /**
+     * Removes a previously registered event listener.
+     *
+     * @param eventName the CDP event method name
+     * @param listener  the listener to remove
+     * @return true if the listener was found and removed
+     */
+    public boolean removeEventListener(String eventName, Consumer<JsonObject> listener) {
+        List<Consumer<JsonObject>> listeners = eventListeners.get(eventName);
+        if (listeners == null) {
+            return false;
+        }
+        return listeners.remove(listener);
+    }
+
+    /**
+     * Removes all event listeners for a specific event.
+     *
+     * @param eventName the CDP event method name
+     */
+    public void removeAllEventListeners(String eventName) {
+        eventListeners.remove(eventName);
+    }
+
+    /**
+     * Removes all event listeners for all events.
+     */
+    public void removeAllEventListeners() {
+        eventListeners.clear();
+    }
+
+    /**
+     * Checks if there are any listeners registered for an event.
+     *
+     * @param eventName the CDP event method name
+     * @return true if at least one listener is registered
+     */
+    public boolean hasEventListeners(String eventName) {
+        List<Consumer<JsonObject>> listeners = eventListeners.get(eventName);
+        return listeners != null && !listeners.isEmpty();
     }
 
     /**
@@ -152,10 +253,10 @@ public class CDPClient implements AutoCloseable {
     /**
      * Sends a CDP command and waits for the response with custom timeout.
      *
-     * @param method the CDP method name
-     * @param params the parameters
+     * @param method  the CDP method name
+     * @param params  the parameters
      * @param timeout the timeout value
-     * @param unit the timeout unit
+     * @param unit    the timeout unit
      * @return the result from the response
      * @throws TimeoutException if no response within timeout
      */
@@ -190,11 +291,31 @@ public class CDPClient implements AutoCloseable {
     }
 
     /**
+     * Sends a CDP command without waiting for a response.
+     * Useful for fire-and-forget commands.
+     *
+     * @param method the CDP method name
+     * @param params the parameters as a JsonObject (can be null)
+     */
+    public void sendAsync(String method, JsonObject params) {
+        int id = messageId.incrementAndGet();
+
+        JsonObject message = new JsonObject();
+        message.addProperty("id", id);
+        message.addProperty("method", method);
+        if (params != null) {
+            message.add("params", params);
+        }
+
+        webSocket.sendText(GSON.toJson(message), true);
+    }
+
+    /**
      * Waits for a specific CDP event.
      *
      * @param eventName the event method name (e.g., "Page.loadEventFired")
-     * @param timeout the timeout value
-     * @param unit the timeout unit
+     * @param timeout   the timeout value
+     * @param unit      the timeout unit
      * @return the event data
      * @throws TimeoutException if event not received within timeout
      */
@@ -229,6 +350,8 @@ public class CDPClient implements AutoCloseable {
 
     @Override
     public void close() {
+        // Clear all listeners on close
+        eventListeners.clear();
         webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "closing");
     }
 

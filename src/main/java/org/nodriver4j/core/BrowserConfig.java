@@ -1,5 +1,6 @@
 package org.nodriver4j.core;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.UUID;
 
@@ -18,6 +19,7 @@ public class BrowserConfig {
     private final boolean warmProfile;
     private final boolean fingerprintEnabled;
     private final String webrtcPolicy;
+    private final ProxyConfig proxyConfig;
 
     private BrowserConfig(Builder builder) {
         this.executablePath = builder.executablePath;
@@ -27,6 +29,7 @@ public class BrowserConfig {
         this.warmProfile = builder.warmProfile;
         this.fingerprintEnabled = builder.fingerprintEnabled;
         this.webrtcPolicy = builder.webrtcPolicy;
+        this.proxyConfig = builder.proxyConfig;
     }
 
     public String getExecutablePath() {
@@ -57,6 +60,19 @@ public class BrowserConfig {
         return webrtcPolicy;
     }
 
+    public ProxyConfig getProxyConfig() {
+        return proxyConfig;
+    }
+
+    /**
+     * Checks if a proxy is configured for this browser.
+     *
+     * @return true if proxy configuration is present
+     */
+    public boolean hasProxy() {
+        return proxyConfig != null;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -76,6 +92,7 @@ public class BrowserConfig {
         private boolean warmProfile = false;
         private boolean fingerprintEnabled = false;
         private String webrtcPolicy = DEFAULT_WEBRTC_POLICY;
+        private ProxyConfig proxyConfig;
 
         private Builder() {}
 
@@ -113,6 +130,47 @@ public class BrowserConfig {
          */
         public Builder webrtcPolicy(String webrtcPolicy) {
             this.webrtcPolicy = webrtcPolicy;
+            return this;
+        }
+
+        /**
+         * Sets the proxy configuration.
+         *
+         * @param proxyConfig the proxy configuration
+         * @return this builder
+         */
+        public Builder proxy(ProxyConfig proxyConfig) {
+            this.proxyConfig = proxyConfig;
+            return this;
+        }
+
+        /**
+         * Sets the proxy configuration from a proxy string.
+         * Format: host:port:username:password
+         *
+         * @param proxyString the proxy string to parse
+         * @return this builder
+         * @throws IllegalArgumentException if the proxy string format is invalid
+         */
+        public Builder proxy(String proxyString) {
+            this.proxyConfig = new ProxyConfig(proxyString);
+            return this;
+        }
+
+        /**
+         * Loads proxy configuration from the file specified by the "proxies" environment variable.
+         * Uses the first non-empty, non-comment line from the file.
+         *
+         * @return this builder
+         * @throws IllegalStateException if the environment variable is not set
+         * @throws RuntimeException if the file cannot be read or is empty
+         */
+        public Builder proxyFromEnv() {
+            try {
+                this.proxyConfig = new ProxyConfig();
+            } catch (IOException e) {
+                throw new RuntimeException("Failed to load proxy from environment: " + e.getMessage(), e);
+            }
             return this;
         }
 

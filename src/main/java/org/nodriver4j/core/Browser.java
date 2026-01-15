@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.concurrent.TimeoutException;
 
 /**
- * Manages a Chrome browser process with optional fingerprint spoofing.
+ * Manages a Chrome browser process with optional fingerprint spoofing and proxy support.
  */
 public class Browser implements AutoCloseable {
 
@@ -52,9 +52,11 @@ public class Browser implements AutoCloseable {
 
         System.out.println("[Browser] Launching with arguments:");
         for (String arg : arguments) {
-            // Mask potentially long renderer strings for cleaner logging
+            // Mask potentially sensitive or long strings for cleaner logging
             if (arg.startsWith("--fingerprint-gpu-renderer=")) {
                 System.out.println("  " + arg.substring(0, 60) + "...");
+            } else if (arg.startsWith("--proxy-server=")) {
+                System.out.println("  " + arg);
             } else {
                 System.out.println("  " + arg);
             }
@@ -67,6 +69,11 @@ public class Browser implements AutoCloseable {
         CDPClient cdpClient = connectWithRetry(config.getPort());
 
         Browser browser = new Browser(config, process, cdpClient, fingerprint);
+
+        // Setup proxy authentication handler if proxy is configured
+        if (config.hasProxy() && config.getProxyConfig().requiresAuth()) {
+            browser.setupProxyAuthentication();
+        }
 
         // Apply CDP-based fingerprint settings (screen emulation, etc.)
         if (fingerprint != null) {
@@ -86,6 +93,66 @@ public class Browser implements AutoCloseable {
         }
 
         return browser;
+    }
+
+    /**
+     * Sets up CDP-based proxy authentication handler.
+     * This handler remains active for the entire browser session and responds
+     * to authentication challenges from the proxy server.
+     */
+    private void setupProxyAuthentication() {
+        ProxyConfig proxy = config.getProxyConfig();
+        System.out.println("[Browser] Setting up proxy authentication for " + proxy.getHost() + ":" + proxy.getPort());
+
+        try {
+            // Enable Fetch domain with auth interception
+            JsonObject enableParams = new JsonObject();
+            enableParams.addProperty("handleAuthRequests", true);
+            cdpClient.send("Fetch.enable", enableParams);
+
+            // Register persistent event listener for auth challenges
+            cdpClient.addEventListener("Fetch.authRequired", this::handleProxyAuthRequired);
+
+            System.out.println("[Browser] Proxy authentication handler registered");
+
+        } catch (TimeoutException e) {
+            throw new RuntimeException("Failed to setup proxy authentication: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Handles proxy authentication challenges from CDP.
+     * Called each time the proxy requires authentication (initial connection,
+     * reconnection after timeout, new parallel connections, etc.)
+     *
+     * @param event the Fetch.authRequired event parameters
+     */
+    private void handleProxyAuthRequired(JsonObject event) {
+        ProxyConfig proxy = config.getProxyConfig();
+        String requestId = event.get("requestId").getAsString();
+
+        // Log auth challenge details for debugging
+        if (event.has("authChallenge")) {
+            JsonObject challenge = event.getAsJsonObject("authChallenge");
+            String source = challenge.has("source") ? challenge.get("source").getAsString() : "unknown";
+            String origin = challenge.has("origin") ? challenge.get("origin").getAsString() : "unknown";
+            System.out.println("[Browser] Proxy auth required - source: " + source + ", origin: " + origin);
+        }
+
+        // Build auth response
+        JsonObject authResponse = new JsonObject();
+        authResponse.addProperty("requestId", requestId);
+
+        JsonObject authChallengeResponse = new JsonObject();
+        authChallengeResponse.addProperty("response", "ProvideCredentials");
+        authChallengeResponse.addProperty("username", proxy.getUsername());
+        authChallengeResponse.addProperty("password", proxy.getPassword());
+        authResponse.add("authChallengeResponse", authChallengeResponse);
+
+        // Send credentials asynchronously (no need to wait for response)
+        cdpClient.sendAsync("Fetch.continueWithAuth", authResponse);
+
+        System.out.println("[Browser] Proxy credentials provided for request: " + requestId);
     }
 
     /**
@@ -150,7 +217,7 @@ public class Browser implements AutoCloseable {
      */
     @Override
     public void close() {
-        // Close CDP connection first
+        // Close CDP connection first (also clears event listeners)
         if (cdpClient != null) {
             cdpClient.close();
         }
@@ -177,6 +244,15 @@ public class Browser implements AutoCloseable {
      */
     public Fingerprint getFingerprint() {
         return fingerprint;
+    }
+
+    /**
+     * Gets the proxy configuration for this browser, if any.
+     *
+     * @return the ProxyConfig, or null if no proxy is configured
+     */
+    public ProxyConfig getProxyConfig() {
+        return config.getProxyConfig();
     }
 
     private void deleteUserDataDir() {
@@ -232,6 +308,14 @@ public class Browser implements AutoCloseable {
         args.add("--disable-ipc-flooding-protection");
         args.add("--disable-client-side-phishing-detection");
         args.add("--disable-background-networking");
+        args.add("--disable-features=BlockThirdPartyCookies");
+
+        // Proxy configuration
+        if (config.hasProxy()) {
+            ProxyConfig proxy = config.getProxyConfig();
+            args.add("--proxy-server=" + proxy.toProxyServerArg());
+            System.out.println("[Browser] Proxy configured: " + proxy);
+        }
 
         // Headless mode
         if (config.isHeadless()) {
