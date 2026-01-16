@@ -20,6 +20,7 @@ import java.util.function.Function;
  *   <li>Proxy consumption from file (if enabled)</li>
  *   <li>Session lifecycle and cleanup</li>
  *   <li>Parallel profile warming</li>
+ *   <li>Human-like interaction options</li>
  * </ul>
  *
  * <h2>Usage Examples</h2>
@@ -32,32 +33,42 @@ import java.util.function.Function;
  *
  * // Submit tasks - returns Future for result handling
  * Future<String> future = manager.submit(browser -> {
- *     // automation logic here
- *     return "result";
+ *     Page page = browser.getPage();
+ *     page.navigate("https://example.com");
+ *     return page.getTitle();
  * });
  *
  * String result = future.get(); // blocks until complete
  * manager.shutdown();
  * }</pre>
  *
- * <h3>Manual Session Control with Parallel Warming</h3>
+ * <h3>Manual Session Control with Page API</h3>
  * <pre>{@code
  * BrowserManager manager = BrowserManager.builder()
  *     .executablePath("/path/to/chrome")
- *     .warmProfile(true)
+ *     .interactionOptions(InteractionOptions.defaults())
  *     .build();
  *
- * // Launch multiple browsers
- * List<BrowserSession> sessions = new ArrayList<>();
- * for (int i = 0; i < 6; i++) {
- *     sessions.add(manager.createSession());
+ * try (BrowserSession session = manager.createSession()) {
+ *     Page page = session.getPage();
+ *     page.navigate("https://example.com");
+ *     page.click("//button[@id='login']");
+ *     page.type("//input[@name='user']", "myuser");
  * }
+ * }</pre>
  *
- * // Warm all browsers in parallel
- * manager.warmSessions(sessions);
+ * <h3>Custom Interaction Options</h3>
+ * <pre>{@code
+ * InteractionOptions fastOptions = InteractionOptions.builder()
+ *     .moveSpeed(80)
+ *     .keystrokeDelayMin(30)
+ *     .keystrokeDelayMax(80)
+ *     .build();
  *
- * // All browsers are now warmed and ready
- * manager.shutdown();
+ * BrowserManager manager = BrowserManager.builder()
+ *     .executablePath("/path/to/chrome")
+ *     .interactionOptions(fastOptions)
+ *     .build();
  * }</pre>
  */
 public class BrowserManager implements AutoCloseable {
@@ -78,6 +89,7 @@ public class BrowserManager implements AutoCloseable {
     private final boolean headless;
     private final String webrtcPolicy;
     private final boolean proxyEnabled;
+    private final InteractionOptions interactionOptions;
 
     private BrowserManager(Builder builder) {
         this.executablePath = builder.executablePath;
@@ -86,6 +98,7 @@ public class BrowserManager implements AutoCloseable {
         this.headless = builder.headless;
         this.webrtcPolicy = builder.webrtcPolicy;
         this.proxyEnabled = builder.proxyEnabled;
+        this.interactionOptions = builder.interactionOptions;
 
         this.isShutdown = new AtomicBoolean(false);
         this.activeSessions = ConcurrentHashMap.newKeySet();
@@ -134,6 +147,17 @@ public class BrowserManager implements AutoCloseable {
      * A new browser session is created for the task and automatically closed
      * after the task completes (whether successfully or with an exception).</p>
      *
+     * <p>The task receives a {@link Browser} instance. For page interactions,
+     * use {@code browser.getPage()} to access the {@link Page} API:</p>
+     * <pre>{@code
+     * manager.submit(browser -> {
+     *     Page page = browser.getPage();
+     *     page.navigate("https://example.com");
+     *     page.click("//button[@id='submit']");
+     *     return page.getText("//div[@class='result']");
+     * });
+     * }</pre>
+     *
      * @param task the automation task to execute, receives a Browser and returns a result
      * @param <T>  the result type
      * @return a Future representing the pending result
@@ -176,6 +200,59 @@ public class BrowserManager implements AutoCloseable {
     }
 
     /**
+     * Submits an automation task that works directly with a Page.
+     *
+     * <p>Convenience method that automatically extracts the main page:</p>
+     * <pre>{@code
+     * manager.submitPage(page -> {
+     *     page.navigate("https://example.com");
+     *     page.click("//button[@id='login']");
+     *     return page.getTitle();
+     * });
+     * }</pre>
+     *
+     * @param task the automation task to execute, receives a Page and returns a result
+     * @param <T>  the result type
+     * @return a Future representing the pending result
+     * @throws RejectedExecutionException if the manager has been shutdown
+     */
+    public <T> Future<T> submitPage(Function<Page, T> task) {
+        ensureNotShutdown();
+
+        return executor.submit(() -> {
+            try (BrowserSession session = createSession()) {
+                // Auto-warm if enabled
+                if (session.isWarmProfileEnabled()) {
+                    session.warm();
+                }
+                return task.apply(session.getPage());
+            }
+        });
+    }
+
+    /**
+     * Submits an automation task that works directly with a Page and doesn't return a result.
+     *
+     * @param task the automation task to execute
+     * @return a Future that completes when the task is done
+     * @throws RejectedExecutionException if the manager has been shutdown
+     */
+    public Future<Void> submitPage(ThrowingConsumer<Page> task) {
+        ensureNotShutdown();
+
+        return executor.submit(() -> {
+            try (BrowserSession session = createSession()) {
+                // Auto-warm if enabled
+                if (session.isWarmProfileEnabled()) {
+                    session.warm();
+                }
+                task.accept(session.getPage());
+                return null;
+            }
+        });
+    }
+
+    /**
      * Creates a new browser session for manual control.
      *
      * <p>The caller is responsible for closing the session when done.
@@ -183,8 +260,9 @@ public class BrowserManager implements AutoCloseable {
      *
      * <pre>{@code
      * try (BrowserSession session = manager.createSession()) {
-     *     Browser browser = session.getBrowser();
-     *     // ...
+     *     Page page = session.getPage();
+     *     page.navigate("https://example.com");
+     *     page.click("//button[@id='submit']");
      * }
      * }</pre>
      *
@@ -209,7 +287,7 @@ public class BrowserManager implements AutoCloseable {
 
         try {
             BrowserConfig config = buildConfig(port);
-            BrowserSession session = new BrowserSession(config, this::releasePort);
+            BrowserSession session = new BrowserSession(config, this::releasePort, interactionOptions);
 
             // Track session for shutdown cleanup
             activeSessions.add(session);
@@ -366,6 +444,15 @@ public class BrowserManager implements AutoCloseable {
     private void releasePort(int port) {
         availablePorts.offer(port);
         System.out.println("[BrowserManager] Released port " + port + " (available: " + availablePorts.size() + ")");
+    }
+
+    /**
+     * Gets the interaction options configured for this manager.
+     *
+     * @return the InteractionOptions
+     */
+    public InteractionOptions getInteractionOptions() {
+        return interactionOptions;
     }
 
     /**
@@ -574,6 +661,7 @@ public class BrowserManager implements AutoCloseable {
         private boolean headless = false;
         private String webrtcPolicy = "disable_non_proxied_udp";
         private boolean proxyEnabled = true;
+        private InteractionOptions interactionOptions = InteractionOptions.defaults();
 
         private Builder() {}
 
@@ -695,6 +783,40 @@ public class BrowserManager implements AutoCloseable {
          */
         public Builder proxyEnabled(boolean enabled) {
             this.proxyEnabled = enabled;
+            return this;
+        }
+
+        /**
+         * Sets the interaction options for human-like behavior.
+         *
+         * <p>These options control timing and movement patterns for mouse clicks,
+         * typing, scrolling, and other interactions to appear more human-like.</p>
+         *
+         * <p>Default: {@link InteractionOptions#defaults()}</p>
+         *
+         * <p>Example:</p>
+         * <pre>{@code
+         * InteractionOptions options = InteractionOptions.builder()
+         *     .moveSpeed(60)
+         *     .keystrokeDelayMin(50)
+         *     .keystrokeDelayMax(150)
+         *     .overshootEnabled(true)
+         *     .build();
+         *
+         * BrowserManager manager = BrowserManager.builder()
+         *     .executablePath("/path/to/chrome")
+         *     .interactionOptions(options)
+         *     .build();
+         * }</pre>
+         *
+         * @param options the interaction options
+         * @return this builder
+         */
+        public Builder interactionOptions(InteractionOptions options) {
+            if (options == null) {
+                throw new IllegalArgumentException("InteractionOptions cannot be null");
+            }
+            this.interactionOptions = options;
             return this;
         }
 

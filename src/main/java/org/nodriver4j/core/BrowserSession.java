@@ -4,6 +4,8 @@ import org.nodriver4j.cdp.CDPClient;
 import org.nodriver4j.cdp.ProfileWarmer;
 
 import java.io.IOException;
+import java.util.List;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.IntConsumer;
 
@@ -16,8 +18,9 @@ import java.util.function.IntConsumer;
  * <p>Typical usage with try-with-resources:</p>
  * <pre>{@code
  * try (BrowserSession session = browserManager.createSession()) {
- *     Browser browser = session.getBrowser();
- *     // ... automation logic ...
+ *     Page page = session.getPage();
+ *     page.navigate("https://example.com");
+ *     page.click("//button[@id='submit']");
  * } // automatically closes browser and releases port
  * }</pre>
  *
@@ -48,11 +51,26 @@ public class BrowserSession implements AutoCloseable {
      * @throws IOException if the browser fails to launch
      */
     BrowserSession(BrowserConfig config, IntConsumer portReleaser) throws IOException {
+        this(config, portReleaser, InteractionOptions.defaults());
+    }
+
+    /**
+     * Creates a new BrowserSession with custom interaction options.
+     *
+     * <p>Package-private constructor - only {@link BrowserManager} should create instances.</p>
+     *
+     * @param config             the browser configuration (must include allocated port)
+     * @param portReleaser       callback to release the port back to the pool on close
+     * @param interactionOptions options for human-like interactions
+     * @throws IOException if the browser fails to launch
+     */
+    BrowserSession(BrowserConfig config, IntConsumer portReleaser, InteractionOptions interactionOptions)
+            throws IOException {
         this.allocatedPort = config.getPort();
         this.portReleaser = portReleaser;
 
         try {
-            this.browser = Browser.launch(config);
+            this.browser = Browser.launch(config, interactionOptions);
         } catch (IOException e) {
             // Release port if launch fails - don't leave it allocated
             releasePort();
@@ -124,6 +142,102 @@ public class BrowserSession implements AutoCloseable {
         return warmed.get();
     }
 
+    // ==================== Page Access Methods ====================
+
+    /**
+     * Gets the main page (first/default tab) for this session.
+     *
+     * <p>This is the primary way to interact with the browser. Example:</p>
+     * <pre>{@code
+     * Page page = session.getPage();
+     * page.navigate("https://example.com");
+     * page.click("//button[@id='login']");
+     * page.type("//input[@name='username']", "myuser");
+     * }</pre>
+     *
+     * @return the main Page instance
+     * @throws IllegalStateException if the session has been closed or no pages exist
+     */
+    public Page getPage() {
+        ensureOpen();
+        return browser.getPage();
+    }
+
+    /**
+     * Gets all tracked pages in this browser session.
+     *
+     * <p>This includes pages opened by automation and pages opened manually by the user.</p>
+     *
+     * @return unmodifiable list of all Page instances
+     * @throws IllegalStateException if the session has been closed
+     */
+    public List<Page> getPages() {
+        ensureOpen();
+        return browser.getPages();
+    }
+
+    /**
+     * Gets a page by its CDP target ID.
+     *
+     * @param targetId the CDP target ID
+     * @return the Page instance, or null if not found
+     * @throws IllegalStateException if the session has been closed
+     */
+    public Page getPageByTargetId(String targetId) {
+        ensureOpen();
+        return browser.getPageByTargetId(targetId);
+    }
+
+    /**
+     * Gets the number of open pages/tabs in this session.
+     *
+     * @return the page count
+     * @throws IllegalStateException if the session has been closed
+     */
+    public int getPageCount() {
+        ensureOpen();
+        return browser.getPageCount();
+    }
+
+    /**
+     * Creates a new page/tab in the browser.
+     *
+     * @return the new Page instance
+     * @throws TimeoutException if the operation times out
+     * @throws IllegalStateException if the session has been closed
+     */
+    public Page newPage() throws TimeoutException {
+        ensureOpen();
+        return browser.newPage();
+    }
+
+    /**
+     * Creates a new page/tab in the browser and navigates to a URL.
+     *
+     * @param url the URL to navigate to
+     * @return the new Page instance
+     * @throws TimeoutException if the operation times out
+     * @throws IllegalStateException if the session has been closed
+     */
+    public Page newPage(String url) throws TimeoutException {
+        ensureOpen();
+        return browser.newPage(url);
+    }
+
+    /**
+     * Closes a specific page/tab.
+     *
+     * @param page the page to close
+     * @throws TimeoutException if the operation times out
+     * @throws IllegalStateException if the session has been closed
+     */
+    public void closePage(Page page) throws TimeoutException {
+        ensureOpen();
+        browser.closePage(page);
+    }
+
+    // ==================== Browser Access Methods ====================
+
     /**
      * Gets the underlying browser instance.
      *
@@ -151,9 +265,9 @@ public class BrowserSession implements AutoCloseable {
     /**
      * Gets the browser-level CDP client, if available.
      *
-     * <p>Only present when proxy authentication is enabled.</p>
+     * <p>This is always available and used for target management and proxy auth.</p>
      *
-     * @return the browser-level CDPClient instance, or null if not using proxy
+     * @return the browser-level CDPClient instance
      * @throws IllegalStateException if the session has been closed
      */
     public CDPClient getBrowserCdpClient() {
@@ -181,6 +295,17 @@ public class BrowserSession implements AutoCloseable {
     public ProxyConfig getProxyConfig() {
         ensureOpen();
         return browser.getProxyConfig();
+    }
+
+    /**
+     * Gets the interaction options for this session.
+     *
+     * @return the InteractionOptions
+     * @throws IllegalStateException if the session has been closed
+     */
+    public InteractionOptions getInteractionOptions() {
+        ensureOpen();
+        return browser.getInteractionOptions();
     }
 
     /**
@@ -264,10 +389,11 @@ public class BrowserSession implements AutoCloseable {
 
     @Override
     public String toString() {
-        return String.format("BrowserSession{port=%d, open=%s, warmed=%s, fingerprint=%s, proxy=%s}",
+        return String.format("BrowserSession{port=%d, open=%s, warmed=%s, pages=%d, fingerprint=%s, proxy=%s}",
                 allocatedPort,
                 !closed.get(),
                 warmed.get(),
+                browser.getPageCount(),
                 browser.getFingerprint() != null ? "enabled" : "disabled",
                 browser.getProxyConfig() != null ? browser.getProxyConfig().getHost() : "none");
     }

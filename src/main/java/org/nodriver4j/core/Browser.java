@@ -1,15 +1,15 @@
 package org.nodriver4j.core;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.nodriver4j.cdp.CDPClient;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.concurrent.TimeUnit;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -21,6 +21,7 @@ import java.util.concurrent.TimeoutException;
  *   <li>Establishing CDP connections (browser-level and page-level)</li>
  *   <li>Setting up proxy authentication via CDP Fetch domain</li>
  *   <li>Applying fingerprint settings via CDP Emulation domain</li>
+ *   <li>Tracking and managing Page instances for all browser tabs</li>
  *   <li>Cleanup on close (terminate process, delete user data directory)</li>
  * </ul>
  *
@@ -33,6 +34,7 @@ import java.util.concurrent.TimeoutException;
  *
  * @see BrowserManager
  * @see BrowserSession
+ * @see Page
  */
 public class Browser implements AutoCloseable {
 
@@ -42,16 +44,23 @@ public class Browser implements AutoCloseable {
     private final BrowserConfig config;
     private final Process process;
     private final CDPClient cdpClient;           // Page-level connection (Emulation, Page, DOM, etc.)
-    private final CDPClient browserCdpClient;    // Browser-level connection (Fetch for proxy auth)
+    private final CDPClient browserCdpClient;    // Browser-level connection (Target, Fetch for proxy auth)
     private final Fingerprint fingerprint;
+    private final InteractionOptions interactionOptions;
+
+    // Page tracking
+    private final Map<String, Page> pages = new ConcurrentHashMap<>();
+    private volatile String mainPageTargetId;
 
     private Browser(BrowserConfig config, Process process, CDPClient cdpClient,
-                    CDPClient browserCdpClient, Fingerprint fingerprint) {
+                    CDPClient browserCdpClient, Fingerprint fingerprint,
+                    InteractionOptions interactionOptions) {
         this.config = config;
         this.process = process;
         this.cdpClient = cdpClient;
         this.browserCdpClient = browserCdpClient;
         this.fingerprint = fingerprint;
+        this.interactionOptions = interactionOptions;
     }
 
     /**
@@ -69,6 +78,18 @@ public class Browser implements AutoCloseable {
      * @throws IOException if the browser process fails to start or CDP connection fails
      */
     public static Browser launch(BrowserConfig config) throws IOException {
+        return launch(config, InteractionOptions.defaults());
+    }
+
+    /**
+     * Launches a new browser instance with the given configuration and interaction options.
+     *
+     * @param config             the browser configuration
+     * @param interactionOptions options for human-like interactions
+     * @return a running Browser instance
+     * @throws IOException if the browser process fails to start or CDP connection fails
+     */
+    public static Browser launch(BrowserConfig config, InteractionOptions interactionOptions) throws IOException {
         // Load fingerprint if enabled
         Fingerprint fingerprint = null;
         if (config.isFingerprintEnabled()) {
@@ -84,22 +105,24 @@ public class Browser implements AutoCloseable {
         ProcessBuilder processBuilder = new ProcessBuilder(arguments);
         Process process = processBuilder.start();
 
-        // Connect to CDP - browser level for proxy auth, page level for everything else
-        CDPClient browserCdpClient = null;
-        if (config.hasProxy() && config.getProxyConfig().requiresAuth()) {
-            System.out.println("[Browser] Connecting to browser target for proxy auth...");
-            browserCdpClient = connectToBrowserWithRetry(config.getPort());
-        }
+        // Always connect to browser target for target discovery
+        System.out.println("[Browser] Connecting to browser target...");
+        CDPClient browserCdpClient = connectToBrowserWithRetry(config.getPort());
 
+        // Connect to page target
         System.out.println("[Browser] Connecting to page target...");
         CDPClient cdpClient = connectWithRetry(config.getPort());
 
-        Browser browser = new Browser(config, process, cdpClient, browserCdpClient, fingerprint);
+        Browser browser = new Browser(config, process, cdpClient, browserCdpClient,
+                fingerprint, interactionOptions);
 
         // Setup proxy authentication handler FIRST (before any requests are made)
-        if (browserCdpClient != null) {
+        if (config.hasProxy() && config.getProxyConfig().requiresAuth()) {
             browser.setupProxyAuthentication();
         }
+
+        // Setup target discovery to track all pages
+        browser.setupTargetDiscovery();
 
         // Apply CDP-based fingerprint settings (screen emulation, etc.)
         if (fingerprint != null) {
@@ -109,6 +132,127 @@ public class Browser implements AutoCloseable {
         System.out.println("[Browser] Ready on port " + config.getPort());
 
         return browser;
+    }
+
+    /**
+     * Sets up target discovery to track all browser tabs/pages.
+     * This allows automatic Page instance creation for new tabs.
+     */
+    private void setupTargetDiscovery() {
+        try {
+            // Register event listeners BEFORE enabling discovery
+            browserCdpClient.addEventListener("Target.targetCreated", this::onTargetCreated);
+            browserCdpClient.addEventListener("Target.targetDestroyed", this::onTargetDestroyed);
+            browserCdpClient.addEventListener("Target.targetInfoChanged", this::onTargetInfoChanged);
+
+            // Enable target discovery
+            JsonObject params = new JsonObject();
+            params.addProperty("discover", true);
+            browserCdpClient.send("Target.setDiscoverTargets", params);
+
+            // Get existing targets
+            JsonObject result = browserCdpClient.send("Target.getTargets", null);
+            JsonArray targetInfos = result.getAsJsonArray("targetInfos");
+
+            for (JsonElement element : targetInfos) {
+                JsonObject targetInfo = element.getAsJsonObject();
+                String type = targetInfo.get("type").getAsString();
+
+                if ("page".equals(type)) {
+                    String targetId = targetInfo.get("targetId").getAsString();
+                    createPageForTarget(targetId, targetInfo);
+                }
+            }
+
+            System.out.println("[Browser] Target discovery enabled, tracking " + pages.size() + " page(s)");
+
+        } catch (TimeoutException e) {
+            System.err.println("[Browser] Warning: Failed to setup target discovery: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Handles target created events from CDP.
+     */
+    private void onTargetCreated(JsonObject params) {
+        JsonObject targetInfo = params.getAsJsonObject("targetInfo");
+        String type = targetInfo.get("type").getAsString();
+
+        if ("page".equals(type)) {
+            String targetId = targetInfo.get("targetId").getAsString();
+            System.out.println("[Browser] New page target created: " + targetId);
+            createPageForTarget(targetId, targetInfo);
+        }
+    }
+
+    /**
+     * Handles target destroyed events from CDP.
+     */
+    private void onTargetDestroyed(JsonObject params) {
+        String targetId = params.get("targetId").getAsString();
+        Page removed = pages.remove(targetId);
+
+        if (removed != null) {
+            System.out.println("[Browser] Page target destroyed: " + targetId);
+        }
+    }
+
+    /**
+     * Handles target info changed events from CDP.
+     */
+    private void onTargetInfoChanged(JsonObject params) {
+        JsonObject targetInfo = params.getAsJsonObject("targetInfo");
+        String targetId = targetInfo.get("targetId").getAsString();
+
+        // We could update page metadata here if needed
+        // For now, just log significant changes
+        if (targetInfo.has("url")) {
+            String url = targetInfo.get("url").getAsString();
+            Page page = pages.get(targetId);
+            if (page != null) {
+                System.out.println("[Browser] Page navigated: " + targetId + " -> " + url);
+            }
+        }
+    }
+
+    /**
+     * Creates a Page instance for a target.
+     */
+    private void createPageForTarget(String targetId, JsonObject targetInfo) {
+        if (pages.containsKey(targetId)) {
+            return; // Already tracking this target
+        }
+
+        try {
+            // For the main page, we use the existing cdpClient
+            // For additional pages, we need to create a new CDP connection
+            Page page;
+            if (mainPageTargetId == null) {
+                // First page - use the existing page-level CDP client
+                mainPageTargetId = targetId;
+                page = new Page(cdpClient, targetId, interactionOptions);
+                pages.put(targetId, page);
+
+                String url = targetInfo.has("url") ? targetInfo.get("url").getAsString() : "about:blank";
+                System.out.println("[Browser] Main page registered: " + targetId + " (" + url + ")");
+            } else {
+                // Additional pages - we track them but note they need separate CDP connection
+                // For full support, CDPClient would need a connectToUrl(wsUrl) method
+                // For now, log that this page exists but may have limited functionality
+                String url = targetInfo.has("url") ? targetInfo.get("url").getAsString() : "about:blank";
+                System.out.println("[Browser] Additional page detected: " + targetId + " (" + url + ")");
+                System.out.println("[Browser] Note: Additional pages have limited automation support in current version");
+
+                // Still create a Page with the main cdpClient - some operations may work
+                // but page-specific operations may affect the wrong page
+                // This is a known limitation until CDPClient supports direct URL connection
+                page = new Page(cdpClient, targetId, interactionOptions);
+                pages.put(targetId, page);
+            }
+
+        } catch (Exception e) {
+            System.err.println("[Browser] Failed to create page for target " + targetId + ": " + e.getMessage());
+        }
     }
 
     /**
@@ -265,6 +409,116 @@ public class Browser implements AutoCloseable {
         throw new IOException("Failed to connect to CDP browser target");
     }
 
+    // ==================== Page Access Methods ====================
+
+    /**
+     * Gets the main page (first/default tab).
+     *
+     * @return the main Page instance
+     * @throws IllegalStateException if no pages are available
+     */
+    public Page getPage() {
+        if (mainPageTargetId != null) {
+            Page page = pages.get(mainPageTargetId);
+            if (page != null) {
+                return page;
+            }
+        }
+
+        // Fallback: return first available page
+        if (!pages.isEmpty()) {
+            return pages.values().iterator().next();
+        }
+
+        throw new IllegalStateException("No pages available");
+    }
+
+    /**
+     * Gets all tracked pages.
+     *
+     * @return unmodifiable list of all Page instances
+     */
+    public List<Page> getPages() {
+        return Collections.unmodifiableList(new ArrayList<>(pages.values()));
+    }
+
+    /**
+     * Gets a page by its target ID.
+     *
+     * @param targetId the CDP target ID
+     * @return the Page instance, or null if not found
+     */
+    public Page getPageByTargetId(String targetId) {
+        return pages.get(targetId);
+    }
+
+    /**
+     * Gets the number of tracked pages.
+     *
+     * @return the page count
+     */
+    public int getPageCount() {
+        return pages.size();
+    }
+
+    /**
+     * Creates a new page/tab in the browser.
+     *
+     * @return the new Page instance
+     * @throws TimeoutException if the operation times out
+     */
+    public Page newPage() throws TimeoutException {
+        return newPage("about:blank");
+    }
+
+    /**
+     * Creates a new page/tab in the browser and navigates to a URL.
+     *
+     * @param url the URL to navigate to
+     * @return the new Page instance
+     * @throws TimeoutException if the operation times out
+     */
+    public Page newPage(String url) throws TimeoutException {
+        JsonObject params = new JsonObject();
+        params.addProperty("url", url);
+
+        JsonObject result = browserCdpClient.send("Target.createTarget", params);
+        String targetId = result.get("targetId").getAsString();
+
+        // Wait for the page to be registered
+        long deadline = System.currentTimeMillis() + 5000;
+        while (System.currentTimeMillis() < deadline) {
+            Page page = pages.get(targetId);
+            if (page != null) {
+                return page;
+            }
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted while waiting for new page", e);
+            }
+        }
+
+        throw new TimeoutException("New page was not registered within timeout");
+    }
+
+    /**
+     * Closes a specific page/tab.
+     *
+     * @param page the page to close
+     * @throws TimeoutException if the operation times out
+     */
+    public void closePage(Page page) throws TimeoutException {
+        JsonObject params = new JsonObject();
+        params.addProperty("targetId", page.getTargetId());
+
+        browserCdpClient.send("Target.closeTarget", params);
+        pages.remove(page.getTargetId());
+    }
+
+    // ==================== Existing Methods ====================
+
     /**
      * Closes the browser and releases all resources.
      *
@@ -277,13 +531,19 @@ public class Browser implements AutoCloseable {
      */
     @Override
     public void close() {
-        // Close both CDP connections
+        // Remove event listeners
         if (browserCdpClient != null) {
+            browserCdpClient.removeAllEventListeners();
             browserCdpClient.close();
         }
         if (cdpClient != null) {
             cdpClient.close();
         }
+
+        // Clear page tracking
+        pages.clear();
+        mainPageTargetId = null;
+
         try {
             process.destroy();
             Thread.sleep(150);
@@ -306,12 +566,12 @@ public class Browser implements AutoCloseable {
     }
 
     /**
-     * Gets the browser-level CDP client, if available.
+     * Gets the browser-level CDP client.
      *
-     * <p>Only present when proxy authentication is enabled. Use this for
-     * browser-wide commands that should apply to all tabs.</p>
+     * <p>Use this for browser-wide commands that should apply to all tabs,
+     * such as Target management and Fetch (proxy auth).</p>
      *
-     * @return the browser-level CDPClient instance, or null if not using proxy
+     * @return the browser-level CDPClient instance
      */
     public CDPClient getBrowserCdpClient() {
         return browserCdpClient;
@@ -351,6 +611,15 @@ public class Browser implements AutoCloseable {
      */
     public boolean isRunning() {
         return process.isAlive();
+    }
+
+    /**
+     * Gets the interaction options for this browser.
+     *
+     * @return the InteractionOptions
+     */
+    public InteractionOptions getInteractionOptions() {
+        return interactionOptions;
     }
 
     /**
