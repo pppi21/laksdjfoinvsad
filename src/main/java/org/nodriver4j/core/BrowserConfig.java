@@ -1,15 +1,20 @@
 package org.nodriver4j.core;
 
-import java.io.IOException;
 import java.nio.file.Path;
 import java.util.UUID;
 
 /**
  * Configuration for launching a browser instance.
+ *
+ * <p>This class holds all settings needed to launch a Chrome browser with CDP support.
+ * Instances are created via the {@link Builder} pattern.</p>
+ *
+ * <p>When using {@link BrowserManager}, configuration is handled automatically.
+ * Direct use of BrowserConfig is for advanced cases where manual browser
+ * management is needed.</p>
  */
 public class BrowserConfig {
 
-    private static final int DEFAULT_PORT = 9222;
     private static final String DEFAULT_WEBRTC_POLICY = "disable_non_proxied_udp";
 
     private final String executablePath;
@@ -83,10 +88,19 @@ public class BrowserConfig {
         return Path.of(tempDir, "nodriver4j-" + uniqueId);
     }
 
+    /**
+     * Builder for creating BrowserConfig instances.
+     *
+     * <p>Required fields:</p>
+     * <ul>
+     *   <li>{@link #executablePath(String)} - path to Chrome executable</li>
+     *   <li>{@link #port(int)} - CDP debugging port</li>
+     * </ul>
+     */
     public static class Builder {
 
         private String executablePath;
-        private int port = DEFAULT_PORT;
+        private int port = -1; // -1 indicates not set
         private boolean headless = false;
         private Path userDataDir;
         private boolean warmProfile = false;
@@ -96,26 +110,71 @@ public class BrowserConfig {
 
         private Builder() {}
 
+        /**
+         * Sets the path to the Chrome executable. Required.
+         *
+         * @param executablePath path to chrome or chrome-headless-shell
+         * @return this builder
+         */
         public Builder executablePath(String executablePath) {
             this.executablePath = executablePath;
             return this;
         }
 
+        /**
+         * Sets the CDP debugging port. Required.
+         *
+         * <p>When using {@link BrowserManager}, the port is allocated automatically.
+         * Only set this manually when managing browsers directly.</p>
+         *
+         * @param port the debugging port (1-65535)
+         * @return this builder
+         */
         public Builder port(int port) {
             this.port = port;
             return this;
         }
 
+        /**
+         * Enables or disables headless mode.
+         *
+         * <p>Default: false (visible browser window)</p>
+         *
+         * @param headless true to run without GUI
+         * @return this builder
+         */
         public Builder headless(boolean headless) {
             this.headless = headless;
             return this;
         }
 
+        /**
+         * Enables or disables profile warming.
+         *
+         * <p>When enabled, the browser visits common websites after launch
+         * to collect cookies and make the profile appear more natural.</p>
+         *
+         * <p>Default: false</p>
+         *
+         * @param warmProfile true to enable profile warming
+         * @return this builder
+         */
         public Builder warmProfile(boolean warmProfile) {
             this.warmProfile = warmProfile;
             return this;
         }
 
+        /**
+         * Enables or disables fingerprint spoofing.
+         *
+         * <p>When enabled, a random browser fingerprint is loaded and applied
+         * to make the browser appear as a different device.</p>
+         *
+         * <p>Default: false</p>
+         *
+         * @param fingerprintEnabled true to enable fingerprinting
+         * @return this builder
+         */
         public Builder fingerprintEnabled(boolean fingerprintEnabled) {
             this.fingerprintEnabled = fingerprintEnabled;
             return this;
@@ -123,6 +182,8 @@ public class BrowserConfig {
 
         /**
          * Sets the WebRTC IP handling policy.
+         *
+         * <p>Default: "disable_non_proxied_udp" (prevents WebRTC IP leaks when using proxy)</p>
          *
          * @param webrtcPolicy one of: "default", "default_public_interface_only",
          *                     "default_public_and_private_interfaces", "disable_non_proxied_udp"
@@ -146,7 +207,8 @@ public class BrowserConfig {
 
         /**
          * Sets the proxy configuration from a proxy string.
-         * Format: host:port:username:password
+         *
+         * <p>Format: host:port:username:password</p>
          *
          * @param proxyString the proxy string to parse
          * @return this builder
@@ -158,28 +220,17 @@ public class BrowserConfig {
         }
 
         /**
-         * Loads proxy configuration from the file specified by the "proxies" environment variable.
-         * Uses the first non-empty, non-comment line from the file.
+         * Builds the BrowserConfig with the configured settings.
          *
-         * @return this builder
-         * @throws IllegalStateException if the environment variable is not set
-         * @throws RuntimeException if the file cannot be read or is empty
+         * @return a new BrowserConfig instance
+         * @throws IllegalStateException if required fields are not set
          */
-        public Builder proxyFromEnv() {
-            try {
-                this.proxyConfig = new ProxyConfig();
-            } catch (IOException e) {
-                throw new RuntimeException("Failed to load proxy from environment: " + e.getMessage(), e);
-            }
-            return this;
-        }
-
         public BrowserConfig build() {
             if (executablePath == null || executablePath.isBlank()) {
                 throw new IllegalStateException("executablePath is required");
             }
             if (port < 1 || port > 65535) {
-                throw new IllegalStateException("port must be between 1 and 65535");
+                throw new IllegalStateException("port is required and must be between 1 and 65535");
             }
             this.userDataDir = generateTempUserDataDir();
             return new BrowserConfig(this);

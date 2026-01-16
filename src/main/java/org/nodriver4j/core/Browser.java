@@ -2,7 +2,6 @@ package org.nodriver4j.core;
 
 import com.google.gson.JsonObject;
 import org.nodriver4j.cdp.CDPClient;
-import org.nodriver4j.cdp.ProfileWarmer;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -10,10 +9,30 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
  * Manages a Chrome browser process with optional fingerprint spoofing and proxy support.
+ *
+ * <p>This class handles the low-level browser lifecycle:</p>
+ * <ul>
+ *   <li>Launching Chrome with appropriate command-line arguments</li>
+ *   <li>Establishing CDP connections (browser-level and page-level)</li>
+ *   <li>Setting up proxy authentication via CDP Fetch domain</li>
+ *   <li>Applying fingerprint settings via CDP Emulation domain</li>
+ *   <li>Cleanup on close (terminate process, delete user data directory)</li>
+ * </ul>
+ *
+ * <p>Profile warming is handled separately by {@link BrowserSession#warm()} to allow
+ * parallel warming of multiple browsers.</p>
+ *
+ * <p>For most use cases, prefer using {@link BrowserManager} which handles
+ * resource allocation (ports, proxies) automatically. Direct use of Browser
+ * is for advanced scenarios requiring manual control.</p>
+ *
+ * @see BrowserManager
+ * @see BrowserSession
  */
 public class Browser implements AutoCloseable {
 
@@ -26,7 +45,8 @@ public class Browser implements AutoCloseable {
     private final CDPClient browserCdpClient;    // Browser-level connection (Fetch for proxy auth)
     private final Fingerprint fingerprint;
 
-    private Browser(BrowserConfig config, Process process, CDPClient cdpClient, CDPClient browserCdpClient, Fingerprint fingerprint) {
+    private Browser(BrowserConfig config, Process process, CDPClient cdpClient,
+                    CDPClient browserCdpClient, Fingerprint fingerprint) {
         this.config = config;
         this.process = process;
         this.cdpClient = cdpClient;
@@ -37,9 +57,16 @@ public class Browser implements AutoCloseable {
     /**
      * Launches a new browser instance with the given configuration.
      *
+     * <p>This method blocks until the browser is initialized and ready for use,
+     * including CDP connections, proxy authentication setup, and fingerprint application.</p>
+     *
+     * <p>Note: Profile warming is NOT performed during launch. Use
+     * {@link BrowserSession#warm()} after launch to warm the profile, or
+     * {@link BrowserManager#warmSessions(List)} for parallel warming of multiple browsers.</p>
+     *
      * @param config the browser configuration
      * @return a running Browser instance
-     * @throws IOException if the browser process fails to start
+     * @throws IOException if the browser process fails to start or CDP connection fails
      */
     public static Browser launch(BrowserConfig config) throws IOException {
         // Load fingerprint if enabled
@@ -52,15 +79,7 @@ public class Browser implements AutoCloseable {
 
         List<String> arguments = buildArguments(config, fingerprint);
 
-        System.out.println("[Browser] Launching with arguments:");
-        for (String arg : arguments) {
-            // Mask potentially sensitive or long strings for cleaner logging
-            if (arg.startsWith("--fingerprint-gpu-renderer=")) {
-                System.out.println("  " + arg.substring(0, 60) + "...");
-            } else {
-                System.out.println("  " + arg);
-            }
-        }
+        System.out.println("[Browser] Launching on port " + config.getPort() + "...");
 
         ProcessBuilder processBuilder = new ProcessBuilder(arguments);
         Process process = processBuilder.start();
@@ -87,17 +106,7 @@ public class Browser implements AutoCloseable {
             browser.applyFingerprintViaCDP();
         }
 
-        // Warm profile if enabled
-        if (config.isWarmProfile()) {
-            System.out.println("[Browser] Profile warming enabled, starting...");
-            ProfileWarmer warmer = new ProfileWarmer(cdpClient);
-            ProfileWarmer.WarmingResult result = warmer.warm();
-            if (result.hasWarnings()) {
-                System.err.println("[Browser] Profile warming completed with " + result.getWarnings().size() + " warnings");
-            } else {
-                System.out.println("[Browser] Profile warming completed successfully");
-            }
-        }
+        System.out.println("[Browser] Ready on port " + config.getPort());
 
         return browser;
     }
@@ -109,7 +118,8 @@ public class Browser implements AutoCloseable {
      */
     private void setupProxyAuthentication() {
         ProxyConfig proxy = config.getProxyConfig();
-        System.out.println("[Browser] Setting up proxy authentication for " + proxy.getHost() + ":" + proxy.getPort());
+        System.out.println("[Browser] Setting up proxy authentication for " +
+                proxy.getHost() + ":" + proxy.getPort());
 
         try {
             // Enable Fetch domain with auth interception on BROWSER-level connection
@@ -133,8 +143,6 @@ public class Browser implements AutoCloseable {
     /**
      * Handles paused requests from CDP.
      * Continues the request immediately without modification.
-     *
-     * @param event the Fetch.requestPaused event parameters
      */
     private void handleRequestPaused(JsonObject event) {
         String requestId = event.get("requestId").getAsString();
@@ -150,8 +158,6 @@ public class Browser implements AutoCloseable {
      * Handles proxy authentication challenges from CDP.
      * Called each time the proxy requires authentication (initial connection,
      * reconnection after timeout, new parallel connections, etc.)
-     *
-     * @param event the Fetch.authRequired event parameters
      */
     private void handleProxyAuthRequired(JsonObject event) {
         ProxyConfig proxy = config.getProxyConfig();
@@ -225,7 +231,8 @@ public class Browser implements AutoCloseable {
                 return CDPClient.connect(port);
             } catch (Exception e) {
                 if (i == CDP_CONNECTION_MAX_RETRIES - 1) {
-                    throw new IOException("Failed to connect to CDP page target after " + CDP_CONNECTION_MAX_RETRIES + " retries", e);
+                    throw new IOException("Failed to connect to CDP page target after " +
+                            CDP_CONNECTION_MAX_RETRIES + " retries", e);
                 }
                 try {
                     Thread.sleep(CDP_CONNECTION_RETRY_DELAY_MS);
@@ -244,7 +251,8 @@ public class Browser implements AutoCloseable {
                 return CDPClient.connectToBrowser(port);
             } catch (Exception e) {
                 if (i == CDP_CONNECTION_MAX_RETRIES - 1) {
-                    throw new IOException("Failed to connect to CDP browser target after " + CDP_CONNECTION_MAX_RETRIES + " retries", e);
+                    throw new IOException("Failed to connect to CDP browser target after " +
+                            CDP_CONNECTION_MAX_RETRIES + " retries", e);
                 }
                 try {
                     Thread.sleep(CDP_CONNECTION_RETRY_DELAY_MS);
@@ -258,8 +266,14 @@ public class Browser implements AutoCloseable {
     }
 
     /**
-     * Closes the browser and terminates the process.
-     * Also deletes the temporary user data directory.
+     * Closes the browser and releases all resources.
+     *
+     * <p>This method:</p>
+     * <ul>
+     *   <li>Closes CDP WebSocket connections</li>
+     *   <li>Terminates the Chrome process</li>
+     *   <li>Deletes the temporary user data directory</li>
+     * </ul>
      */
     @Override
     public void close() {
@@ -270,16 +284,20 @@ public class Browser implements AutoCloseable {
         if (cdpClient != null) {
             cdpClient.close();
         }
-
-        if (process.isAlive()) {
+        try {
             process.destroy();
+            Thread.sleep(150);
+            deleteUserDataDir();
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
         }
-        deleteUserDataDir();
     }
 
     /**
      * Gets the page-level CDP client for direct protocol access.
-     * Use this for page-specific commands (Page, DOM, Emulation, etc.)
+     *
+     * <p>Use this for page-specific commands like Page, DOM, Emulation,
+     * Network (monitoring), Runtime, etc.</p>
      *
      * @return the page-level CDPClient instance
      */
@@ -289,7 +307,9 @@ public class Browser implements AutoCloseable {
 
     /**
      * Gets the browser-level CDP client, if available.
-     * Only present when proxy authentication is enabled.
+     *
+     * <p>Only present when proxy authentication is enabled. Use this for
+     * browser-wide commands that should apply to all tabs.</p>
      *
      * @return the browser-level CDPClient instance, or null if not using proxy
      */
@@ -315,6 +335,28 @@ public class Browser implements AutoCloseable {
         return config.getProxyConfig();
     }
 
+    /**
+     * Checks if profile warming is enabled for this browser.
+     *
+     * @return true if warming should be performed
+     */
+    public boolean isWarmProfileEnabled() {
+        return config.isWarmProfile();
+    }
+
+    /**
+     * Checks if the browser process is still running.
+     *
+     * @return true if the Chrome process is alive
+     */
+    public boolean isRunning() {
+        return process.isAlive();
+    }
+
+    /**
+     * Deletes the temporary user data directory.
+     * Called during close() to clean up disk space.
+     */
     private void deleteUserDataDir() {
         Path userDataDir = config.getUserDataDir();
         if (userDataDir == null || !Files.exists(userDataDir)) {
@@ -327,25 +369,12 @@ public class Browser implements AutoCloseable {
                         try {
                             Files.delete(path);
                         } catch (IOException e) {
-                            System.err.println("Failed to delete: " + path);
+                            System.err.println("[Browser] Failed to delete: " + path);
                         }
                     });
         } catch (IOException e) {
-            System.err.println("Failed to delete user data directory: " + userDataDir);
+            System.err.println("[Browser] Failed to delete user data directory: " + userDataDir);
         }
-    }
-
-    /**
-     * Checks if the browser process is still running.
-     *
-     * @return true if the process is alive
-     */
-    public boolean isRunning() {
-        return process.isAlive();
-    }
-
-    public BrowserConfig getConfig() {
-        return config;
     }
 
     private static List<String> buildArguments(BrowserConfig config, Fingerprint fingerprint) {
