@@ -1,12 +1,3 @@
-res-us.lightningproxies.net:9999:NoDriver4j-zone-lightning-region-us-st-california-session-IO9VulXBKrPr-sessTime-120:69693Eca829cb145A
-res-us.lightningproxies.net:9999:NoDriver4j-zone-lightning-region-us-st-california-session-SN6nJqhFUcci-sessTime-120:69693Eca829cb145A
-res-us.lightningproxies.net:9999:NoDriver4j-zone-lightning-region-us-st-california-session-sV2ukBDHlfWk-sessTime-120:69693Eca829cb145A
-res-us.lightningproxies.net:9999:NoDriver4j-zone-lightning-region-us-st-california-session-Yhakff57fvwr-sessTime-120:69693Eca829cb145A
-res-us.lightningproxies.net:9999:NoDriver4j-zone-lightning-region-us-st-california-session-yrzzjyEe3Dv2-sessTime-120:69693Eca829cb145A
-res-us.lightningproxies.net:9999:NoDriver4j-zone-lightning-region-us-st-california-session-k1XNWhfyjrpl-sessTime-120:69693Eca829cb145A
-res-us.lightningproxies.net:9999:NoDriver4j-zone-lightning-region-us-st-california-session-BOzYbsjqn5c2-sessTime-120:69693Eca829cb145A
-res-us.lightningproxies.net:9999:NoDriver4j-zone-lightning-region-us-st-california-session-kj0oYVgU2TsL-sessTime-120:69693Eca829cb145A
-res-us.lightningproxies.net:9999:NoDriver4j-zone-lightning-region-us-st-california-session-ppYLnr8ZRKmn-sessTime-120:69693Eca829cb145A
 res-us.lightningproxies.net:9999:NoDriver4j-zone-lightning-region-us-st-california-session-SpP5J4MxKe4R-sessTime-120:69693Eca829cb145A
 res-us.lightningproxies.net:9999:NoDriver4j-zone-lightning-region-us-st-california-session-TjKnw76pdcto-sessTime-120:69693Eca829cb145A
 res-us.lightningproxies.net:9999:NoDriver4j-zone-lightning-region-us-st-california-session-MjwHkzvQ7pjr-sessTime-120:69693Eca829cb145A

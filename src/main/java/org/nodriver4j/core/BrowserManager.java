@@ -1,7 +1,5 @@
 package org.nodriver4j.core;
 
-import org.nodriver4j.cdp.ProfileWarmer;
-
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -11,16 +9,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 
 /**
- * Manages browser sessions with automatic resource allocation and thread pool execution.
+ * Manages browser instances with automatic resource allocation and thread pool execution.
  *
  * <p>BrowserManager handles:</p>
  * <ul>
  *   <li>Thread pool management (auto-sized to available processors by default)</li>
  *   <li>Port allocation for CDP connections</li>
  *   <li>Proxy consumption from file (if enabled)</li>
- *   <li>Session lifecycle and cleanup</li>
- *   <li>Parallel profile warming</li>
- *   <li>Human-like interaction options</li>
+ *   <li>Automatic profile warming (if enabled)</li>
+ *   <li>Browser lifecycle and cleanup</li>
  * </ul>
  *
  * <h2>Usage Examples</h2>
@@ -42,19 +39,23 @@ import java.util.function.Function;
  * manager.shutdown();
  * }</pre>
  *
- * <h3>Manual Session Control with Page API</h3>
+ * <h3>Manual Browser Control</h3>
  * <pre>{@code
  * BrowserManager manager = BrowserManager.builder()
  *     .executablePath("/path/to/chrome")
- *     .interactionOptions(InteractionOptions.defaults())
+ *     .warmProfile(true)  // Enable auto-warming
  *     .build();
  *
- * try (BrowserSession session = manager.createSession()) {
- *     Page page = session.getPage();
+ * // Single browser - auto-warms if enabled
+ * try (Browser browser = manager.createSession()) {
+ *     Page page = browser.getPage();
  *     page.navigate("https://example.com");
  *     page.click("//button[@id='login']");
- *     page.type("//input[@name='user']", "myuser");
  * }
+ *
+ * // Multiple browsers - creates all, then warms all in parallel
+ * List<Browser> browsers = manager.createSessions(6);
+ * // All 6 browsers are now launched and warmed (if enabled)
  * }</pre>
  *
  * <h3>Custom Interaction Options</h3>
@@ -78,7 +79,7 @@ public class BrowserManager implements AutoCloseable {
 
     private final ExecutorService executor;
     private final BlockingQueue<Integer> availablePorts;
-    private final Set<BrowserSession> activeSessions;
+    private final Set<Browser> activeBrowsers;
     private final AtomicBoolean isShutdown;
     private final Thread shutdownHook;
 
@@ -101,7 +102,7 @@ public class BrowserManager implements AutoCloseable {
         this.interactionOptions = builder.interactionOptions;
 
         this.isShutdown = new AtomicBoolean(false);
-        this.activeSessions = ConcurrentHashMap.newKeySet();
+        this.activeBrowsers = ConcurrentHashMap.newKeySet();
 
         // Initialize port pool
         this.availablePorts = new LinkedBlockingQueue<>();
@@ -128,7 +129,7 @@ public class BrowserManager implements AutoCloseable {
         Runtime.getRuntime().addShutdownHook(shutdownHook);
 
         System.out.println("[BrowserManager] Initialized with " + threadCount + " threads, "
-                + availablePorts.size() + " ports available");
+                + availablePorts.size() + " ports available, warmProfile=" + warmProfile);
     }
 
     /**
@@ -140,15 +141,18 @@ public class BrowserManager implements AutoCloseable {
         return new Builder();
     }
 
+    // ==================== Task Submission Methods ====================
+
     /**
      * Submits an automation task for execution.
      *
      * <p>The task will be queued and executed when a thread becomes available.
-     * A new browser session is created for the task and automatically closed
+     * A new browser is created for the task and automatically closed
      * after the task completes (whether successfully or with an exception).</p>
      *
-     * <p>The task receives a {@link Browser} instance. For page interactions,
-     * use {@code browser.getPage()} to access the {@link Page} API:</p>
+     * <p>If warming is enabled, the browser is warmed before the task runs.</p>
+     *
+     * <p>Example:</p>
      * <pre>{@code
      * manager.submit(browser -> {
      *     Page page = browser.getPage();
@@ -167,12 +171,8 @@ public class BrowserManager implements AutoCloseable {
         ensureNotShutdown();
 
         return executor.submit(() -> {
-            try (BrowserSession session = createSession()) {
-                // Auto-warm if enabled
-                if (session.isWarmProfileEnabled()) {
-                    session.warm();
-                }
-                return task.apply(session.getBrowser());
+            try (Browser browser = createSession()) {
+                return task.apply(browser);
             }
         });
     }
@@ -188,12 +188,8 @@ public class BrowserManager implements AutoCloseable {
         ensureNotShutdown();
 
         return executor.submit(() -> {
-            try (BrowserSession session = createSession()) {
-                // Auto-warm if enabled
-                if (session.isWarmProfileEnabled()) {
-                    session.warm();
-                }
-                task.accept(session.getBrowser());
+            try (Browser browser = createSession()) {
+                task.accept(browser);
                 return null;
             }
         });
@@ -220,12 +216,8 @@ public class BrowserManager implements AutoCloseable {
         ensureNotShutdown();
 
         return executor.submit(() -> {
-            try (BrowserSession session = createSession()) {
-                // Auto-warm if enabled
-                if (session.isWarmProfileEnabled()) {
-                    session.warm();
-                }
-                return task.apply(session.getPage());
+            try (Browser browser = createSession()) {
+                return task.apply(browser.getPage());
             }
         });
     }
@@ -241,41 +233,131 @@ public class BrowserManager implements AutoCloseable {
         ensureNotShutdown();
 
         return executor.submit(() -> {
-            try (BrowserSession session = createSession()) {
-                // Auto-warm if enabled
-                if (session.isWarmProfileEnabled()) {
-                    session.warm();
-                }
-                task.accept(session.getPage());
+            try (Browser browser = createSession()) {
+                task.accept(browser.getPage());
                 return null;
             }
         });
     }
 
+    // ==================== Browser Creation Methods ====================
+
     /**
-     * Creates a new browser session for manual control.
+     * Creates a new browser instance.
      *
-     * <p>The caller is responsible for closing the session when done.
+     * <p>If warming is enabled in the manager configuration, the browser will
+     * be automatically warmed before this method returns.</p>
+     *
+     * <p>The caller is responsible for closing the browser when done.
      * Use try-with-resources for automatic cleanup:</p>
      *
      * <pre>{@code
-     * try (BrowserSession session = manager.createSession()) {
-     *     Page page = session.getPage();
+     * try (Browser browser = manager.createSession()) {
+     *     Page page = browser.getPage();
      *     page.navigate("https://example.com");
      *     page.click("//button[@id='submit']");
      * }
      * }</pre>
      *
-     * <p>Note: Profile warming is NOT performed automatically when using createSession().
-     * Call {@link BrowserSession#warm()} or {@link #warmSessions(List)} explicitly.</p>
-     *
-     * @return a new BrowserSession
+     * @return a new Browser instance (warmed if warming is enabled)
      * @throws IOException              if the browser fails to launch
      * @throws IllegalStateException    if the manager has been shutdown
      * @throws InterruptedException     if interrupted while waiting for a port
      * @throws NoAvailablePortException if no ports are available (all in use)
      */
-    public BrowserSession createSession() throws IOException, InterruptedException {
+    public Browser createSession() throws IOException, InterruptedException {
+        Browser browser = createBrowserInternal();
+
+        // Auto-warm if enabled (blocks until complete)
+        if (warmProfile) {
+            browser.warm();
+        }
+
+        return browser;
+    }
+
+    /**
+     * Creates multiple browser instances with parallel warming.
+     *
+     * <p>This method is optimized for creating multiple browsers:</p>
+     * <ol>
+     *   <li>Phase 1: Creates all browsers as fast as possible (sequential but fast)</li>
+     *   <li>Phase 2: Warms all browsers in parallel using the thread pool (if warming enabled)</li>
+     * </ol>
+     *
+     * <p>If any browser fails to launch, the method continues with the remaining browsers
+     * and logs warnings for failures. Successfully created browsers are returned.</p>
+     *
+     * <p>Example:</p>
+     * <pre>{@code
+     * // Create 6 browsers - all warmed in parallel
+     * List<Browser> browsers = manager.createSessions(6);
+     *
+     * // Use the browsers
+     * for (Browser browser : browsers) {
+     *     // Each browser is ready to use
+     *     browser.getPage().navigate("https://example.com");
+     * }
+     *
+     * // Don't forget to close them when done
+     * browsers.forEach(Browser::close);
+     * }</pre>
+     *
+     * @param count the number of browsers to create
+     * @return list of successfully created browsers (may be less than count if some failed)
+     * @throws IllegalStateException    if the manager has been shutdown
+     * @throws IllegalArgumentException if count is less than 1
+     */
+    public List<Browser> createSessions(int count) throws InterruptedException {
+        ensureNotShutdown();
+
+        if (count < 1) {
+            throw new IllegalArgumentException("Count must be at least 1, got: " + count);
+        }
+
+        List<Browser> browsers = new ArrayList<>();
+        List<String> errors = new ArrayList<>();
+
+        System.out.println("[BrowserManager] Creating " + count + " browser(s)...");
+
+        // Phase 1: Create all browsers (fast, no warming)
+        for (int i = 0; i < count; i++) {
+            try {
+                Browser browser = createBrowserInternal();
+                browsers.add(browser);
+                System.out.println("[BrowserManager] Browser " + (i + 1) + "/" + count +
+                        " launched (port " + browser.getPort() + ")");
+            } catch (IOException e) {
+                String error = "Browser " + (i + 1) + ": " + e.getMessage();
+                errors.add(error);
+                System.err.println("[BrowserManager] Failed to launch browser " + (i + 1) + ": " + e.getMessage());
+            }
+        }
+
+        // Log warnings for failures
+        if (!errors.isEmpty()) {
+            System.err.println("[BrowserManager] Warning: " + errors.size() + " of " + count +
+                    " browser(s) failed to launch");
+        }
+
+        // Phase 2: Warm all browsers in parallel (if enabled)
+        if (warmProfile && !browsers.isEmpty()) {
+            warmAllInternal(browsers);
+        }
+
+        System.out.println("[BrowserManager] " + browsers.size() + " browser(s) ready");
+
+        return browsers;
+    }
+
+    /**
+     * Creates a browser without warming (internal use only).
+     *
+     * @return a new Browser instance (not warmed)
+     * @throws IOException          if the browser fails to launch
+     * @throws InterruptedException if interrupted while waiting for a port
+     */
+    private Browser createBrowserInternal() throws IOException, InterruptedException {
         ensureNotShutdown();
 
         // Allocate port (blocks if none available, but with timeout)
@@ -287,126 +369,62 @@ public class BrowserManager implements AutoCloseable {
 
         try {
             BrowserConfig config = buildConfig(port);
-            BrowserSession session = new BrowserSession(config, this::releasePort, interactionOptions);
+            Browser browser = Browser.launch(config, this::releasePort, interactionOptions);
 
-            // Track session for shutdown cleanup
-            activeSessions.add(session);
+            // Track browser for shutdown cleanup
+            activeBrowsers.add(browser);
 
-            // Remove from tracking when session closes
-            session.getBrowser(); // Just to ensure it's valid before we return
-
-            return session;
+            return browser;
 
         } catch (IOException | RuntimeException e) {
-            // Release port if session creation fails
+            // Release port if browser creation fails
             releasePort(port);
             throw e;
         }
     }
 
     /**
-     * Warms multiple browser sessions in parallel.
+     * Warms multiple browsers in parallel using the thread pool.
      *
-     * <p>This method uses the thread pool to warm all sessions concurrently,
-     * which is much faster than warming them sequentially.</p>
-     *
-     * <p>Example:</p>
-     * <pre>{@code
-     * List<BrowserSession> sessions = new ArrayList<>();
-     * for (int i = 0; i < 6; i++) {
-     *     sessions.add(manager.createSession());
-     * }
-     * manager.warmSessions(sessions); // Warms all 6 in parallel
-     * }</pre>
-     *
-     * <p>This method blocks until all sessions have completed warming.</p>
-     *
-     * @param sessions the list of sessions to warm
-     * @return a list of warming results, one per session (in same order as input)
-     * @throws IllegalStateException if the manager has been shutdown
+     * @param browsers the browsers to warm
      */
-    public List<ProfileWarmer.WarmingResult> warmSessions(List<BrowserSession> sessions) {
-        ensureNotShutdown();
-
-        if (sessions == null || sessions.isEmpty()) {
-            return new ArrayList<>();
+    private void warmAllInternal(List<Browser> browsers) {
+        if (browsers.isEmpty()) {
+            return;
         }
 
-        System.out.println("[BrowserManager] Starting parallel warming of " + sessions.size() + " sessions...");
+        System.out.println("[BrowserManager] Warming " + browsers.size() + " browser(s) in parallel...");
 
-        // Submit warming tasks for all sessions
-        List<Future<ProfileWarmer.WarmingResult>> futures = new ArrayList<>();
-        for (BrowserSession session : sessions) {
-            Future<ProfileWarmer.WarmingResult> future = executor.submit(session::warm);
-            futures.add(future);
+        // Submit warming tasks to thread pool
+        List<Future<?>> futures = new ArrayList<>();
+        for (Browser browser : browsers) {
+            futures.add(executor.submit(browser::warm));
         }
 
-        // Collect results
-        List<ProfileWarmer.WarmingResult> results = new ArrayList<>();
+        // Wait for all to complete, log any failures
         int successCount = 0;
-        int warningCount = 0;
+        int failureCount = 0;
 
         for (int i = 0; i < futures.size(); i++) {
             try {
-                ProfileWarmer.WarmingResult result = futures.get(i).get();
-                results.add(result);
-
-                if (result.hasWarnings()) {
-                    warningCount++;
-                } else {
-                    successCount++;
-                }
+                futures.get(i).get();
+                successCount++;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                System.err.println("[BrowserManager] Warming interrupted for session " + (i + 1));
-                results.add(new ProfileWarmer.WarmingResult(
-                        java.util.Collections.emptyMap(),
-                        java.util.Collections.singletonList("Warming interrupted")
-                ));
+                System.err.println("[BrowserManager] Warming interrupted for browser " + (i + 1));
+                failureCount++;
             } catch (ExecutionException e) {
-                System.err.println("[BrowserManager] Warming failed for session " + (i + 1) + ": " + e.getCause().getMessage());
-                results.add(new ProfileWarmer.WarmingResult(
-                        java.util.Collections.emptyMap(),
-                        java.util.Collections.singletonList("Warming failed: " + e.getCause().getMessage())
-                ));
+                System.err.println("[BrowserManager] Warming failed for browser " + (i + 1) +
+                        ": " + e.getCause().getMessage());
+                failureCount++;
             }
         }
 
-        System.out.println("[BrowserManager] Parallel warming complete: " + successCount + " succeeded, " +
-                warningCount + " with warnings, " + (sessions.size() - successCount - warningCount) + " failed");
-
-        return results;
+        System.out.println("[BrowserManager] Warming complete: " + successCount + " succeeded, " +
+                failureCount + " failed");
     }
 
-    /**
-     * Warms sessions that have warming enabled in their configuration.
-     *
-     * <p>Convenience method that filters the list to only warm sessions
-     * where {@link BrowserSession#isWarmProfileEnabled()} returns true.</p>
-     *
-     * @param sessions the list of sessions to potentially warm
-     * @return a list of warming results for sessions that were warmed
-     * @throws IllegalStateException if the manager has been shutdown
-     */
-    public List<ProfileWarmer.WarmingResult> warmEnabledSessions(List<BrowserSession> sessions) {
-        if (sessions == null || sessions.isEmpty()) {
-            return new ArrayList<>();
-        }
-
-        List<BrowserSession> toWarm = new ArrayList<>();
-        for (BrowserSession session : sessions) {
-            if (session.isWarmProfileEnabled() && !session.isWarmed()) {
-                toWarm.add(session);
-            }
-        }
-
-        if (toWarm.isEmpty()) {
-            System.out.println("[BrowserManager] No sessions require warming");
-            return new ArrayList<>();
-        }
-
-        return warmSessions(toWarm);
-    }
+    // ==================== Configuration Helpers ====================
 
     /**
      * Builds a BrowserConfig with the allocated port and current settings.
@@ -446,6 +464,8 @@ public class BrowserManager implements AutoCloseable {
         System.out.println("[BrowserManager] Released port " + port + " (available: " + availablePorts.size() + ")");
     }
 
+    // ==================== Status Methods ====================
+
     /**
      * Gets the interaction options configured for this manager.
      *
@@ -456,10 +476,57 @@ public class BrowserManager implements AutoCloseable {
     }
 
     /**
+     * Gets the number of currently active browsers.
+     *
+     * @return the count of active browsers
+     */
+    public int getActiveBrowserCount() {
+        return activeBrowsers.size();
+    }
+
+    /**
+     * Gets the number of available ports.
+     *
+     * @return the count of ports not currently in use
+     */
+    public int getAvailablePortCount() {
+        return availablePorts.size();
+    }
+
+    /**
+     * Checks if the manager has been shutdown.
+     *
+     * @return true if shutdown has been initiated
+     */
+    public boolean isShutdown() {
+        return isShutdown.get();
+    }
+
+    /**
+     * Checks if all tasks have completed after shutdown.
+     *
+     * @return true if shutdown and all tasks are done
+     */
+    public boolean isTerminated() {
+        return executor.isTerminated();
+    }
+
+    /**
+     * Checks if profile warming is enabled.
+     *
+     * @return true if warming is enabled
+     */
+    public boolean isWarmProfileEnabled() {
+        return warmProfile;
+    }
+
+    // ==================== Shutdown Methods ====================
+
+    /**
      * Initiates an orderly shutdown.
      *
      * <p>Stops accepting new tasks and waits for currently executing tasks to complete.
-     * Does not forcibly close running browser sessions.</p>
+     * Does not forcibly close running browsers.</p>
      */
     public void shutdown() {
         if (!isShutdown.compareAndSet(false, true)) {
@@ -493,14 +560,14 @@ public class BrowserManager implements AutoCloseable {
     }
 
     /**
-     * Attempts to stop all actively executing tasks and closes all browser sessions.
+     * Attempts to stop all actively executing tasks and closes all browsers.
      *
      * <p>Use this for immediate cleanup when you don't want to wait for tasks to complete.</p>
      */
     public void shutdownNow() {
         if (!isShutdown.compareAndSet(false, true)) {
-            // Already shutdown, but still close sessions
-            closeAllSessions();
+            // Already shutdown, but still close browsers
+            closeAllBrowsers();
             return;
         }
 
@@ -509,8 +576,8 @@ public class BrowserManager implements AutoCloseable {
         // Stop accepting and interrupt running tasks
         executor.shutdownNow();
 
-        // Close all active sessions
-        closeAllSessions();
+        // Close all active browsers
+        closeAllBrowsers();
 
         // Remove shutdown hook
         try {
@@ -533,31 +600,31 @@ public class BrowserManager implements AutoCloseable {
     }
 
     /**
-     * Closes all active browser sessions.
+     * Closes all active browsers.
      */
-    private void closeAllSessions() {
-        System.out.println("[BrowserManager] Closing " + activeSessions.size() + " active sessions...");
+    private void closeAllBrowsers() {
+        System.out.println("[BrowserManager] Closing " + activeBrowsers.size() + " active browser(s)...");
 
-        for (BrowserSession session : activeSessions) {
+        for (Browser browser : activeBrowsers) {
             try {
-                session.close();
+                browser.close();
             } catch (Exception e) {
-                System.err.println("[BrowserManager] Error closing session: " + e.getMessage());
+                System.err.println("[BrowserManager] Error closing browser: " + e.getMessage());
             }
         }
 
-        activeSessions.clear();
+        activeBrowsers.clear();
     }
 
     /**
      * Emergency shutdown called by JVM shutdown hook.
-     * Closes all sessions without waiting for tasks.
+     * Closes all browsers without waiting for tasks.
      */
     private void emergencyShutdown() {
         System.out.println("[BrowserManager] Emergency shutdown triggered...");
         isShutdown.set(true);
         executor.shutdownNow();
-        closeAllSessions();
+        closeAllBrowsers();
     }
 
     /**
@@ -572,42 +639,6 @@ public class BrowserManager implements AutoCloseable {
     }
 
     /**
-     * Gets the number of currently active browser sessions.
-     *
-     * @return the count of active sessions
-     */
-    public int getActiveSessionCount() {
-        return activeSessions.size();
-    }
-
-    /**
-     * Gets the number of available ports.
-     *
-     * @return the count of ports not currently in use
-     */
-    public int getAvailablePortCount() {
-        return availablePorts.size();
-    }
-
-    /**
-     * Checks if the manager has been shutdown.
-     *
-     * @return true if shutdown has been initiated
-     */
-    public boolean isShutdown() {
-        return isShutdown.get();
-    }
-
-    /**
-     * Checks if all tasks have completed after shutdown.
-     *
-     * @return true if shutdown and all tasks are done
-     */
-    public boolean isTerminated() {
-        return executor.isTerminated();
-    }
-
-    /**
      * Implements AutoCloseable for try-with-resources support.
      * Equivalent to calling {@link #shutdown()}.
      */
@@ -615,6 +646,8 @@ public class BrowserManager implements AutoCloseable {
     public void close() {
         shutdown();
     }
+
+    // ==================== Inner Classes ====================
 
     /**
      * Custom exception thrown when no ports are available.
@@ -646,6 +679,8 @@ public class BrowserManager implements AutoCloseable {
             return thread;
         }
     }
+
+    // ==================== Builder ====================
 
     /**
      * Builder for configuring BrowserManager instances.
@@ -681,7 +716,7 @@ public class BrowserManager implements AutoCloseable {
          *
          * <p>Default: auto-detected using {@code Runtime.getRuntime().availableProcessors()}</p>
          *
-         * @param threadCount the number of concurrent browser sessions to support
+         * @param threadCount the number of concurrent browser operations to support
          * @return this builder
          */
         public Builder threadCount(int threadCount) {
@@ -727,15 +762,18 @@ public class BrowserManager implements AutoCloseable {
         }
 
         /**
-         * Enables or disables profile warming (visiting common sites to collect cookies).
+         * Enables or disables automatic profile warming.
          *
-         * <p>When using {@link #submit(Function)}, warming is performed automatically
-         * if this is enabled. When using {@link #createSession()}, you must call
-         * {@link BrowserSession#warm()} or {@link #warmSessions(List)} explicitly.</p>
+         * <p>When enabled, browsers created via {@link #createSession()} or
+         * {@link #createSessions(int)} will automatically be warmed by visiting
+         * common websites to collect cookies and appear more natural.</p>
+         *
+         * <p>For {@link #createSessions(int)}, warming is performed in parallel
+         * for maximum efficiency.</p>
          *
          * <p>Default: false</p>
          *
-         * @param enabled true to enable profile warming
+         * @param enabled true to enable automatic profile warming
          * @return this builder
          */
         public Builder warmProfile(boolean enabled) {
@@ -774,7 +812,7 @@ public class BrowserManager implements AutoCloseable {
          * Enables or disables proxy usage.
          *
          * <p>When enabled, proxies are consumed from the file specified by the
-         * "proxies" environment variable. Each browser session gets a unique proxy.</p>
+         * "proxies" environment variable. Each browser gets a unique proxy.</p>
          *
          * <p>Default: true</p>
          *
