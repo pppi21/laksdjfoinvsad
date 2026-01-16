@@ -1,4 +1,4 @@
-package org.nodriver4j.cdp;
+package org.nodriver4j.scripts;
 
 import com.google.gson.JsonObject;
 import org.nodriver4j.core.Page;

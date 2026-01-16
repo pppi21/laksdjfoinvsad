@@ -4,7 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.nodriver4j.cdp.CDPClient;
-import org.nodriver4j.cdp.ProfileWarmer;
+import org.nodriver4j.scripts.ProfileWarmer;
 
 import java.io.IOException;
 import java.nio.file.Files;
