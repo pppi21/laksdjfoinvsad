@@ -51,7 +51,7 @@ public class App {
             System.out.println("Phase 2: Warming all browsers in parallel...");
             System.out.println("==========================================\n");
 
-            manager.warmSessions(sessions);
+            manager.warmEnabledSessions(sessions);
 
             System.out.println("\n==========================================");
             System.out.println("All 6 browsers launched and warmed!");
