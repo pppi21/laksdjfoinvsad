@@ -187,7 +187,7 @@ public class Browser implements AutoCloseable {
 
         System.out.println("[Browser] Starting profile warming (port " + port + ")...");
 
-        ProfileWarmer warmer = new ProfileWarmer(cdpClient);
+        ProfileWarmer warmer = new ProfileWarmer(getPage());
         ProfileWarmer.WarmingResult result = warmer.warm();
 
         if (result.hasWarnings()) {
@@ -762,7 +762,7 @@ public class Browser implements AutoCloseable {
             if (process != null) {
                 process.destroy();
                 try {
-                    Thread.sleep(500);
+                    Thread.sleep(50);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
@@ -794,7 +794,8 @@ public class Browser implements AutoCloseable {
     }
 
     /**
-     * Deletes the temporary user data directory.
+     * Deletes the temporary user data directory with retry logic.
+     * Retries deletion to handle files locked by Chrome processes that are still closing.
      * Called during close() to clean up disk space.
      */
     private void deleteUserDataDir() {
@@ -802,19 +803,58 @@ public class Browser implements AutoCloseable {
         if (userDataDir == null || !Files.exists(userDataDir)) {
             return;
         }
+
+        final int maxRetries = 5;
+        final int retryDelayMs = 500;
+
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            if (tryDeleteDirectory(userDataDir)) {
+                return; // Success
+            }
+
+            if (attempt < maxRetries) {
+                try {
+                    Thread.sleep(retryDelayMs);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        }
+
+        // Only log if all retries failed
+        System.err.println("[Browser] Failed to delete user data directory after " + maxRetries +
+                " attempts: " + userDataDir);
+    }
+
+    /**
+     * Attempts to delete a directory and all its contents.
+     *
+     * @param directory the directory to delete
+     * @return true if deletion was successful, false if any file could not be deleted
+     */
+    private boolean tryDeleteDirectory(Path directory) {
+        if (!Files.exists(directory)) {
+            return true;
+        }
+
+        final boolean[] success = {true};
+
         try {
-            Files.walk(userDataDir)
+            Files.walk(directory)
                     .sorted(Comparator.reverseOrder())
                     .forEach(path -> {
                         try {
                             Files.delete(path);
                         } catch (IOException e) {
-                            System.err.println("[Browser] Failed to delete: " + path);
+                            success[0] = false;
                         }
                     });
         } catch (IOException e) {
-            System.err.println("[Browser] Failed to delete user data directory: " + userDataDir);
+            return false;
         }
+
+        return success[0];
     }
 
     // ==================== Command Line Arguments ====================

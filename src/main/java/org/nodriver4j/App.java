@@ -27,8 +27,9 @@ public class App {
         BrowserManager manager = BrowserManager.builder()
                 .executablePath(executablePath)
                 .fingerprintEnabled(true)
-                .proxyEnabled(true)
-                .warmProfile(false)  // Enable auto-warming
+                .webrtcPolicy("default")
+                .proxyEnabled(false)
+                .warmProfile(true)  // Enable auto-warming
                 .build();
 
         List<Browser> browsers = null;
@@ -40,7 +41,7 @@ public class App {
             System.out.println();
 
             // Single call creates all browsers AND warms them in parallel
-            browsers = manager.createSessions(3);
+            browsers = manager.createSessions(2);
 
             System.out.println();
             System.out.println("==========================================");

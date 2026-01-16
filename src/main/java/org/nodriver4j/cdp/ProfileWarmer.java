@@ -1,23 +1,24 @@
 package org.nodriver4j.cdp;
 
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import org.nodriver4j.core.Page;
 
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
  * Warms up a browser profile by visiting common websites to collect cookies.
  * This makes the browser profile appear more natural to anti-bot systems.
+ *
+ * <p>ProfileWarmer uses the high-level {@link Page} API for navigation and
+ * cookie retrieval, ensuring consistent behavior with user automation code.</p>
  */
 public class ProfileWarmer {
 
-    private static final int PAGE_LOAD_TIMEOUT_SECONDS = 30;
+    private static final int PAGE_LOAD_TIMEOUT_MS = 30000;
     private static final int SETTLE_TIME_MS = 2000;
 
-    private final CDPClient cdp;
+    private final Page page;
 
     /**
      * Sites to visit during warming, with their expected cookie names.
@@ -32,8 +33,13 @@ public class ProfileWarmer {
         WARM_SITES.put("https://www.x.com", Arrays.asList("guest_id", "gt", "ct0"));
     }
 
-    public ProfileWarmer(CDPClient cdp) {
-        this.cdp = cdp;
+    /**
+     * Creates a ProfileWarmer that operates on the given page.
+     *
+     * @param page the Page instance to use for navigation and cookie retrieval
+     */
+    public ProfileWarmer(Page page) {
+        this.page = page;
     }
 
     /**
@@ -46,31 +52,32 @@ public class ProfileWarmer {
         List<String> warnings = new ArrayList<>();
         Map<String, List<Cookie>> cookiesBySite = new LinkedHashMap<>();
 
-        try {
-            // Enable required CDP domains
-            cdp.send("Page.enable", null);
-            cdp.send("Network.enable", null);
+        for (Map.Entry<String, List<String>> entry : WARM_SITES.entrySet()) {
+            String url = entry.getKey();
 
-            for (Map.Entry<String, List<String>> entry : WARM_SITES.entrySet()) {
-                String url = entry.getKey();
-                List<String> expectedCookies = entry.getValue();
+            System.out.println("[ProfileWarmer] Visiting: " + url);
 
-                System.out.println("[ProfileWarmer] Visiting: " + url);
+            try {
+                navigateAndWait(url);
 
-                try {
-                    navigateAndWait(url);
+                // Allow time for cookies/trackers to set
+                Thread.sleep(SETTLE_TIME_MS);
 
-                    // Allow time for cookies/trackers to set
-                    Thread.sleep(SETTLE_TIME_MS);
-
-                } catch (Exception e) {
-                    String warning = "Failed to visit " + url + ": " + e.getMessage();
-                    System.err.println("[ProfileWarmer] WARNING: " + warning);
-                    warnings.add(warning);
-                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                String warning = "Warming interrupted while visiting " + url;
+                System.err.println("[ProfileWarmer] WARNING: " + warning);
+                warnings.add(warning);
+                break;
+            } catch (Exception e) {
+                String warning = "Failed to visit " + url + ": " + e.getMessage();
+                System.err.println("[ProfileWarmer] WARNING: " + warning);
+                warnings.add(warning);
             }
+        }
 
-            // Collect all cookies after visiting all sites
+        // Collect all cookies after visiting all sites
+        try {
             List<Cookie> allCookies = getAllCookies();
 
             // Group cookies by domain for logging
@@ -102,7 +109,7 @@ public class ProfileWarmer {
             }
 
         } catch (TimeoutException e) {
-            String warning = "CDP command timed out: " + e.getMessage();
+            String warning = "Failed to retrieve cookies: " + e.getMessage();
             System.err.println("[ProfileWarmer] WARNING: " + warning);
             warnings.add(warning);
         }
@@ -113,31 +120,32 @@ public class ProfileWarmer {
         return new WarmingResult(cookiesBySite, warnings);
     }
 
-    private void navigateAndWait(String url) throws TimeoutException, InterruptedException {
-        // Clear any pending events
-        cdp.clearEvents();
-
-        // Navigate to URL
-        JsonObject params = new JsonObject();
-        params.addProperty("url", url);
-        cdp.send("Page.navigate", params);
-
-        // Wait for page to load
+    /**
+     * Navigates to a URL and waits for the page to load.
+     *
+     * @param url the URL to navigate to
+     */
+    private void navigateAndWait(String url) {
         try {
-            cdp.waitForEvent("Page.loadEventFired", PAGE_LOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            page.navigate(url, PAGE_LOAD_TIMEOUT_MS);
         } catch (TimeoutException e) {
-            // Some sites may not fire loadEventFired reliably, continue anyway
+            // Page.navigate() handles timeouts gracefully internally,
+            // but we catch here just in case the behavior changes
             System.err.println("[ProfileWarmer] Page load timeout for " + url + ", continuing...");
         }
     }
 
+    /**
+     * Retrieves all cookies from the browser.
+     *
+     * @return list of all cookies
+     * @throws TimeoutException if the cookie retrieval times out
+     */
     private List<Cookie> getAllCookies() throws TimeoutException {
-        JsonObject result = cdp.send("Network.getAllCookies", null);
-        JsonArray cookiesArray = result.getAsJsonArray("cookies");
+        List<JsonObject> rawCookies = page.getCookies();
 
         List<Cookie> cookies = new ArrayList<>();
-        for (JsonElement element : cookiesArray) {
-            JsonObject obj = element.getAsJsonObject();
+        for (JsonObject obj : rawCookies) {
             Cookie cookie = new Cookie(
                     getStringOrNull(obj, "name"),
                     getStringOrNull(obj, "value"),
@@ -153,10 +161,16 @@ public class ProfileWarmer {
         return cookies;
     }
 
+    /**
+     * Safely extracts a string value from a JsonObject.
+     */
     private String getStringOrNull(JsonObject obj, String key) {
         return obj.has(key) && !obj.get(key).isJsonNull() ? obj.get(key).getAsString() : null;
     }
 
+    /**
+     * Logs collected cookies grouped by domain.
+     */
     private void logCookies(Map<String, List<Cookie>> cookiesBySite) {
         System.out.println("\n[ProfileWarmer] ===== Cookies Collected =====");
         for (Map.Entry<String, List<Cookie>> entry : cookiesBySite.entrySet()) {
@@ -170,6 +184,9 @@ public class ProfileWarmer {
         System.out.println("\n[ProfileWarmer] ================================\n");
     }
 
+    /**
+     * Truncates a string value for display purposes.
+     */
     private String truncateValue(String value, int maxLength) {
         if (value == null) return "(null)";
         if (value.length() <= maxLength) return value;
