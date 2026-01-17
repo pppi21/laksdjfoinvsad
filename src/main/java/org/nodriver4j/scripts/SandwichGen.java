@@ -11,8 +11,21 @@ import java.util.concurrent.TimeoutException;
 public class SandwichGen {
 
     private static final int PAGE_LOAD_TIMEOUT_MS = 30000;
-    private static final String FIRST_NAME_TEXT = "//*[@id=\"firstName\"]";
+    private static final String FIRST_NAME_TEXT = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[3]/div/input";
     private static final String LAST_NAME_TEXT = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[4]/div/input";
+    private static final String PHONE_NUMBER_TEXT = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[5]/div/input";
+    private static final String  MONTH_TEXT = "/html/body/div[1]/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[6]/div/div/div[1]/input";
+    private static final String DAY_TEXT = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[6]/div/div/div[3]/input";
+    private static final String YEAR_TEXT = "/html/body/div[1]/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[6]/div/div/div[5]/input";
+    private static final String EMAIL_TEXT = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[7]/div/input";
+    private static final String PASSWORD_TEXT = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[8]/div/input";
+    private static final String CONFIRM_PASSWORD_TEXT = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[9]/div/input[1]";
+    private static final String EMAIL_OPT_IN_CHECKBOX = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[10]/div/input[1]";
+    private static final String STATE_DROPDOWN = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[12]/div/div[1]/div/select";
+    private static final String CA_BUTTON = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[12]/div/div[1]/div/select/option[4]";
+    private static final String STORE_DROPDOWN = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[12]/div/div[2]/div/select";
+    private static final String DEL_MAR_BUTTON = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[12]/div/div[2]/div/select/option[18]";
+    private static final String SUBMIT_BUTTON = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[13]/div/button";
 
     private final Page page;
     private final Profile profile;
@@ -47,16 +60,64 @@ public class SandwichGen {
             page.click(FIRST_NAME_TEXT);
             page.sleep(900);
             page.type(profile.firstName());
-            byte[] pngBytes = page.screenshot();
-            Files.write(Path.of("C:\\Users\\leofo\\Documents\\NoDriver4j\\data\\screenshot.png"), pngBytes);
+            page.sleep(2000);
+            page.click(LAST_NAME_TEXT);
+            page.sleep(900);
+            page.type(profile.lastName());
+            page.sleep(2000);
+            page.click(PHONE_NUMBER_TEXT);
+            page.sleep(900);
+            page.type(profile.phone());
+            page.sleep(2000);
+            page.click(MONTH_TEXT);
+            page.sleep(900);
+            page.type(month);
+            page.sleep(1300);
+            page.click(DAY_TEXT);
+            page.sleep(900);
+            page.type(day);
+            page.sleep(1300);
+            page.click(YEAR_TEXT);
+            page.sleep(900);
+            page.type(year);
+            page.sleep(2000);
+            page.click(EMAIL_TEXT);
+            page.sleep(900);
+            page.type(profile.email());
+            page.sleep(2000);
+            page.click(PASSWORD_TEXT);
+            page.sleep(900);
+            page.type(profile.password());
+            page.sleep(2000);
+            page.click(CONFIRM_PASSWORD_TEXT);
+            page.sleep(900);
+            page.type(profile.password());
+            page.sleep(2000);
+            page.click(EMAIL_OPT_IN_CHECKBOX);
+            page.sleep(500);
+            page.scrollToBottom();
+            page.sleep(1000);
+            page.click(STATE_DROPDOWN);
+            page.sleep(2500);
+            page.click(CA_BUTTON);
+            page.sleep(3000);
+            page.click(STORE_DROPDOWN);
+            page.sleep(2500);
+            page.click(DEL_MAR_BUTTON);
+            page.sleep(1500);
+            page.click(SUBMIT_BUTTON);
+
         } catch (TimeoutException | InterruptedException e) {
-            throw new RuntimeException(e);
-        } catch (IOException e) {
             throw new RuntimeException(e);
         }
 
         CreatedIkesAccount account = new CreatedIkesAccount(profile, month, day, year, referrerUrl);
         return account;
+    }
+
+    private void screenshot() throws TimeoutException, IOException {
+        byte[] pngBytes = page.screenshot();
+        Files.write(Path.of("C:\\Users\\leofo\\Documents\\NoDriver4j\\data\\screenshot.png"), pngBytes);
     }
 
     public class CreatedIkesAccount {
