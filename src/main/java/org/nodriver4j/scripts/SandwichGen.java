@@ -2,6 +2,10 @@ package org.nodriver4j.scripts;
 
 import org.nodriver4j.core.*;
 import org.nodriver4j.profiles.Profile;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.concurrent.TimeoutException;
 
 public class SandwichGen {
@@ -31,7 +35,7 @@ public class SandwichGen {
         String year = "2001";
 
         try {
-            page.sleep(10000);
+            page.sleep(3000);
             page.navigate(referrerUrl, 4000);
         } catch (TimeoutException e) {
             throw new RuntimeException(e);
@@ -43,7 +47,11 @@ public class SandwichGen {
             page.click(FIRST_NAME_TEXT);
             page.sleep(900);
             page.type(profile.firstName());
+            byte[] pngBytes = page.screenshot();
+            Files.write(Path.of("C:\\Users\\leofo\\Documents\\NoDriver4j\\data\\screenshot.png"), pngBytes);
         } catch (TimeoutException | InterruptedException e) {
+            throw new RuntimeException(e);
+        } catch (IOException e) {
             throw new RuntimeException(e);
         }
 

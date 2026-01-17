@@ -284,7 +284,7 @@ public class Page {
         long deadline = System.currentTimeMillis() + timeoutMs;
         int retryCount = 0;
 
-        while (System.currentTimeMillis() < deadline) {
+        do {
             try {
                 String result = evaluate(script);
 
@@ -295,16 +295,17 @@ public class Page {
                 // Element not found yet, retry
             }
 
-            if (retryCount >= options.getMaxRetries()) {
+            if (timeoutMs == 0 || retryCount >= options.getMaxRetries()) {
                 break;
             }
 
             retryCount++;
             sleep(options.getRetryInterval());
-        }
+        } while (System.currentTimeMillis() < deadline);
 
         return null;
     }
+
 
     /**
      * Finds all elements matching the XPath selector.
@@ -882,18 +883,12 @@ public class Page {
     private void typeCharacter(char c) throws TimeoutException {
         String text = String.valueOf(c);
 
-        // Key down
+        // Key down - inserts the character
         JsonObject keyDown = new JsonObject();
         keyDown.addProperty("type", "keyDown");
         keyDown.addProperty("text", text);
         keyDown.addProperty("key", text);
         cdp.send("Input.dispatchKeyEvent", keyDown);
-
-        // Char event
-        JsonObject charEvent = new JsonObject();
-        charEvent.addProperty("type", "char");
-        charEvent.addProperty("text", text);
-        cdp.send("Input.dispatchKeyEvent", charEvent);
 
         // Key up
         JsonObject keyUp = new JsonObject();

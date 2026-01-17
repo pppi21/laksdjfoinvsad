@@ -29,8 +29,9 @@ public class App {
         BrowserManager manager = BrowserManager.builder()
                 .executablePath(executablePath)
                 .fingerprintEnabled(true)
-                .webrtcPolicy("default")
-                .proxyEnabled(false)
+                //.webrtcPolicy("default")
+                .headless(true)
+                .proxyEnabled(true)
                 .warmProfile(true)
                 .build();
 
@@ -82,7 +83,9 @@ public class App {
                     .build();
 
             SandwichGen script = new SandwichGen(browsers.get(0).getPage(), profile, "https://ikes.myguestaccount.com/guest/enroll?card-template=JTIldXJsLXBhcmFtLWFlcy1rZXklbC9Mdlh0Y29zR1V6ay9ibSVWMnliSm96NW1nVE5Qb3NtUVN0N1dqaz0%3D&template=2&referral_code=HHnRBikmNBanPhmRBQQFDCJAACBMCHqJa");
+            //SandwichGen script = new SandwichGen(browsers.get(0).getPage(), profile, "https://www.browserscan.net/");
             script.createAccount();
+
 
             // Wait for user input before closing
             System.out.println("Browsers are ready for manual interaction.");
