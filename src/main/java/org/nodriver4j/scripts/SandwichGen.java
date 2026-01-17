@@ -6,6 +6,8 @@ import org.nodriver4j.profiles.Profile;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.concurrent.TimeoutException;
 
 public class SandwichGen {
@@ -117,7 +119,17 @@ public class SandwichGen {
 
     private void screenshot() throws TimeoutException, IOException {
         byte[] pngBytes = page.screenshot();
-        Files.write(Path.of("C:\\Users\\leofo\\Documents\\NoDriver4j\\data\\screenshot.png"), pngBytes);
+
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"));
+        String filename = "screenshot_" + timestamp + ".png";
+
+        Path outputPath = Path.of("C:\\Users\\leofo\\Documents\\NoDriver4j\\screenshots", filename);
+
+        Files.createDirectories(outputPath.getParent());
+
+        Files.write(outputPath, pngBytes);
+
+        System.out.println("Screenshot saved to: " + outputPath);
     }
 
     public class CreatedIkesAccount {
