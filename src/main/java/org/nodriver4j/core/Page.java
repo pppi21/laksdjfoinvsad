@@ -496,6 +496,18 @@ public class Page {
     // ==================== Waiting ====================
 
     /**
+     * Waits for an amount of time with a 10% margin of error.
+     *
+     * @param ms the amount of time in Miliseconds
+     * @return void
+     * @thows
+     */
+    public void sleep(long ms) throws InterruptedException {
+        Thread.sleep((long)((ms - (ms * 0.1)) + (Math.random() * (ms * 0.2))));
+    }
+
+
+    /**
      * Waits for an element to appear.
      *
      * @param xpath the XPath expression

@@ -2,6 +2,8 @@ package org.nodriver4j;
 
 import org.nodriver4j.core.Browser;
 import org.nodriver4j.core.BrowserManager;
+import org.nodriver4j.profiles.Profile;
+import org.nodriver4j.scripts.SandwichGen;
 
 import java.io.IOException;
 import java.util.List;
@@ -29,7 +31,7 @@ public class App {
                 .fingerprintEnabled(true)
                 .webrtcPolicy("default")
                 .proxyEnabled(false)
-                .warmProfile(true)  // Enable auto-warming
+                .warmProfile(true)
                 .build();
 
         List<Browser> browsers = null;
@@ -41,7 +43,7 @@ public class App {
             System.out.println();
 
             // Single call creates all browsers AND warms them in parallel
-            browsers = manager.createSessions(2);
+            browsers = manager.createSessions(1);
 
             System.out.println();
             System.out.println("==========================================");
@@ -71,17 +73,16 @@ public class App {
                     System.out.println("  Proxy:       disabled");
                 }
             }
+            Profile profile = Profile.builder()
+                    .email("01bot-shapers@icloud.com")
+                    .password("k9wajVkaXO")
+                    .firstName("Briggs")
+                    .lastName("Blackman")
+                    .phone("6808709979")
+                    .build();
 
-            System.out.println();
-            System.out.println("==========================================");
-            System.out.println("  Summary");
-            System.out.println("==========================================");
-            System.out.println("  Browsers created:  " + browsers.size());
-            System.out.println("  Active browsers:   " + manager.getActiveBrowserCount());
-            System.out.println("  Available ports:   " + manager.getAvailablePortCount());
-            System.out.println("  Warming enabled:   " + manager.isWarmProfileEnabled());
-            System.out.println("==========================================");
-            System.out.println();
+            SandwichGen script = new SandwichGen(browsers.get(0).getPage(), profile, "https://ikes.myguestaccount.com/guest/enroll?card-template=JTIldXJsLXBhcmFtLWFlcy1rZXklbC9Mdlh0Y29zR1V6ay9ibSVWMnliSm96NW1nVE5Qb3NtUVN0N1dqaz0%3D&template=2&referral_code=HHnRBikmNBanPhmRBQQFDCJAACBMCHqJa");
+            script.createAccount();
 
             // Wait for user input before closing
             System.out.println("Browsers are ready for manual interaction.");
