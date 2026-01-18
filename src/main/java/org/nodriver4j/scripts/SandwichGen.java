@@ -67,7 +67,7 @@ public class SandwichGen {
             page.sleep(2000);
             page.click(PHONE_NUMBER_TEXT);
             page.sleep(900);
-            page.type(profile.phone());
+            page.type(profile.billingPhone());
             page.sleep(2000);
             page.click(MONTH_TEXT);
             page.sleep(900);
@@ -83,11 +83,11 @@ public class SandwichGen {
             page.sleep(2000);
             page.click(EMAIL_TEXT);
             page.sleep(900);
-            page.type(profile.email());
+            page.type(profile.emailAddress());
             page.sleep(2000);
             page.click(PASSWORD_TEXT);
             page.sleep(900);
-            page.type(profile.password());
+            page.type(generatePassword());
             page.sleep(2000);
             page.click(CONFIRM_PASSWORD_TEXT);
             page.sleep(900);
