@@ -11,8 +11,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.concurrent.TimeoutException;
 
 public class SandwichGen {
-
-    private static final int PAGE_LOAD_TIMEOUT_MS = 30000;
     private static final String FIRST_NAME_TEXT = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[3]/div/input";
     private static final String LAST_NAME_TEXT = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[4]/div/input";
     private static final String PHONE_NUMBER_TEXT = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[5]/div/input";
