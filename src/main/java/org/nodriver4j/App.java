@@ -32,7 +32,7 @@ public class App {
                 .webrtcPolicy("default")
                 //.headless(true)
                 .proxyEnabled(false)
-                .warmProfile(false)
+                .warmProfile(true)
                 .build();
 
         List<Browser> browsers = null;

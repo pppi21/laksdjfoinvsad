@@ -43,10 +43,63 @@ public class Page {
     // Current mouse position (tracked for realistic movement)
     private Vector mousePosition;
 
+    // Cursor overlay tracking
+    private boolean cursorOverlayInjected = false;
+
     // Enabled CDP domains tracking
     private boolean pageEnabled = false;
     private boolean runtimeEnabled = false;
     private boolean networkEnabled = false;
+
+    /**
+     * JavaScript for cursor overlay injection.
+     * Creates a visual indicator that follows the emulated mouse.
+     */
+    private static final String CURSOR_OVERLAY_SCRIPT = """
+        (function() {
+            function initCursor() {
+                if (document.getElementById('__nodriver4j_cursor')) return;
+                if (!document.body) {
+                    if (document.readyState === 'loading') {
+                        document.addEventListener('DOMContentLoaded', initCursor);
+                    } else {
+                        setTimeout(initCursor, 50);
+                    }
+                    return;
+                }
+
+                var cursor = document.createElement('div');
+                cursor.id = '__nodriver4j_cursor';
+                cursor.style.cssText = 'position:fixed;width:12px;height:12px;background:#ff0000;border-radius:50%;z-index:2147483647;pointer-events:none;top:0;left:0;display:none;box-shadow:0 0 4px rgba(0,0,0,0.5);transform:translate(-50%,-50%);';
+                document.body.appendChild(cursor);
+            }
+
+            window.__nodriver4j_moveCursor = function(x, y) {
+                var c = document.getElementById('__nodriver4j_cursor');
+                if (!c) {
+                    initCursor();
+                    c = document.getElementById('__nodriver4j_cursor');
+                }
+                if (c) {
+                    c.style.left = x + 'px';
+                    c.style.top = y + 'px';
+                    c.style.display = 'block';
+                }
+            };
+
+            window.__nodriver4j_clickCursor = function() {
+                var c = document.getElementById('__nodriver4j_cursor');
+                if (c) {
+                    c.style.background = '#ff8c00';
+                    setTimeout(function() {
+                        if (c) c.style.background = '#ff0000';
+                    }, 500);
+                }
+            };
+
+            initCursor();
+        })();
+        """;
 
     /**
      * Creates a new Page with default interaction options.
@@ -119,6 +172,68 @@ public class Page {
         if (!networkEnabled) {
             cdp.send("Network.enable", null);
             networkEnabled = true;
+        }
+    }
+
+    // ==================== Cursor Overlay ====================
+
+    /**
+     * Injects the cursor overlay script into the page.
+     * This is called automatically on first mouse movement if enabled.
+     */
+    private void ensureCursorOverlayInjected() {
+        if (!options.isShowCursorOverlay() || cursorOverlayInjected) {
+            return;
+        }
+
+        try {
+            ensurePageEnabled();
+
+            // Inject script for future navigations
+            JsonObject params = new JsonObject();
+            params.addProperty("source", CURSOR_OVERLAY_SCRIPT);
+            cdp.send("Page.addScriptToEvaluateOnNewDocument", params);
+
+            // Also run immediately on current page
+            ensureRuntimeEnabled();
+            evaluate(CURSOR_OVERLAY_SCRIPT);
+
+            cursorOverlayInjected = true;
+        } catch (TimeoutException e) {
+            System.err.println("[Page] Warning: Failed to inject cursor overlay: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Updates the cursor overlay position.
+     *
+     * @param x the x coordinate
+     * @param y the y coordinate
+     */
+    private void updateCursorOverlay(double x, double y) {
+        if (!options.isShowCursorOverlay()) {
+            return;
+        }
+
+        try {
+            evaluate(String.format("window.__nodriver4j_moveCursor(%f, %f)", x, y));
+        } catch (TimeoutException e) {
+            // Silently ignore - cursor overlay is non-critical
+        }
+    }
+
+    /**
+     * Triggers the click animation on the cursor overlay.
+     */
+    private void triggerCursorClickAnimation() {
+        if (!options.isShowCursorOverlay()) {
+            return;
+        }
+
+        try {
+            evaluate("window.__nodriver4j_clickCursor()");
+        } catch (TimeoutException e) {
+            // Silently ignore - cursor overlay is non-critical
         }
     }
 
@@ -499,12 +614,10 @@ public class Page {
     /**
      * Waits for an amount of time with a 10% margin of error.
      *
-     * @param ms the amount of time in Miliseconds
-     * @return void
-     * @thows
+     * @param ms the amount of time in Milliseconds
      */
     public void sleep(long ms) throws InterruptedException {
-        Thread.sleep((long)((ms - (ms * 0.1)) + (Math.random() * (ms * 0.2))));
+        Thread.sleep((long) ((ms - (ms * 0.1)) + (Math.random() * (ms * 0.2))));
     }
 
 
@@ -625,6 +738,7 @@ public class Page {
      * @throws TimeoutException if the operation times out
      */
     public void click(String xpath) throws TimeoutException {
+        scrollIntoView(xpath);
         BoundingBox box = waitForSelector(xpath);
         clickAtBox(box);
     }
@@ -678,6 +792,9 @@ public class Page {
      * @throws TimeoutException if the operation times out
      */
     private void moveMouseTo(Vector target) throws TimeoutException {
+        // Ensure cursor overlay is injected on first mouse movement
+        ensureCursorOverlayInjected();
+
         if (!options.isSimulateMousePath()) {
             // Direct move
             dispatchMouseMove(target);
@@ -732,6 +849,9 @@ public class Page {
                 options.getPreClickDelayMin(), options.getPreClickDelayMax());
         sleep(hesitation);
 
+        // Trigger click animation on cursor overlay
+        triggerCursorClickAnimation();
+
         // Mouse down
         dispatchMouseButton(position, "mousePressed", "left", 1);
 
@@ -751,6 +871,9 @@ public class Page {
         params.addProperty("y", position.getY());
 
         cdp.send("Input.dispatchMouseEvent", params);
+
+        // Update cursor overlay position
+        updateCursorOverlay(position.getX(), position.getY());
     }
 
     private void dispatchMouseButton(Vector position, String type, String button, int clickCount)

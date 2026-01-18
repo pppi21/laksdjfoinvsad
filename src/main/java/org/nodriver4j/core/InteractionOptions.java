@@ -73,6 +73,10 @@ public final class InteractionOptions {
     private final int moveDelayMax;
     private final boolean randomizeMoveDelay;
 
+    // ==================== Cursor Overlay ====================
+
+    private final boolean showCursorOverlay;
+
     private InteractionOptions(Builder builder) {
         // Mouse Movement
         this.simulateMousePath = builder.simulateMousePath;
@@ -115,6 +119,9 @@ public final class InteractionOptions {
         this.moveDelayMin = builder.moveDelayMin;
         this.moveDelayMax = builder.moveDelayMax;
         this.randomizeMoveDelay = builder.randomizeMoveDelay;
+
+        // Cursor Overlay
+        this.showCursorOverlay = builder.showCursorOverlay;
     }
 
     /**
@@ -206,7 +213,9 @@ public final class InteractionOptions {
                 // Move Delay
                 .moveDelayMin(moveDelayMin)
                 .moveDelayMax(moveDelayMax)
-                .randomizeMoveDelay(randomizeMoveDelay);
+                .randomizeMoveDelay(randomizeMoveDelay)
+                // Cursor Overlay
+                .showCursorOverlay(showCursorOverlay);
     }
 
     // ==================== Mouse Movement Getters ====================
@@ -500,6 +509,18 @@ public final class InteractionOptions {
         return randomizeMoveDelay;
     }
 
+    // ==================== Cursor Overlay Getters ====================
+
+    /**
+     * Whether to show a visual cursor overlay indicating mouse position.
+     * Useful for debugging and observing automation behavior.
+     *
+     * @return true if cursor overlay is enabled
+     */
+    public boolean isShowCursorOverlay() {
+        return showCursorOverlay;
+    }
+
     // ==================== Builder ====================
 
     /**
@@ -550,6 +571,9 @@ public final class InteractionOptions {
         private int moveDelayMin = 0;
         private int moveDelayMax = 100;
         private boolean randomizeMoveDelay = true;
+
+        // Cursor Overlay - default on
+        private boolean showCursorOverlay = true;
 
         private Builder() {}
 
@@ -892,6 +916,24 @@ public final class InteractionOptions {
          */
         public Builder randomizeMoveDelay(boolean randomizeMoveDelay) {
             this.randomizeMoveDelay = randomizeMoveDelay;
+            return this;
+        }
+
+        // ==================== Cursor Overlay ====================
+
+        /**
+         * Sets whether to show a visual cursor overlay.
+         *
+         * <p>When enabled, a bright red dot follows the emulated mouse position,
+         * turning orange briefly on click. Useful for debugging.</p>
+         *
+         * <p>Default: true</p>
+         *
+         * @param showCursorOverlay true to show overlay
+         * @return this builder
+         */
+        public Builder showCursorOverlay(boolean showCursorOverlay) {
+            this.showCursorOverlay = showCursorOverlay;
             return this;
         }
 

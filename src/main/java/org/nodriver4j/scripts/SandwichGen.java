@@ -101,13 +101,13 @@ public class SandwichGen {
             page.sleep(1000);
             page.click(STATE_DROPDOWN);
             page.sleep(2500);
-            page.click(CA_BUTTON);
+            page.select(STATE_DROPDOWN, "258");
             page.sleep(3000);
             page.click(STORE_DROPDOWN);
             page.sleep(2500);
-            page.click(DEL_MAR_BUTTON);
+            page.select(STORE_DROPDOWN, "401");
             page.sleep(1500);
-            page.click(SUBMIT_BUTTON);
+            //page.click(SUBMIT_BUTTON);
 
         } catch (TimeoutException | InterruptedException e) {
             throw new RuntimeException(e);
