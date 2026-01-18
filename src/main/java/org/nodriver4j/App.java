@@ -3,16 +3,31 @@ package org.nodriver4j;
 import org.nodriver4j.core.Browser;
 import org.nodriver4j.core.BrowserManager;
 import org.nodriver4j.profiles.Profile;
+import org.nodriver4j.profiles.ProfilePool;
 import org.nodriver4j.scripts.SandwichGen;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Scanner;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class App {
 
+    // Hardcoded referrer URL for Ike's rewards
+    private static final String REFERRER_URL = "https://ikes.myguestaccount.com/guest/enroll?card-template=JTIldXJsLXBhcmFtLWFlcy1rZXklbC9Mdlh0Y29zR1V6ay9ibSVWMnliSm96NW1nVE5Qb3NtUVN0N1dqaz0%3D&template=2&referral_code=HHnRBikmNBanPhmRBQQFDCJAACBMCHqJa";
+
+    // Number of concurrent browser sessions
+    private static final int SESSION_COUNT = 2;
+
     public static void main(String[] args) {
         String executablePath = System.getenv("chromepath");
+        String profileInputPath = System.getenv("profiles_input");
+        String profileOutputPath = System.getenv("profiles_output");
 
         if (executablePath == null || executablePath.isBlank()) {
             System.err.println("ERROR: 'chromepath' environment variable is not set.");
@@ -23,24 +38,50 @@ public class App {
         System.out.println("==========================================");
         System.out.println("  NoDriver4j - Browser Automation Demo");
         System.out.println("==========================================");
-        System.out.println("Chrome path: " + executablePath);
         System.out.println();
 
-        BrowserManager manager = BrowserManager.builder()
+        // Build manager with optional explicit profile paths
+        BrowserManager.Builder managerBuilder = BrowserManager.builder()
                 .executablePath(executablePath)
                 .fingerprintEnabled(true)
-                .webrtcPolicy("default")
-                //.headless(true)
-                .proxyEnabled(false)
-                .warmProfile(true)
-                .build();
+                //.webrtcPolicy("default")
+                .proxyEnabled(true)
+                .warmProfile(true);
 
+
+        // Add profile paths if provided via env vars
+        if (profileInputPath != null && profileOutputPath != null) {
+            managerBuilder
+                    .profileInputPath(profileInputPath)
+                    .profileOutputPath(profileOutputPath);
+        }
+
+        BrowserManager manager = managerBuilder.build();
         List<Browser> browsers = null;
+        ExecutorService scriptExecutor = null;
 
         try {
+            // Get the profile pool and check availability
+            ProfilePool pool = manager.profilePool();
+            int remainingProfiles = pool.countRemaining();
 
-            // Single call creates all browsers AND warms them in parallel
-            browsers = manager.createSessions(1);
+            System.out.println("Remaining profiles: " + remainingProfiles);
+
+            if (remainingProfiles == 0) {
+                System.err.println("ERROR: No profiles remaining in input file.");
+                return;
+            }
+
+            // Determine how many sessions we can actually run
+            int sessionsToRun = Math.min(SESSION_COUNT, remainingProfiles);
+            if (sessionsToRun < SESSION_COUNT) {
+                System.out.println("WARNING: Only " + remainingProfiles + " profiles available, running " + sessionsToRun + " session(s).");
+            }
+
+            System.out.println();
+
+            // Create browser sessions (launches and warms all in parallel)
+            browsers = manager.createSessions(sessionsToRun);
 
             System.out.println();
             System.out.println("==========================================");
@@ -52,11 +93,6 @@ public class App {
 
                 System.out.println();
                 System.out.println("--- Browser " + (i + 1) + " ---");
-                System.out.println("  Port:        " + browser.getPort());
-                System.out.println("  Open:        " + browser.isOpen());
-                System.out.println("  Running:     " + browser.isRunning());
-                System.out.println("  Warmed:      " + browser.isWarmed());
-                System.out.println("  Pages:       " + browser.getPageCount());
 
                 if (browser.getFingerprint() != null) {
                     System.out.println("  Fingerprint: " + browser.getFingerprint());
@@ -70,21 +106,84 @@ public class App {
                     System.out.println("  Proxy:       disabled");
                 }
             }
-            Profile profile = Profile.builder()
-                    .email("01bot-shapers@icloud.com")
-                    .password("k9wajVkaXO")
-                    .firstName("Briggs")
-                    .lastName("Blackman")
-                    .phone("6808709979")
-                    .build();
 
-            SandwichGen script = new SandwichGen(browsers.get(0).getPage(), profile, "https://ikes.myguestaccount.com/guest/enroll?card-template=JTIldXJsLXBhcmFtLWFlcy1rZXklbC9Mdlh0Y29zR1V6ay9ibSVWMnliSm96NW1nVE5Qb3NtUVN0N1dqaz0%3D&template=2&referral_code=HHnRBikmNBanPhmRBQQFDCJAACBMCHqJa");
-            //SandwichGen script = new SandwichGen(browsers.get(0).getPage(), profile, "https://www.browserscan.net/");
-            script.createAccount();
+            System.out.println();
+            System.out.println("==========================================");
+            System.out.println("  Running SandwichGen Scripts  ");
+            System.out.println("==========================================");
+            System.out.println();
 
+            // Run scripts in parallel - each browser gets its own profile
+            scriptExecutor = Executors.newFixedThreadPool(Math.min(browsers.size(), Runtime.getRuntime().availableProcessors()));
+            List<CompletableFuture<ScriptResult>> futures = new ArrayList<>();
+
+            AtomicInteger successCount = new AtomicInteger(0);
+            AtomicInteger failureCount = new AtomicInteger(0);
+
+            for (int i = 0; i < browsers.size(); i++) {
+                final Browser browser = browsers.get(i);
+                final int browserIndex = i + 1;
+
+                CompletableFuture<ScriptResult> future = CompletableFuture.supplyAsync(() -> {
+                    try {
+                        // Each thread consumes its own profile (thread-safe)
+                        Profile profile = pool.consumeFirst();
+                        System.out.println("[Browser " + browserIndex + "] Consumed profile: " + profile.emailAddress());
+
+                        // Run the script
+                        SandwichGen script = new SandwichGen(
+                                browser.getPage(),
+                                profile,
+                                pool,
+                                REFERRER_URL
+                        );
+                        script.createAccount();
+
+                        successCount.incrementAndGet();
+                        return new ScriptResult(browserIndex, profile.emailAddress(), true, null);
+
+                    } catch (IOException e) {
+                        failureCount.incrementAndGet();
+                        System.err.println("[Browser " + browserIndex + "] Failed to consume profile: " + e.getMessage());
+                        return new ScriptResult(browserIndex, null, false, e.getMessage());
+
+                    } catch (RuntimeException e) {
+                        failureCount.incrementAndGet();
+                        System.err.println("[Browser " + browserIndex + "] Script failed: " + e.getMessage());
+                        return new ScriptResult(browserIndex, null, false, e.getMessage());
+                    }
+                }, scriptExecutor);
+
+                futures.add(future);
+            }
+
+            // Wait for all scripts to complete
+            System.out.println("Waiting for all scripts to complete...");
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+            // Collect and display results
+            System.out.println();
+            System.out.println("==========================================");
+            System.out.println("  Results Summary");
+            System.out.println("==========================================");
+
+            for (CompletableFuture<ScriptResult> future : futures) {
+                ScriptResult result = future.join();
+                if (result.success()) {
+                    System.out.println("  [Browser " + result.browserIndex() + "] SUCCESS - " + result.email());
+                } else {
+                    System.out.println("  [Browser " + result.browserIndex() + "] FAILED - " + result.errorMessage());
+                }
+            }
+
+            System.out.println();
+            System.out.println("  Total: " + successCount.get() + " succeeded, " + failureCount.get() + " failed");
+            System.out.println("  Completed profiles written: " + pool.countCompleted());
+            System.out.println("  Remaining profiles: " + pool.countRemaining());
 
             // Wait for user input before closing
-            System.out.println("Browsers are ready for manual interaction.");
+            System.out.println();
+            System.out.println("Browsers are ready for manual inspection.");
             System.out.println("Press ENTER to close all browsers and exit...");
 
             try (Scanner scanner = new Scanner(System.in)) {
@@ -92,9 +191,28 @@ public class App {
             }
 
         } catch (InterruptedException e) {
-            System.err.println("Interrupted while creating browsers: " + e.getMessage());
+            System.err.println("Interrupted: " + e.getMessage());
             Thread.currentThread().interrupt();
+        } catch (IOException e) {
+            System.err.println("Error with profile management: " + e.getMessage());
+            e.printStackTrace();
+        } catch (RuntimeException e) {
+            System.err.println("Unexpected error: " + e.getMessage());
+            e.printStackTrace();
         } finally {
+            // Shutdown script executor
+            if (scriptExecutor != null) {
+                scriptExecutor.shutdown();
+                try {
+                    if (!scriptExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                        scriptExecutor.shutdownNow();
+                    }
+                } catch (InterruptedException e) {
+                    scriptExecutor.shutdownNow();
+                    Thread.currentThread().interrupt();
+                }
+            }
+
             // Close all browsers
             System.out.println();
             System.out.println("==========================================");
@@ -118,4 +236,9 @@ public class App {
             System.out.println("Done. Goodbye!");
         }
     }
+
+    /**
+     * Record to hold the result of each script execution.
+     */
+    private record ScriptResult(int browserIndex, String email, boolean success, String errorMessage) {}
 }

@@ -4,7 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.nodriver4j.cdp.CDPClient;
-import org.nodriver4j.scripts.ProfileWarmer;
+import org.nodriver4j.scripts.SessionWarmer;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -176,19 +176,19 @@ public class Browser implements AutoCloseable {
      * @return the warming result containing collected cookies and any warnings
      * @throws IllegalStateException if the browser has been closed
      */
-    ProfileWarmer.WarmingResult warm() {
+    SessionWarmer.WarmingResult warm() {
         ensureOpen();
 
         // Only warm once
         if (!warmed.compareAndSet(false, true)) {
             System.out.println("[Browser] Already warmed, skipping (port " + port + ")");
-            return new ProfileWarmer.WarmingResult(Collections.emptyMap(), Collections.emptyList());
+            return new SessionWarmer.WarmingResult(Collections.emptyMap(), Collections.emptyList());
         }
 
         System.out.println("[Browser] Starting profile warming (port " + port + ")...");
 
-        ProfileWarmer warmer = new ProfileWarmer(getPage());
-        ProfileWarmer.WarmingResult result = warmer.warm();
+        SessionWarmer warmer = new SessionWarmer(getPage());
+        SessionWarmer.WarmingResult result = warmer.warm();
 
         if (result.hasWarnings()) {
             System.err.println("[Browser] Warming completed with " +

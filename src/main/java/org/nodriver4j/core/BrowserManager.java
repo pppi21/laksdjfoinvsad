@@ -1,6 +1,9 @@
 package org.nodriver4j.core;
 
+import org.nodriver4j.profiles.ProfilePool;
+
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -16,6 +19,7 @@ import java.util.function.Function;
  *   <li>Thread pool management (auto-sized to available processors by default)</li>
  *   <li>Port allocation for CDP connections</li>
  *   <li>Proxy consumption from file (if enabled)</li>
+ *   <li>Profile consumption from CSV (if configured)</li>
  *   <li>Automatic profile warming (if enabled)</li>
  *   <li>Browser lifecycle and cleanup</li>
  * </ul>
@@ -58,6 +62,25 @@ import java.util.function.Function;
  * // All 6 browsers are now launched and warmed (if enabled)
  * }</pre>
  *
+ * <h3>With Profile Management</h3>
+ * <pre>{@code
+ * BrowserManager manager = BrowserManager.builder()
+ *     .executablePath("/path/to/chrome")
+ *     .profileInputPath("input_profiles.csv")
+ *     .profileOutputPath("completed_profiles.csv")
+ *     .build();
+ *
+ * // Get the shared profile pool
+ * ProfilePool pool = manager.profilePool();
+ * Profile profile = pool.consumeFirst();
+ *
+ * // After script completes
+ * Profile completed = profile.toBuilder()
+ *     .accountLoginInfo(email + ":" + password)
+ *     .build();
+ * pool.writeCompleted(completed);
+ * }</pre>
+ *
  * <h3>Custom Interaction Options</h3>
  * <pre>{@code
  * InteractionOptions fastOptions = InteractionOptions.builder()
@@ -92,6 +115,12 @@ public class BrowserManager implements AutoCloseable {
     private final boolean proxyEnabled;
     private final InteractionOptions interactionOptions;
 
+    // Profile management
+    private final String profileInputPath;
+    private final String profileOutputPath;
+    private volatile ProfilePool profilePool;
+    private final Object profilePoolLock = new Object();
+
     private BrowserManager(Builder builder) {
         this.executablePath = builder.executablePath;
         this.fingerprintEnabled = builder.fingerprintEnabled;
@@ -100,6 +129,8 @@ public class BrowserManager implements AutoCloseable {
         this.webrtcPolicy = builder.webrtcPolicy;
         this.proxyEnabled = builder.proxyEnabled;
         this.interactionOptions = builder.interactionOptions;
+        this.profileInputPath = builder.profileInputPath;
+        this.profileOutputPath = builder.profileOutputPath;
 
         this.isShutdown = new AtomicBoolean(false);
         this.activeBrowsers = ConcurrentHashMap.newKeySet();
@@ -111,9 +142,7 @@ public class BrowserManager implements AutoCloseable {
         }
 
         // Initialize thread pool
-        int threadCount = builder.threadCount > 0
-                ? builder.threadCount
-                : Runtime.getRuntime().availableProcessors();
+        int threadCount = Math.min(Runtime.getRuntime().availableProcessors(), builder.threadCount);
 
         this.executor = new ThreadPoolExecutor(
                 threadCount,                      // core pool size
@@ -130,6 +159,11 @@ public class BrowserManager implements AutoCloseable {
 
         System.out.println("[BrowserManager] Initialized with " + threadCount + " threads, "
                 + availablePorts.size() + " ports available, warmProfile=" + warmProfile);
+
+        if (hasProfilePaths()) {
+            System.out.println("[BrowserManager] Profile management enabled: input=" + profileInputPath
+                    + ", output=" + profileOutputPath);
+        }
     }
 
     /**
@@ -139,6 +173,67 @@ public class BrowserManager implements AutoCloseable {
      */
     public static Builder builder() {
         return new Builder();
+    }
+
+    // ==================== Profile Pool Access ====================
+
+    /**
+     * Gets the shared ProfilePool for this manager.
+     *
+     * <p>The ProfilePool is created lazily on first access and shared across
+     * all browsers managed by this instance. This allows thread-safe profile
+     * consumption across multiple concurrent browser tasks.</p>
+     *
+     * <p>If profile paths were not configured, this method attempts to create
+     * a ProfilePool using environment variables ({@code profiles_input} and
+     * {@code profiles_output}).</p>
+     *
+     * @return the shared ProfilePool instance
+     * @throws IllegalStateException if profile paths are not configured and
+     *                               environment variables are not set
+     */
+    public ProfilePool profilePool() {
+        if (profilePool == null) {
+            synchronized (profilePoolLock) {
+                if (profilePool == null) {
+                    if (hasProfilePaths()) {
+                        profilePool = new ProfilePool(profileInputPath, profileOutputPath);
+                    } else {
+                        // Fall back to environment variables
+                        profilePool = new ProfilePool();
+                    }
+                }
+            }
+        }
+        return profilePool;
+    }
+
+    /**
+     * Checks if profile paths were explicitly configured.
+     *
+     * @return true if both input and output paths are set
+     */
+    public boolean hasProfilePaths() {
+        return profileInputPath != null && !profileInputPath.isBlank()
+                && profileOutputPath != null && !profileOutputPath.isBlank();
+    }
+
+    /**
+     * Gets the configured profile input path.
+     *
+     * @return the input path, or null if not configured
+     */
+    public String profileInputPath() {
+        return profileInputPath;
+    }
+
+    /**
+     * Gets the configured profile output path.
+     *
+     * @return the output path, or null if not configured
+     */
+    public String profileOutputPath() {
+        return profileOutputPath;
     }
 
     // ==================== Task Submission Methods ====================
@@ -471,7 +566,7 @@ public class BrowserManager implements AutoCloseable {
      *
      * @return the InteractionOptions
      */
-    public InteractionOptions getInteractionOptions() {
+    public InteractionOptions interactionOptions() {
         return interactionOptions;
     }
 
@@ -480,7 +575,7 @@ public class BrowserManager implements AutoCloseable {
      *
      * @return the count of active browsers
      */
-    public int getActiveBrowserCount() {
+    public int activeBrowserCount() {
         return activeBrowsers.size();
     }
 
@@ -489,7 +584,7 @@ public class BrowserManager implements AutoCloseable {
      *
      * @return the count of ports not currently in use
      */
-    public int getAvailablePortCount() {
+    public int availablePortCount() {
         return availablePorts.size();
     }
 
@@ -688,7 +783,7 @@ public class BrowserManager implements AutoCloseable {
     public static class Builder {
 
         private String executablePath;
-        private int threadCount = 0; // 0 means auto-detect
+        private int threadCount = Runtime.getRuntime().availableProcessors(); // 0 means auto-detect
         private int portRangeStart = DEFAULT_PORT_RANGE_START;
         private int portRangeEnd = DEFAULT_PORT_RANGE_END;
         private boolean fingerprintEnabled = true;
@@ -697,6 +792,8 @@ public class BrowserManager implements AutoCloseable {
         private String webrtcPolicy = "disable_non_proxied_udp";
         private boolean proxyEnabled = true;
         private InteractionOptions interactionOptions = InteractionOptions.defaults();
+        private String profileInputPath;
+        private String profileOutputPath;
 
         private Builder() {}
 
@@ -855,6 +952,40 @@ public class BrowserManager implements AutoCloseable {
                 throw new IllegalArgumentException("InteractionOptions cannot be null");
             }
             this.interactionOptions = options;
+            return this;
+        }
+
+        /**
+         * Sets the path to the input CSV file containing profiles.
+         *
+         * <p>When set along with {@link #profileOutputPath(String)}, enables
+         * profile management via {@link BrowserManager#profilePool()}.</p>
+         *
+         * <p>If not set, profile pool will fall back to environment variable
+         * {@code profiles_input}.</p>
+         *
+         * @param path the path to the input CSV file
+         * @return this builder
+         */
+        public Builder profileInputPath(String path) {
+            this.profileInputPath = path;
+            return this;
+        }
+
+        /**
+         * Sets the path to the output CSV file for completed profiles.
+         *
+         * <p>When set along with {@link #profileInputPath(String)}, enables
+         * profile management via {@link BrowserManager#profilePool()}.</p>
+         *
+         * <p>If not set, profile pool will fall back to environment variable
+         * {@code profiles_output}.</p>
+         *
+         * @param path the path to the output CSV file
+         * @return this builder
+         */
+        public Builder profileOutputPath(String path) {
+            this.profileOutputPath = path;
             return this;
         }
 
