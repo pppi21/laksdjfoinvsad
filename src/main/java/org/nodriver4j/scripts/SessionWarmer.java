@@ -10,10 +10,10 @@ import java.util.concurrent.TimeoutException;
  * Warms up a browser profile by visiting common websites to collect cookies.
  * This makes the browser profile appear more natural to anti-bot systems.
  *
- * <p>ProfileWarmer uses the high-level {@link Page} API for navigation and
+ * <p>SessionWarmer uses the high-level {@link Page} API for navigation and
  * cookie retrieval, ensuring consistent behavior with user automation code.</p>
  */
-public class ProfileWarmer {
+public class SessionWarmer {
 
     private static final int PAGE_LOAD_TIMEOUT_MS = 30000;
     private static final int SETTLE_TIME_MS = 2000;
@@ -34,11 +34,11 @@ public class ProfileWarmer {
     }
 
     /**
-     * Creates a ProfileWarmer that operates on the given page.
+     * Creates a SessionWarmer that operates on the given page.
      *
      * @param page the Page instance to use for navigation and cookie retrieval
      */
-    public ProfileWarmer(Page page) {
+    public SessionWarmer(Page page) {
         this.page = page;
     }
 
@@ -55,7 +55,7 @@ public class ProfileWarmer {
         for (Map.Entry<String, List<String>> entry : WARM_SITES.entrySet()) {
             String url = entry.getKey();
 
-            System.out.println("[ProfileWarmer] Visiting: " + url);
+            System.out.println("[SessionWarmer] Visiting: " + url);
 
             try {
                 navigateAndWait(url);
@@ -66,12 +66,12 @@ public class ProfileWarmer {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 String warning = "Warming interrupted while visiting " + url;
-                System.err.println("[ProfileWarmer] WARNING: " + warning);
+                System.err.println("[SessionWarmer] WARNING: " + warning);
                 warnings.add(warning);
                 break;
             } catch (Exception e) {
                 String warning = "Failed to visit " + url + ": " + e.getMessage();
-                System.err.println("[ProfileWarmer] WARNING: " + warning);
+                System.err.println("[SessionWarmer] WARNING: " + warning);
                 warnings.add(warning);
             }
         }
@@ -102,7 +102,7 @@ public class ProfileWarmer {
                 for (String expectedCookie : expectedCookies) {
                     if (!foundCookieNames.contains(expectedCookie)) {
                         String warning = "Expected cookie '" + expectedCookie + "' not found (from " + url + ")";
-                        System.err.println("[ProfileWarmer] WARNING: " + warning);
+                        System.err.println("[SessionWarmer] WARNING: " + warning);
                         warnings.add(warning);
                     }
                 }
@@ -110,12 +110,12 @@ public class ProfileWarmer {
 
         } catch (TimeoutException e) {
             String warning = "Failed to retrieve cookies: " + e.getMessage();
-            System.err.println("[ProfileWarmer] WARNING: " + warning);
+            System.err.println("[SessionWarmer] WARNING: " + warning);
             warnings.add(warning);
         }
 
         int totalCookies = cookiesBySite.values().stream().mapToInt(List::size).sum();
-        System.out.println("[ProfileWarmer] Warming complete. Total cookies collected: " + totalCookies);
+        System.out.println("[SessionWarmer] Warming complete. Total cookies collected: " + totalCookies);
 
         return new WarmingResult(cookiesBySite, warnings);
     }
@@ -131,7 +131,7 @@ public class ProfileWarmer {
         } catch (TimeoutException e) {
             // Page.navigate() handles timeouts gracefully internally,
             // but we catch here just in case the behavior changes
-            System.err.println("[ProfileWarmer] Page load timeout for " + url + ", continuing...");
+            System.err.println("[SessionWarmer] Page load timeout for " + url + ", continuing...");
         }
     }
 
@@ -172,7 +172,7 @@ public class ProfileWarmer {
      * Logs collected cookies grouped by domain.
      */
     private void logCookies(Map<String, List<Cookie>> cookiesBySite) {
-        System.out.println("\n[ProfileWarmer] ===== Cookies Collected =====");
+        System.out.println("\n[SessionWarmer] ===== Cookies Collected =====");
         for (Map.Entry<String, List<Cookie>> entry : cookiesBySite.entrySet()) {
             String domain = entry.getKey();
             List<Cookie> cookies = entry.getValue();
@@ -181,7 +181,7 @@ public class ProfileWarmer {
                 System.out.println("    - " + cookie.name + " = " + truncateValue(cookie.value, 50));
             }
         }
-        System.out.println("\n[ProfileWarmer] ================================\n");
+        System.out.println("\n[SessionWarmer] ================================\n");
     }
 
     /**
