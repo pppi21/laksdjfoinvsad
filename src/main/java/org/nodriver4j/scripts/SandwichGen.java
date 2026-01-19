@@ -136,11 +136,22 @@ public class SandwichGen {
 
         try {
             // Navigate to registration page
-            page.sleep(3000);
             if (referrerUrl != null && !referrerUrl.isBlank()) {
-                page.navigate(referrerUrl, 4000);
+                page.navigate(referrerUrl);
             } else {
                 throw new IllegalStateException("Referrer URL is required");
+            }
+
+            int captchaWait = 10000;
+            int retries = 0;
+            while(retries <= 2) {
+                page.solvePressHoldCaptcha(4000);
+
+                if (page.exists(FIRST_NAME_TEXT))
+                    break;
+                page.sleep(captchaWait);
+                captchaWait += 2000;
+                retries++;
             }
 
             // Fill form fields
@@ -171,6 +182,21 @@ public class SandwichGen {
             page.sleep(2500);
             page.select(STATE_DROPDOWN, "258");
             page.sleep(3000);
+
+            int captchaWait2 = 4000;
+            int retries2 = 0;
+            while(retries2 <= 2) {
+                page.solvePressHoldCaptcha(2000);
+
+                if (page.exists(FIRST_NAME_TEXT))
+                    break;
+
+                if (retries2 == 0)
+                    System.out.println("[SandwichGen] 2nd captcha detected for: " + profile.emailAddress());
+                page.sleep(captchaWait2);
+                captchaWait2 += 2000;
+                retries2++;
+            }
 
             // Store selection (Del Mar = 401)
             page.click(STORE_DROPDOWN);
@@ -299,27 +325,6 @@ public class SandwichGen {
         }
 
         return new String(password);
-    }
-
-    // ==================== Screenshot Utility ====================
-
-    /**
-     * Takes a screenshot and saves it to the screenshots directory.
-     *
-     * @throws TimeoutException if screenshot capture times out
-     * @throws IOException      if file cannot be written
-     */
-    private void screenshot() throws TimeoutException, IOException {
-        byte[] pngBytes = page.screenshot();
-
-        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"));
-        String filename = "screenshot_" + timestamp + ".png";
-
-        Path outputPath = Path.of("screenshots", filename);
-        Files.createDirectories(outputPath.getParent());
-        Files.write(outputPath, pngBytes);
-
-        System.out.println("[SandwichGen] Screenshot saved to: " + outputPath);
     }
 
     // ==================== Inner Classes ====================

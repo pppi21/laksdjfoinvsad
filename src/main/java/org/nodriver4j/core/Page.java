@@ -8,6 +8,11 @@ import org.nodriver4j.math.BoundingBox;
 import org.nodriver4j.math.HumanBehavior;
 import org.nodriver4j.math.Vector;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -35,7 +40,7 @@ import java.util.concurrent.TimeUnit;
  */
 public class Page {
 
-    private static final int DEFAULT_NAVIGATION_TIMEOUT = 30000;
+    private static final int DEFAULT_NAVIGATION_TIMEOUT = 12000;
 
     // ==================== Press-and-Hold Captcha ====================
 
@@ -60,7 +65,7 @@ public class Page {
     /**
      * Holds information about the captcha iframe needed for solving.
      */
-    private record CaptchaIframeInfo(String frameId, int nodeId) {}
+    private record CaptchaIframeInfo(String frameId, int backendNodeId) {}
 
 
     private final CDPClient cdp;
@@ -394,7 +399,7 @@ public class Page {
      * <p><strong>Note:</strong> Success/failure verification is the caller's responsibility.
      * Check for page navigation, element disappearance, or other indicators after calling.</p>
      *
-     * @param waitTimeoutMs maximum time to wait for captcha to appear (recommended: 7000)
+     * @param waitTimeoutMs maximum time to wait for captcha to appear (recommended: 3000)
      * @return the result of the captcha solve attempt
      */
     public CaptchaSolveResult solvePressHoldCaptcha(int waitTimeoutMs) {
@@ -427,10 +432,10 @@ public class Page {
             }
 
             System.out.println("[Page] Found iframe: frameId=" + iframeInfo.frameId() +
-                    ", nodeId=" + iframeInfo.nodeId());
+                    ", backendNodeId=" + iframeInfo.backendNodeId());
 
             // Step 3: Get iframe's bounding box and scroll into view if needed
-            BoundingBox iframeBox = getNodeBoundingBox(iframeInfo.nodeId());
+            BoundingBox iframeBox = getNodeBoundingBox(iframeInfo.backendNodeId());
             if (iframeBox == null) {
                 return CaptchaSolveResult.error("Could not get iframe bounding box");
             }
@@ -441,7 +446,7 @@ public class Page {
             scrollNodeIntoViewIfNeeded(iframeBox);
 
             // Re-get position after potential scroll
-            iframeBox = getNodeBoundingBox(iframeInfo.nodeId());
+            iframeBox = getNodeBoundingBox(iframeInfo.backendNodeId());
             if (iframeBox == null) {
                 return CaptchaSolveResult.error("Could not get iframe bounding box after scroll");
             }
@@ -641,9 +646,9 @@ public class Page {
     // ==================== Captcha Helper Methods ====================
 
     /**
-     * Finds the visible captcha iframe's frameId and nodeId using CDP DOM inspection.
+     * Finds the visible captcha iframe's frameId and backendNodeId using CDP DOM inspection.
      *
-     * @return CaptchaIframeInfo with frameId and nodeId, or null if not found
+     * @return CaptchaIframeInfo with frameId and backendNodeId, or null if not found
      * @throws TimeoutException if CDP operations timeout
      */
     private CaptchaIframeInfo findCaptchaIframeInfo() throws TimeoutException {
@@ -721,17 +726,23 @@ public class Page {
                 continue;
             }
 
+            // Must have backendNodeId for DOM.getBoxModel
+            if (!childNode.has("backendNodeId")) {
+                System.err.println("[Page] Iframe missing backendNodeId");
+                continue;
+            }
+
             JsonArray attributes = childNode.getAsJsonArray("attributes");
             String styleValue = getCdpAttributeValue(attributes, "style");
 
             if (styleValue != null && styleValue.contains("display: block")) {
                 String frameId = childNode.get("frameId").getAsString();
-                int iframeNodeId = childNode.get("nodeId").getAsInt();
+                int backendNodeId = childNode.get("backendNodeId").getAsInt();
 
                 System.out.println("[Page] Found visible iframe with style: " +
                         styleValue.substring(0, Math.min(50, styleValue.length())) + "...");
 
-                return new CaptchaIframeInfo(frameId, iframeNodeId);
+                return new CaptchaIframeInfo(frameId, backendNodeId);
             }
         }
 
@@ -740,15 +751,15 @@ public class Page {
     }
 
     /**
-     * Gets the bounding box of a DOM node via CDP.
+     * Gets the bounding box of a DOM node via CDP using its backend node ID.
      *
-     * @param nodeId the node ID from DOM domain
+     * @param backendNodeId the backend node ID from DOM domain
      * @return the bounding box, or null if unable to get
      * @throws TimeoutException if CDP operation times out
      */
-    private BoundingBox getNodeBoundingBox(int nodeId) throws TimeoutException {
+    private BoundingBox getNodeBoundingBox(int backendNodeId) throws TimeoutException {
         JsonObject params = new JsonObject();
-        params.addProperty("nodeId", nodeId);
+        params.addProperty("backendNodeId", backendNodeId);
 
         JsonObject result = cdp.send("DOM.getBoxModel", params);
 
@@ -1072,7 +1083,7 @@ public class Page {
         return evaluate("document.title");
     }
 
-    private void waitForLoadEvent(int timeoutMs) throws TimeoutException {
+    public void waitForLoadEvent(int timeoutMs) throws TimeoutException {
         try {
             cdp.waitForEvent("Page.loadEventFired", timeoutMs, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
@@ -1982,12 +1993,31 @@ public class Page {
     // ==================== Screenshots ====================
 
     /**
+     * Takes a screenshot and saves it to the screenshots directory.
+     *
+     * @throws TimeoutException if screenshot capture times out
+     * @throws IOException      if file cannot be written
+     */
+    public void screenshot() throws TimeoutException, IOException {
+        byte[] pngBytes = screenshotBytes();
+
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"));
+        String filename = "screenshot_" + timestamp + ".png";
+
+        Path outputPath = Path.of("screenshots", filename);
+        Files.createDirectories(outputPath.getParent());
+        Files.write(outputPath, pngBytes);
+
+        System.out.println("[Page] Screenshot saved to: " + outputPath);
+    }
+
+    /**
      * Takes a screenshot of the page.
      *
      * @return the screenshot as PNG bytes
      * @throws TimeoutException if the operation times out
      */
-    public byte[] screenshot() throws TimeoutException {
+    public byte[] screenshotBytes() throws TimeoutException {
         ensurePageEnabled();
 
         JsonObject params = new JsonObject();
@@ -2006,7 +2036,7 @@ public class Page {
      * @return the screenshot as PNG bytes
      * @throws TimeoutException if the operation times out
      */
-    public byte[] screenshotElement(String xpath) throws TimeoutException {
+    public byte[] screenshotElementBytes(String xpath) throws TimeoutException {
         BoundingBox box = querySelector(xpath);
         if (box == null) {
             throw new TimeoutException("Element not found: " + xpath);

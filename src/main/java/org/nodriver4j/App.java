@@ -20,9 +20,10 @@ public class App {
 
     // Hardcoded referrer URL for Ike's rewards
     private static final String REFERRER_URL = "https://ikes.myguestaccount.com/guest/enroll?card-template=JTIldXJsLXBhcmFtLWFlcy1rZXklbC9Mdlh0Y29zR1V6ay9ibSVWMnliSm96NW1nVE5Qb3NtUVN0N1dqaz0%3D&template=2&referral_code=HHnRBikmNBanPhmRBQQFDCJAACBMCHqJa";
+    //private static final String REFERRER_URL = "https://ikes.myguestaccount.com/guest/enroll";
 
     // Number of concurrent browser sessions
-    private static final int SESSION_COUNT = 1;
+    private static final int SESSION_COUNT = 2;
 
     public static void main(String[] args) {
         String executablePath = System.getenv("chromepath");
@@ -43,10 +44,11 @@ public class App {
         // Build manager with optional explicit profile paths
         BrowserManager.Builder managerBuilder = BrowserManager.builder()
                 .executablePath(executablePath)
-                .fingerprintEnabled(false)
+                .fingerprintEnabled(true)
                 //.webrtcPolicy("default")
-                .proxyEnabled(false)
-                .warmProfile(false);
+                .proxyEnabled(true)
+                .headless(true)
+                .warmProfile(true);
 
 
         // Add profile paths if provided via env vars

@@ -3,9 +3,6 @@ package org.nodriver4j;
 import org.nodriver4j.core.Browser;
 import org.nodriver4j.core.BrowserManager;
 import org.nodriver4j.core.Page;
-import org.nodriver4j.profiles.Profile;
-import org.nodriver4j.profiles.ProfilePool;
-import org.nodriver4j.scripts.SandwichGen;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -43,6 +40,7 @@ public class HUMANCaptchaTest {
                 .proxyEnabled(false)
                 .warmProfile(false)
                 .chromeArguement(HEADLESS_UA)
+                .headless(true)
                 .build();
 
         List<Browser> browsers = null;
@@ -82,6 +80,8 @@ public class HUMANCaptchaTest {
 
                         page.solvePressHoldCaptcha(9000);
 
+                        page.screenshot();
+
                         page.sleep(3000);
 
 
@@ -94,6 +94,8 @@ public class HUMANCaptchaTest {
                         System.err.println("[Browser " + browserIndex + "] Script failed: " + e.getMessage());
                         return new ScriptResult(browserIndex,  false, e.getMessage());
                     } catch (TimeoutException e) {
+                        throw new RuntimeException(e);
+                    } catch (IOException e) {
                         throw new RuntimeException(e);
                     }
                 }, scriptExecutor);

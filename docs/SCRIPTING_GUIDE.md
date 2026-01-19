@@ -524,7 +524,7 @@ import java.nio.file.Path;
 byte[] fullPage = page.screenshot();
 Files.write(Path.of("screenshot.png"), fullPage);
 
-// Element screenshot
+// Element screenshotBytes
 byte[] element = page.screenshotElement("//div[@class='chart']");
 Files.write(Path.of("chart.png"), element);
 ```
@@ -692,7 +692,7 @@ try {
     page.waitForSelector("//div[@id='result']", 5000);
 } catch (TimeoutException e) {
     System.err.println("Element did not appear within 5 seconds");
-    // Handle gracefully - maybe take screenshot, log state, continue
+    // Handle gracefully - maybe take screenshotBytes, log state, continue
 }
 ```
 

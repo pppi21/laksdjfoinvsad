@@ -19,6 +19,7 @@ import java.util.Scanner;
 public class CDPDiagnostics {
 
     private static final Gson PRETTY_GSON = new GsonBuilder().setPrettyPrinting().create();
+    private static final String HEADLESS_UA = "--user-agent=Mozilla/5.0 (Windows NT 6.0; Win64; x64; Xbox; Xbox One) AppleWebKit/606 (KHTML, like Gecko) HeadlessChrome/81.0.4015.0 Safari/606";
 
     public static void main(String[] args) {
         String executablePath = System.getenv("chromepath");
@@ -33,6 +34,7 @@ public class CDPDiagnostics {
                 .fingerprintEnabled(false)
                 .proxyEnabled(false)
                 .warmProfile(false)
+                .chromeArguement(HEADLESS_UA)
                 .build();
 
         try (Browser browser = manager.createSession()) {
@@ -44,8 +46,6 @@ public class CDPDiagnostics {
 
             System.out.println("Navigating to test page...");
             page.navigate(testUrl, 15000);
-
-            page.sleep(20000);
 
             System.out.println("Waiting for captcha to potentially load...");
             page.sleep(5000);
