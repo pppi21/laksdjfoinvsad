@@ -25,6 +25,7 @@ import java.util.concurrent.TimeUnit;
  *   <li>Scrolling: {@link #scrollBy}, {@link #scrollTo}, {@link #scrollIntoView}</li>
  *   <li>Waiting: {@link #waitForSelector}, {@link #waitForNavigation}</li>
  *   <li>Queries: {@link #querySelector}, {@link #getText}, {@link #getAttribute}</li>
+ *   <li>Captcha: {@link #solvePressHoldCaptcha} for PerimeterX-style challenges</li>
  * </ul>
  *
  * <p>All interactions use realistic timing and movement patterns based on
@@ -35,6 +36,23 @@ import java.util.concurrent.TimeUnit;
 public class Page {
 
     private static final int DEFAULT_NAVIGATION_TIMEOUT = 30000;
+
+    // ==================== Captcha Constants ====================
+
+    /** Selector for PerimeterX captcha shadow host */
+    private static final String PX_CAPTCHA_SELECTOR = "#px-captcha";
+
+    /** Time to wait for animation style to apply after mousedown */
+    private static final int CAPTCHA_INITIAL_WAIT_MS = 150;
+
+    /** Buffer time after animation ends before releasing */
+    private static final int CAPTCHA_BUFFER_MS = 600;
+
+    /** Default hold duration if animation parsing fails */
+    private static final int CAPTCHA_DEFAULT_DURATION_MS = 10000;
+
+    /** Default timeout waiting for captcha to appear */
+    private static final int CAPTCHA_DEFAULT_WAIT_TIMEOUT_MS = 7000;
 
     private final CDPClient cdp;
     private final String targetId;
@@ -100,6 +118,152 @@ public class Page {
             initCursor();
         })();
         """;
+
+    /**
+     * JavaScript for solving press-and-hold captcha.
+     * Executed in page context, accesses shadow DOM via fakeShadowRoot.
+     */
+    private static final String PRESS_HOLD_CAPTCHA_SCRIPT = """
+    (async () => {
+        const INITIAL_WAIT_MS = %d;
+        const BUFFER_MS = %d;
+        const DEFAULT_DURATION_MS = %d;
+        
+        // 1. Access shadow root via patched Chrome feature
+        const shadowHost = document.querySelector("%s");
+        if (!shadowHost) {
+            return JSON.stringify({ success: false, error: 'SHADOW_HOST_NOT_FOUND', duration: 0 });
+        }
+        
+        const shadow = shadowHost.fakeShadowRoot;
+        if (!shadow) {
+            return JSON.stringify({ success: false, error: 'SHADOW_ROOT_NOT_ACCESSIBLE', duration: 0 });
+        }
+        
+        // 2. Find the visible (real) iframe among decoys
+        // Note: Use getAttribute('style') instead of .style.display due to fakeShadowRoot limitations
+        const iframes = shadow.querySelectorAll('iframe');
+        const realIframe = [...iframes].find(f => {
+            const styleAttr = f.getAttribute('style') || '';
+            return styleAttr.includes('display: block') || styleAttr.includes('display:block');
+        });
+        if (!realIframe) {
+            return JSON.stringify({ success: false, error: 'VISIBLE_IFRAME_NOT_FOUND', duration: 0 });
+        }
+        
+        // 3. Access iframe's document (same-origin)
+        const iframeDoc = realIframe.contentDocument;
+        if (!iframeDoc) {
+            return JSON.stringify({ success: false, error: 'IFRAME_DOCUMENT_NOT_ACCESSIBLE', duration: 0 });
+        }
+        
+        // 4. Find Press & Hold button by text content (handles randomized IDs)
+        const button = [...iframeDoc.querySelectorAll('p')]
+            .find(p => /press.*hold/i.test(p.textContent));
+        if (!button) {
+            return JSON.stringify({ success: false, error: 'BUTTON_NOT_FOUND', duration: 0 });
+        }
+        
+        // 5. Press down - dispatch both mouse and pointer events for compatibility
+        button.dispatchEvent(new MouseEvent('mousedown', {
+            bubbles: true,
+            cancelable: true,
+            view: realIframe.contentWindow,
+            button: 0
+        }));
+        button.dispatchEvent(new PointerEvent('pointerdown', {
+            bubbles: true,
+            cancelable: true,
+            view: realIframe.contentWindow,
+            pointerType: 'mouse'
+        }));
+        
+        // 6. Wait for animation style to be applied
+        await new Promise(resolve => setTimeout(resolve, INITIAL_WAIT_MS));
+        
+        // 7. Read animation duration from element's style attribute
+        let animationDuration = DEFAULT_DURATION_MS;
+        const style = button.getAttribute('style') || '';
+        const match = style.match(/animation:\\s*([\\d.]+)(ms|s)/i);
+        if (match) {
+            const value = parseFloat(match[1]);
+            const unit = match[2].toLowerCase();
+            animationDuration = unit === 's' ? value * 1000 : value;
+        }
+        
+        // 8. Calculate remaining hold time
+        const remainingHold = Math.max(0, animationDuration - INITIAL_WAIT_MS + BUFFER_MS);
+        
+        // 9. Wait for the remaining duration
+        await new Promise(resolve => setTimeout(resolve, remainingHold));
+        
+        // 10. Release - dispatch both mouse and pointer events
+        button.dispatchEvent(new MouseEvent('mouseup', {
+            bubbles: true,
+            cancelable: true,
+            view: realIframe.contentWindow,
+            button: 0
+        }));
+        button.dispatchEvent(new PointerEvent('pointerup', {
+            bubbles: true,
+            cancelable: true,
+            view: realIframe.contentWindow,
+            pointerType: 'mouse'
+        }));
+        
+        return JSON.stringify({ success: true, error: null, duration: animationDuration });
+    })();
+    """;
+
+    // ==================== Captcha Result Types ====================
+
+    /**
+     * Result of a press-and-hold captcha solve attempt.
+     */
+    public enum CaptchaAttemptResult {
+        /** No captcha was detected within the timeout period */
+        NOT_FOUND,
+
+        /** Captcha was found and press-and-hold was completed */
+        ATTEMPTED,
+
+        /** An error occurred during the solve attempt */
+        ERROR
+    }
+
+    /**
+     * Detailed result of a captcha solve attempt.
+     *
+     * @param result           the outcome of the attempt
+     * @param detectedDurationMs the animation duration detected (0 if not found/error)
+     * @param errorMessage     error description if result is ERROR, null otherwise
+     */
+    public record CaptchaSolveResult(
+            CaptchaAttemptResult result,
+            long detectedDurationMs,
+            String errorMessage
+    ) {
+        /**
+         * Creates a NOT_FOUND result.
+         */
+        public static CaptchaSolveResult notFound() {
+            return new CaptchaSolveResult(CaptchaAttemptResult.NOT_FOUND, 0, null);
+        }
+
+        /**
+         * Creates an ATTEMPTED result with the detected duration.
+         */
+        public static CaptchaSolveResult attempted(long durationMs) {
+            return new CaptchaSolveResult(CaptchaAttemptResult.ATTEMPTED, durationMs, null);
+        }
+
+        /**
+         * Creates an ERROR result with the error message.
+         */
+        public static CaptchaSolveResult error(String message) {
+            return new CaptchaSolveResult(CaptchaAttemptResult.ERROR, 0, message);
+        }
+    }
 
     /**
      * Creates a new Page with default interaction options.
@@ -234,6 +398,127 @@ public class Page {
             evaluate("window.__nodriver4j_clickCursor()");
         } catch (TimeoutException e) {
             // Silently ignore - cursor overlay is non-critical
+        }
+    }
+
+    // ==================== Press-and-Hold Captcha ====================
+
+    /**
+     * Attempts to solve a press-and-hold captcha (e.g., PerimeterX) if present.
+     *
+     * <p>Uses the default timeout of 7 seconds waiting for captcha to appear.</p>
+     *
+     * @return the result of the captcha solve attempt
+     * @see #solvePressHoldCaptcha(int)
+     */
+    public CaptchaSolveResult solvePressHoldCaptcha() {
+        return solvePressHoldCaptcha(CAPTCHA_DEFAULT_WAIT_TIMEOUT_MS);
+    }
+
+    /**
+     * Attempts to solve a press-and-hold captcha (e.g., PerimeterX) if present.
+     *
+     * <p>This method:</p>
+     * <ul>
+     *   <li>Waits for the captcha shadow host to appear (up to waitTimeoutMs)</li>
+     *   <li>Accesses the closed shadow DOM via patched Chrome's fakeShadowRoot</li>
+     *   <li>Identifies the real iframe among decoys (display:block vs display:none)</li>
+     *   <li>Locates the "Press & Hold" button by text content</li>
+     *   <li>Dynamically detects required hold duration from animation style</li>
+     *   <li>Performs the press-and-hold interaction with appropriate timing</li>
+     * </ul>
+     *
+     * <p><strong>Requirements:</strong></p>
+     * <ul>
+     *   <li>Must be using patched Chrome with fakeShadowRoot support</li>
+     *   <li>Captcha iframe must be same-origin (contentDocument accessible)</li>
+     * </ul>
+     *
+     * <p><strong>Note:</strong> Success/failure verification is the caller's responsibility.
+     * Check for page navigation, element disappearance, or other indicators after calling.</p>
+     *
+     * <p>Example usage:</p>
+     * <pre>{@code
+     * CaptchaSolveResult result = page.solvePressHoldCaptcha();
+     *
+     * if (result.result() == CaptchaAttemptResult.NOT_FOUND) {
+     *     // No captcha present, continue normally
+     * } else if (result.result() == CaptchaAttemptResult.ATTEMPTED) {
+     *     System.out.println("Held for " + result.detectedDurationMs() + "ms");
+     *     // Check if solve was successful (e.g., captcha disappeared)
+     *     page.sleep(2000);
+     *     if (page.exists("#px-captcha")) {
+     *         // Failed, may need to retry
+     *     }
+     * } else {
+     *     System.err.println("Error: " + result.errorMessage());
+     * }
+     * }</pre>
+     *
+     * @param waitTimeoutMs maximum time to wait for captcha to appear (recommended: 7000)
+     * @return the result of the captcha solve attempt
+     */
+    public CaptchaSolveResult solvePressHoldCaptcha(int waitTimeoutMs) {
+        System.out.println("[Page] Checking for press-and-hold captcha...");
+
+        try {
+            ensureRuntimeEnabled();
+
+            // Wait for captcha shadow host to appear
+            long deadline = System.currentTimeMillis() + waitTimeoutMs;
+            boolean captchaFound = false;
+
+            while (System.currentTimeMillis() < deadline) {
+                if (exists(PX_CAPTCHA_SELECTOR)) {
+                    captchaFound = true;
+                    break;
+                }
+                sleep(options.getRetryInterval());
+            }
+
+            if (!captchaFound) {
+                System.out.println("[Page] No captcha detected within timeout");
+                return CaptchaSolveResult.notFound();
+            }
+
+            System.out.println("[Page] Captcha detected, attempting to solve...");
+
+            // Build the captcha solving script with constants
+            String script = String.format(
+                    PRESS_HOLD_CAPTCHA_SCRIPT,
+                    CAPTCHA_INITIAL_WAIT_MS,
+                    CAPTCHA_BUFFER_MS,
+                    CAPTCHA_DEFAULT_DURATION_MS,
+                    PX_CAPTCHA_SELECTOR
+            );
+
+            // Execute the script (this blocks while holding)
+            String resultJson = evaluate(script);
+
+            if (resultJson == null || resultJson.isEmpty()) {
+                return CaptchaSolveResult.error("Script returned no result");
+            }
+
+            // Parse the JSON result
+            JsonObject result = com.google.gson.JsonParser.parseString(resultJson).getAsJsonObject();
+            boolean success = result.get("success").getAsBoolean();
+            long duration = result.get("duration").getAsLong();
+
+            if (success) {
+                System.out.println("[Page] Captcha press-and-hold completed (held for " + duration + "ms)");
+                return CaptchaSolveResult.attempted(duration);
+            } else {
+                String error = result.get("error").getAsString();
+                System.err.println("[Page] Captcha solve failed: " + error);
+                return CaptchaSolveResult.error(error);
+            }
+
+        } catch (TimeoutException e) {
+            System.err.println("[Page] Captcha solve timeout: " + e.getMessage());
+            return CaptchaSolveResult.error("Timeout: " + e.getMessage());
+        } catch (Exception e) {
+            System.err.println("[Page] Captcha solve exception: " + e.getMessage());
+            return CaptchaSolveResult.error("Exception: " + e.getMessage());
         }
     }
 
@@ -473,6 +758,25 @@ public class Page {
     }
 
     /**
+     * Checks if an element exists by CSS selector.
+     *
+     * @param selector the CSS selector
+     * @return true if element exists
+     * @throws TimeoutException if the operation times out
+     */
+    public boolean existsCss(String selector) throws TimeoutException {
+        ensureRuntimeEnabled();
+
+        String script = String.format(
+                "document.querySelector(\"%s\") !== null",
+                escapeJs(selector)
+        );
+
+        String result = evaluate(script);
+        return "true".equals(result);
+    }
+
+    /**
      * Checks if an element is visible.
      *
      * @param xpath the XPath expression
@@ -606,7 +910,7 @@ public class Page {
     }
 
     private String escapeJs(String str) {
-        return str.replace("\\", "\\\\").replace("'", "\\'");
+        return str.replace("\\", "\\\\").replace("'", "\\'").replace("\"", "\\\"");
     }
 
     // ==================== Waiting ====================
@@ -616,8 +920,12 @@ public class Page {
      *
      * @param ms the amount of time in Milliseconds
      */
-    public void sleep(long ms) throws InterruptedException {
-        Thread.sleep((long) ((ms - (ms * 0.1)) + (Math.random() * (ms * 0.2))));
+    public void sleep(long ms) {
+        try {
+            Thread.sleep((long) ((ms - (ms * 0.1)) + (Math.random() * (ms * 0.2))));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
 
@@ -1196,6 +1504,7 @@ public class Page {
         JsonObject params = new JsonObject();
         params.addProperty("expression", script);
         params.addProperty("returnByValue", true);
+        params.addProperty("awaitPromise", true);
 
         JsonObject result = cdp.send("Runtime.evaluate", params);
 
