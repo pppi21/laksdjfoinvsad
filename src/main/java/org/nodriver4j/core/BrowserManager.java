@@ -114,6 +114,7 @@ public class BrowserManager implements AutoCloseable {
     private final String webrtcPolicy;
     private final boolean proxyEnabled;
     private final InteractionOptions interactionOptions;
+    private final ArrayList<String> arguements;
 
     // Profile management
     private final String profileInputPath;
@@ -131,6 +132,7 @@ public class BrowserManager implements AutoCloseable {
         this.interactionOptions = builder.interactionOptions;
         this.profileInputPath = builder.profileInputPath;
         this.profileOutputPath = builder.profileOutputPath;
+        this.arguements = builder.arguements;
 
         this.isShutdown = new AtomicBoolean(false);
         this.activeBrowsers = ConcurrentHashMap.newKeySet();
@@ -531,7 +533,8 @@ public class BrowserManager implements AutoCloseable {
                 .fingerprintEnabled(fingerprintEnabled)
                 .warmProfile(warmProfile)
                 .headless(headless)
-                .webrtcPolicy(webrtcPolicy);
+                .webrtcPolicy(webrtcPolicy)
+                .chromeArguements(arguements);
 
         // Consume proxy from file if enabled
         if (proxyEnabled) {
@@ -794,6 +797,7 @@ public class BrowserManager implements AutoCloseable {
         private InteractionOptions interactionOptions = InteractionOptions.defaults();
         private String profileInputPath;
         private String profileOutputPath;
+        private ArrayList<String> arguements = new ArrayList<>();
 
         private Builder() {}
 
@@ -986,6 +990,11 @@ public class BrowserManager implements AutoCloseable {
          */
         public Builder profileOutputPath(String path) {
             this.profileOutputPath = path;
+            return this;
+        }
+
+        public Builder chromeArguement(String arguement){
+            this.arguements.add(arguement);
             return this;
         }
 

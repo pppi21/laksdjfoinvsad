@@ -899,6 +899,11 @@ public class Browser implements AutoCloseable {
             args.add("--webrtc-ip-handling-policy=" + webrtcPolicy);
         }
 
+        if (config.getArguements() != null && !config.getArguements().isEmpty()) {
+            System.out.println("####################################################################");
+            args.addAll(config.getArguements());
+        }
+
         // Fingerprint arguments
         if (fingerprint != null) {
             // Core fingerprint seed - enables all fingerprinting features

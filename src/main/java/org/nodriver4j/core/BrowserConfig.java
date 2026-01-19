@@ -1,6 +1,7 @@
 package org.nodriver4j.core;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.UUID;
 
 /**
@@ -25,6 +26,7 @@ public class BrowserConfig {
     private final boolean fingerprintEnabled;
     private final String webrtcPolicy;
     private final ProxyConfig proxyConfig;
+    private final ArrayList<String> arguements;
 
     private BrowserConfig(Builder builder) {
         this.executablePath = builder.executablePath;
@@ -35,6 +37,7 @@ public class BrowserConfig {
         this.fingerprintEnabled = builder.fingerprintEnabled;
         this.webrtcPolicy = builder.webrtcPolicy;
         this.proxyConfig = builder.proxyConfig;
+        this.arguements = builder.arguements;
     }
 
     public String getExecutablePath() {
@@ -68,6 +71,8 @@ public class BrowserConfig {
     public ProxyConfig getProxyConfig() {
         return proxyConfig;
     }
+
+    public ArrayList<String> getArguements() { return arguements; }
 
     /**
      * Checks if a proxy is configured for this browser.
@@ -107,6 +112,7 @@ public class BrowserConfig {
         private boolean fingerprintEnabled = false;
         private String webrtcPolicy = DEFAULT_WEBRTC_POLICY;
         private ProxyConfig proxyConfig;
+        private ArrayList<String> arguements;
 
         private Builder() {}
 
@@ -216,6 +222,11 @@ public class BrowserConfig {
          */
         public Builder proxy(String proxyString) {
             this.proxyConfig = new ProxyConfig(proxyString);
+            return this;
+        }
+
+        public Builder chromeArguements(ArrayList<String> arguements) {
+            this.arguements = arguements;
             return this;
         }
 
