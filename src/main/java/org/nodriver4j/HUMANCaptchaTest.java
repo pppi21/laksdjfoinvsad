@@ -78,6 +78,8 @@ public class HUMANCaptchaTest {
 
                         page.navigate(URL);
 
+                        page.sleep(3000);
+
                         page.solvePressHoldCaptcha(9000);
 
                         page.sleep(3000);
