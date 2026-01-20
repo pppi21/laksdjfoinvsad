@@ -98,18 +98,21 @@ public class MattelDraw {
 
         try {
             // Navigate to registration page
-            page.navigate(PRODUCT_URL);
+            page.navigate(PRODUCT_URL, 30000);
+            while(!page.exists("body > div:nth-child(86) > div > div:nth-child(2) > div > div > div > div > div > button")){
+                page.sleep(5000);
+            }
 
+            page.click("body > div:nth-child(86) > div > div:nth-child(2) > div > div > div > div > div > button");
             // 1. I need to reject third party cookies by pressing a button
             //    the regular click method will work for this.
             // 2. After 5 - 15 seconds on the page, there is a popup that asks for my email
             //    if filled, they say they will get 10% off. This popup obstucts the form,
             //    so we need to detect it when it pops up, and close it. The issue is that
-            //    it seems to be outside the normal page context. page.exists(xpath) doesn't
-            //    work for elements that are part of the popup. I also can't any elements on
-            //    the popup (because they can't be found). I need you help troubleshooting this.
+            //    it's selector/xpath varies from session to session based on multiple variables,
+            //    so it's hard to id with accuracy.
             // 3. I think we need an additional page method that can validate text field inputs.
-            //    It would take the xpath and expected value of the form field and return true or
+            //    It would take the xpath/selector and expected value of the form field and return true or
             //    false depending on whether the actual value matches the expected value.
             // 4. I'm going to be using the page.fillFormField method to fill in the firstname,
             //    lastname, and email fields. Then I'll use a simple click method to submit. Since
@@ -117,7 +120,7 @@ public class MattelDraw {
             //    be filled incorrectly, we have to validate the form input after each fillFormField
             //    call.
             // Overall, we may need new functionality for the page click() and exists() methods
-            // (and potentially other related methods) to allow it to access the popup html.
+            // (and potentially other related methods) to allow it to identify the popup element.
             // We need to add the validateForm() method to Page. We also need the checkForPopup
             // method within this MattelDraw class.
         } catch (TimeoutException e) {

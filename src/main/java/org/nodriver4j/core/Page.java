@@ -33,6 +33,13 @@ import java.util.concurrent.TimeUnit;
  *   <li>Captcha: {@link #solvePressHoldCaptcha} for PerimeterX-style challenges</li>
  * </ul>
  *
+ * <p>All query methods support both XPath and CSS selectors. The selector type is
+ * auto-detected based on the string pattern:</p>
+ * <ul>
+ *   <li><strong>XPath</strong>: Starts with "/" or "(" (e.g., "//div[@id='test']")</li>
+ *   <li><strong>CSS</strong>: Everything else (e.g., "div#test", "button[aria-label='Close']")</li>
+ * </ul>
+ *
  * <p>All interactions use realistic timing and movement patterns based on
  * human behavior research to avoid bot detection.</p>
  *
@@ -260,6 +267,17 @@ public class Page {
      *
      * @return the target ID
      */
+    public String targetId() {
+        return targetId;
+    }
+
+    /**
+     * Gets the target ID for this page.
+     *
+     * @return the target ID
+     * @deprecated Use {@link #targetId()} instead
+     */
+    @Deprecated
     public String getTargetId() {
         return targetId;
     }
@@ -269,6 +287,17 @@ public class Page {
      *
      * @return the CDP client
      */
+    public CDPClient cdpClient() {
+        return cdp;
+    }
+
+    /**
+     * Gets the CDP client for this page.
+     *
+     * @return the CDP client
+     * @deprecated Use {@link #cdpClient()} instead
+     */
+    @Deprecated
     public CDPClient getCdpClient() {
         return cdp;
     }
@@ -278,6 +307,17 @@ public class Page {
      *
      * @return the interaction options
      */
+    public InteractionOptions options() {
+        return options;
+    }
+
+    /**
+     * Gets the interaction options for this page.
+     *
+     * @return the interaction options
+     * @deprecated Use {@link #options()} instead
+     */
+    @Deprecated
     public InteractionOptions getOptions() {
         return options;
     }
@@ -303,6 +343,25 @@ public class Page {
             cdp.send("Network.enable", null);
             networkEnabled = true;
         }
+    }
+
+    // ==================== Selector Type Detection ====================
+
+    /**
+     * Determines if a selector is XPath (vs CSS).
+     *
+     * <p>XPath selectors start with "/" (absolute or descendant) or "(" (for grouped expressions).
+     * Everything else is treated as a CSS selector.</p>
+     *
+     * @param selector the selector string
+     * @return true if the selector is XPath, false if CSS
+     */
+    private boolean isXPath(String selector) {
+        if (selector == null || selector.isEmpty()) {
+            return false;
+        }
+        String trimmed = selector.trim();
+        return trimmed.startsWith("/") || trimmed.startsWith("(");
     }
 
     // ==================== Cursor Overlay ====================
@@ -411,7 +470,7 @@ public class Page {
             boolean captchaFound = false;
 
             while (System.currentTimeMillis() < deadline) {
-                if (existsCss(PX_CAPTCHA_SELECTOR)) {
+                if (exists(PX_CAPTCHA_SELECTOR)) {
                     captchaFound = true;
                     break;
                 }
@@ -555,7 +614,7 @@ public class Page {
             boolean captchaFound = false;
 
             while (System.currentTimeMillis() < deadline) {
-                if (existsCss(PX_CAPTCHA_SELECTOR)) {
+                if (exists(PX_CAPTCHA_SELECTOR)) {
                     captchaFound = true;
                     break;
                 }
@@ -1067,9 +1126,21 @@ public class Page {
      * @return the current URL
      * @throws TimeoutException if the operation times out
      */
-    public String getCurrentUrl() throws TimeoutException {
+    public String currentUrl() throws TimeoutException {
         ensureRuntimeEnabled();
         return evaluate("window.location.href");
+    }
+
+    /**
+     * Gets the current page URL.
+     *
+     * @return the current URL
+     * @throws TimeoutException if the operation times out
+     * @deprecated Use {@link #currentUrl()} instead
+     */
+    @Deprecated
+    public String getCurrentUrl() throws TimeoutException {
+        return currentUrl();
     }
 
     /**
@@ -1078,9 +1149,21 @@ public class Page {
      * @return the page title
      * @throws TimeoutException if the operation times out
      */
-    public String getTitle() throws TimeoutException {
+    public String title() throws TimeoutException {
         ensureRuntimeEnabled();
         return evaluate("document.title");
+    }
+
+    /**
+     * Gets the current page title.
+     *
+     * @return the page title
+     * @throws TimeoutException if the operation times out
+     * @deprecated Use {@link #title()} instead
+     */
+    @Deprecated
+    public String getTitle() throws TimeoutException {
+        return title();
     }
 
     public void waitForLoadEvent(int timeoutMs) throws TimeoutException {
@@ -1092,31 +1175,38 @@ public class Page {
         }
     }
 
-    // ==================== Element Queries (XPath) ====================
+    // ==================== Element Queries (XPath + CSS) ====================
 
     /**
-     * Finds the first element matching the XPath selector.
+     * Finds the first element matching the selector.
      *
-     * @param xpath the XPath expression
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector the XPath or CSS selector
      * @return the element's bounding box, or null if not found
      * @throws TimeoutException if the operation times out
      */
-    public BoundingBox querySelector(String xpath) throws TimeoutException {
-        return querySelector(xpath, options.getDefaultTimeout());
+    public BoundingBox querySelector(String selector) throws TimeoutException {
+        return querySelector(selector, options.getDefaultTimeout());
     }
 
     /**
-     * Finds the first element matching the XPath selector.
+     * Finds the first element matching the selector.
      *
-     * @param xpath     the XPath expression
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector  the XPath or CSS selector
      * @param timeoutMs timeout to wait for element
      * @return the element's bounding box, or null if not found
      * @throws TimeoutException if the operation times out
      */
-    public BoundingBox querySelector(String xpath, int timeoutMs) throws TimeoutException {
+    public BoundingBox querySelector(String selector, int timeoutMs) throws TimeoutException {
         ensureRuntimeEnabled();
 
-        String script = buildXPathScript(xpath, false);
+        String script = isXPath(selector)
+                ? buildXPathScript(selector, false)
+                : buildCssScript(selector, false);
+
         long deadline = System.currentTimeMillis() + timeoutMs;
         int retryCount = 0;
 
@@ -1142,18 +1232,22 @@ public class Page {
         return null;
     }
 
-
     /**
-     * Finds all elements matching the XPath selector.
+     * Finds all elements matching the selector.
      *
-     * @param xpath the XPath expression
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector the XPath or CSS selector
      * @return list of element bounding boxes
      * @throws TimeoutException if the operation times out
      */
-    public List<BoundingBox> querySelectorAll(String xpath) throws TimeoutException {
+    public List<BoundingBox> querySelectorAll(String selector) throws TimeoutException {
         ensureRuntimeEnabled();
 
-        String script = buildXPathScript(xpath, true);
+        String script = isXPath(selector)
+                ? buildXPathScript(selector, true)
+                : buildCssScript(selector, true);
+
         String result = evaluate(script);
 
         List<BoundingBox> boxes = new ArrayList<>();
@@ -1177,17 +1271,27 @@ public class Page {
     /**
      * Checks if an element exists.
      *
-     * @param xpath the XPath expression
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector the XPath or CSS selector
      * @return true if element exists
      * @throws TimeoutException if the operation times out
      */
-    public boolean exists(String xpath) throws TimeoutException {
+    public boolean exists(String selector) throws TimeoutException {
         ensureRuntimeEnabled();
 
-        String script = String.format(
-                "document.evaluate(\"%s\", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue !== null",
-                escapeXPath(xpath)
-        );
+        String script;
+        if (isXPath(selector)) {
+            script = String.format(
+                    "document.evaluate(\"%s\", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue !== null",
+                    escapeXPath(selector)
+            );
+        } else {
+            script = String.format(
+                    "document.querySelector(\"%s\") !== null",
+                    escapeCss(selector)
+            );
+        }
 
         String result = evaluate(script);
         return "true".equals(result);
@@ -1199,42 +1303,55 @@ public class Page {
      * @param selector the CSS selector
      * @return true if element exists
      * @throws TimeoutException if the operation times out
+     * @deprecated Use {@link #exists(String)} instead - it auto-detects selector type
      */
+    @Deprecated
     public boolean existsCss(String selector) throws TimeoutException {
-        ensureRuntimeEnabled();
-
-        String script = String.format(
-                "document.querySelector(\"%s\") !== null",
-                escapeJs(selector)
-        );
-
-        String result = evaluate(script);
-        return "true".equals(result);
+        return exists(selector);
     }
 
     /**
      * Checks if an element is visible.
      *
-     * @param xpath the XPath expression
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector the XPath or CSS selector
      * @return true if element is visible
      * @throws TimeoutException if the operation times out
      */
-    public boolean isVisible(String xpath) throws TimeoutException {
+    public boolean isVisible(String selector) throws TimeoutException {
         ensureRuntimeEnabled();
 
-        String script = String.format(
-                "(function() {" +
-                        "  var el = document.evaluate(\"%s\", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;" +
-                        "  if (!el) return false;" +
-                        "  var style = window.getComputedStyle(el);" +
-                        "  var rect = el.getBoundingClientRect();" +
-                        "  return style.display !== 'none' && " +
-                        "         style.visibility !== 'hidden' && " +
-                        "         style.opacity !== '0' && " +
-                        "         rect.width > 0 && rect.height > 0;" +
-                        "})()",
-                escapeXPath(xpath)
-        );
+        String script;
+        if (isXPath(selector)) {
+            script = String.format(
+                    "(function() {" +
+                            "  var el = document.evaluate(\"%s\", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;" +
+                            "  if (!el) return false;" +
+                            "  var style = window.getComputedStyle(el);" +
+                            "  var rect = el.getBoundingClientRect();" +
+                            "  return style.display !== 'none' && " +
+                            "         style.visibility !== 'hidden' && " +
+                            "         style.opacity !== '0' && " +
+                            "         rect.width > 0 && rect.height > 0;" +
+                            "})()",
+                    escapeXPath(selector)
+            );
+        } else {
+            script = String.format(
+                    "(function() {" +
+                            "  var el = document.querySelector(\"%s\");" +
+                            "  if (!el) return false;" +
+                            "  var style = window.getComputedStyle(el);" +
+                            "  var rect = el.getBoundingClientRect();" +
+                            "  return style.display !== 'none' && " +
+                            "         style.visibility !== 'hidden' && " +
+                            "         style.opacity !== '0' && " +
+                            "         rect.width > 0 && rect.height > 0;" +
+                            "})()",
+                    escapeCss(selector)
+            );
+        }
 
         String result = evaluate(script);
         return "true".equals(result);
@@ -1243,20 +1360,33 @@ public class Page {
     /**
      * Gets the inner text of an element.
      *
-     * @param xpath the XPath expression
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector the XPath or CSS selector
      * @return the inner text, or null if not found
      * @throws TimeoutException if the operation times out
      */
-    public String getText(String xpath) throws TimeoutException {
+    public String getText(String selector) throws TimeoutException {
         ensureRuntimeEnabled();
 
-        String script = String.format(
-                "(function() {" +
-                        "  var el = document.evaluate(\"%s\", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;" +
-                        "  return el ? el.innerText : null;" +
-                        "})()",
-                escapeXPath(xpath)
-        );
+        String script;
+        if (isXPath(selector)) {
+            script = String.format(
+                    "(function() {" +
+                            "  var el = document.evaluate(\"%s\", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;" +
+                            "  return el ? el.innerText : null;" +
+                            "})()",
+                    escapeXPath(selector)
+            );
+        } else {
+            script = String.format(
+                    "(function() {" +
+                            "  var el = document.querySelector(\"%s\");" +
+                            "  return el ? el.innerText : null;" +
+                            "})()",
+                    escapeCss(selector)
+            );
+        }
 
         return evaluate(script);
     }
@@ -1264,21 +1394,34 @@ public class Page {
     /**
      * Gets an attribute value of an element.
      *
-     * @param xpath     the XPath expression
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector  the XPath or CSS selector
      * @param attribute the attribute name
      * @return the attribute value, or null if not found
      * @throws TimeoutException if the operation times out
      */
-    public String getAttribute(String xpath, String attribute) throws TimeoutException {
+    public String getAttribute(String selector, String attribute) throws TimeoutException {
         ensureRuntimeEnabled();
 
-        String script = String.format(
-                "(function() {" +
-                        "  var el = document.evaluate(\"%s\", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;" +
-                        "  return el ? el.getAttribute('%s') : null;" +
-                        "})()",
-                escapeXPath(xpath), escapeJs(attribute)
-        );
+        String script;
+        if (isXPath(selector)) {
+            script = String.format(
+                    "(function() {" +
+                            "  var el = document.evaluate(\"%s\", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;" +
+                            "  return el ? el.getAttribute('%s') : null;" +
+                            "})()",
+                    escapeXPath(selector), escapeJs(attribute)
+            );
+        } else {
+            script = String.format(
+                    "(function() {" +
+                            "  var el = document.querySelector(\"%s\");" +
+                            "  return el ? el.getAttribute('%s') : null;" +
+                            "})()",
+                    escapeCss(selector), escapeJs(attribute)
+            );
+        }
 
         return evaluate(script);
     }
@@ -1286,23 +1429,59 @@ public class Page {
     /**
      * Gets the value of an input element.
      *
-     * @param xpath the XPath expression
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector the XPath or CSS selector
      * @return the input value, or null if not found
      * @throws TimeoutException if the operation times out
      */
-    public String getValue(String xpath) throws TimeoutException {
+    public String getValue(String selector) throws TimeoutException {
         ensureRuntimeEnabled();
 
-        String script = String.format(
-                "(function() {" +
-                        "  var el = document.evaluate(\"%s\", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;" +
-                        "  return el ? el.value : null;" +
-                        "})()",
-                escapeXPath(xpath)
-        );
+        String script;
+        if (isXPath(selector)) {
+            script = String.format(
+                    "(function() {" +
+                            "  var el = document.evaluate(\"%s\", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;" +
+                            "  return el ? el.value : null;" +
+                            "})()",
+                    escapeXPath(selector)
+            );
+        } else {
+            script = String.format(
+                    "(function() {" +
+                            "  var el = document.querySelector(\"%s\");" +
+                            "  return el ? el.value : null;" +
+                            "})()",
+                    escapeCss(selector)
+            );
+        }
 
         return evaluate(script);
     }
+
+    /**
+     * Validates that an input field contains the expected value.
+     *
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector      the XPath or CSS selector
+     * @param expectedValue the expected value
+     * @return true if the actual value matches the expected value
+     * @throws TimeoutException if the operation times out
+     */
+    public boolean validateValue(String selector, String expectedValue) throws TimeoutException {
+        String actualValue = getValue(selector);
+        if (actualValue == null && expectedValue == null) {
+            return true;
+        }
+        if (actualValue == null || expectedValue == null) {
+            return false;
+        }
+        return actualValue.equals(expectedValue);
+    }
+
+    // ==================== Script Builders ====================
 
     private String buildXPathScript(String xpath, boolean multiple) {
         if (multiple) {
@@ -1331,6 +1510,33 @@ public class Page {
         }
     }
 
+    private String buildCssScript(String cssSelector, boolean multiple) {
+        if (multiple) {
+            return String.format(
+                    "(function() {" +
+                            "  var result = [];" +
+                            "  var nodes = document.querySelectorAll(\"%s\");" +
+                            "  for (var i = 0; i < nodes.length; i++) {" +
+                            "    var rect = nodes[i].getBoundingClientRect();" +
+                            "    result.push({x: rect.x, y: rect.y, width: rect.width, height: rect.height});" +
+                            "  }" +
+                            "  return JSON.stringify(result);" +
+                            "})()",
+                    escapeCss(cssSelector)
+            );
+        } else {
+            return String.format(
+                    "(function() {" +
+                            "  var el = document.querySelector(\"%s\");" +
+                            "  if (!el) return null;" +
+                            "  var rect = el.getBoundingClientRect();" +
+                            "  return JSON.stringify({x: rect.x, y: rect.y, width: rect.width, height: rect.height});" +
+                            "})()",
+                    escapeCss(cssSelector)
+            );
+        }
+    }
+
     private BoundingBox parseBoundingBox(String json) {
         JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
         return new BoundingBox(
@@ -1343,6 +1549,10 @@ public class Page {
 
     private String escapeXPath(String xpath) {
         return xpath.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private String escapeCss(String selector) {
+        return selector.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     private String escapeJs(String str) {
@@ -1364,68 +1574,75 @@ public class Page {
         }
     }
 
-
     /**
      * Waits for an element to appear.
      *
-     * @param xpath the XPath expression
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector the XPath or CSS selector
      * @return the element's bounding box
      * @throws TimeoutException if element doesn't appear within timeout
      */
-    public BoundingBox waitForSelector(String xpath) throws TimeoutException {
-        return waitForSelector(xpath, options.getDefaultTimeout());
+    public BoundingBox waitForSelector(String selector) throws TimeoutException {
+        return waitForSelector(selector, options.getDefaultTimeout());
     }
 
     /**
      * Waits for an element to appear.
      *
-     * @param xpath     the XPath expression
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector  the XPath or CSS selector
      * @param timeoutMs timeout in milliseconds
      * @return the element's bounding box
      * @throws TimeoutException if element doesn't appear within timeout
      */
-    public BoundingBox waitForSelector(String xpath, int timeoutMs) throws TimeoutException {
+    public BoundingBox waitForSelector(String selector, int timeoutMs) throws TimeoutException {
         long deadline = System.currentTimeMillis() + timeoutMs;
 
         while (System.currentTimeMillis() < deadline) {
-            BoundingBox box = querySelector(xpath, 0);
+            BoundingBox box = querySelector(selector, 0);
             if (box != null && box.isValid()) {
                 return box;
             }
             sleep(options.getRetryInterval());
         }
 
-        throw new TimeoutException("Element not found: " + xpath);
+        throw new TimeoutException("Element not found: " + selector);
     }
 
     /**
      * Waits for an element to disappear.
      *
-     * @param xpath the XPath expression
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector the XPath or CSS selector
      * @throws TimeoutException if element doesn't disappear within timeout
      */
-    public void waitForSelectorHidden(String xpath) throws TimeoutException {
-        waitForSelectorHidden(xpath, options.getDefaultTimeout());
+    public void waitForSelectorHidden(String selector) throws TimeoutException {
+        waitForSelectorHidden(selector, options.getDefaultTimeout());
     }
 
     /**
      * Waits for an element to disappear.
      *
-     * @param xpath     the XPath expression
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector  the XPath or CSS selector
      * @param timeoutMs timeout in milliseconds
      * @throws TimeoutException if element doesn't disappear within timeout
      */
-    public void waitForSelectorHidden(String xpath, int timeoutMs) throws TimeoutException {
+    public void waitForSelectorHidden(String selector, int timeoutMs) throws TimeoutException {
         long deadline = System.currentTimeMillis() + timeoutMs;
 
         while (System.currentTimeMillis() < deadline) {
-            if (!exists(xpath) || !isVisible(xpath)) {
+            if (!exists(selector) || !isVisible(selector)) {
                 return;
             }
             sleep(options.getRetryInterval());
         }
 
-        throw new TimeoutException("Element still visible: " + xpath);
+        throw new TimeoutException("Element still visible: " + selector);
     }
 
     /**
@@ -1478,12 +1695,14 @@ public class Page {
     /**
      * Clicks on an element with human-like mouse movement.
      *
-     * @param xpath the XPath expression
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector the XPath or CSS selector
      * @throws TimeoutException if the operation times out
      */
-    public void click(String xpath) throws TimeoutException {
-        scrollIntoView(xpath);
-        BoundingBox box = waitForSelector(xpath);
+    public void click(String selector) throws TimeoutException {
+        scrollIntoView(selector);
+        BoundingBox box = waitForSelector(selector);
         clickAtBox(box);
     }
 
@@ -1520,11 +1739,13 @@ public class Page {
     /**
      * Hovers over an element with human-like mouse movement.
      *
-     * @param xpath the XPath expression
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector the XPath or CSS selector
      * @throws TimeoutException if the operation times out
      */
-    public void hover(String xpath) throws TimeoutException {
-        BoundingBox box = waitForSelector(xpath);
+    public void hover(String selector) throws TimeoutException {
+        BoundingBox box = waitForSelector(selector);
         Vector target = box.getRandomPoint(options.getPaddingPercentage());
         moveMouseTo(target);
     }
@@ -1678,12 +1899,14 @@ public class Page {
     /**
      * Types text into an element after clicking it.
      *
-     * @param xpath the XPath expression
-     * @param text  the text to type
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector the XPath or CSS selector
+     * @param text     the text to type
      * @throws TimeoutException if the operation times out
      */
-    public void type(String xpath, String text) throws TimeoutException {
-        click(xpath);
+    public void type(String selector, String text) throws TimeoutException {
+        click(selector);
         sleep(100); // Small delay after click before typing
         type(text);
     }
@@ -1691,11 +1914,13 @@ public class Page {
     /**
      * Clears the content of an input element.
      *
-     * @param xpath the XPath expression
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector the XPath or CSS selector
      * @throws TimeoutException if the operation times out
      */
-    public void clear(String xpath) throws TimeoutException {
-        click(xpath);
+    public void clear(String selector) throws TimeoutException {
+        click(selector);
         sleep(50);
 
         // Select all and delete
@@ -1706,19 +1931,32 @@ public class Page {
     /**
      * Focuses an element.
      *
-     * @param xpath the XPath expression
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector the XPath or CSS selector
      * @throws TimeoutException if the operation times out
      */
-    public void focus(String xpath) throws TimeoutException {
+    public void focus(String selector) throws TimeoutException {
         ensureRuntimeEnabled();
 
-        String script = String.format(
-                "(function() {" +
-                        "  var el = document.evaluate(\"%s\", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;" +
-                        "  if (el) el.focus();" +
-                        "})()",
-                escapeXPath(xpath)
-        );
+        String script;
+        if (isXPath(selector)) {
+            script = String.format(
+                    "(function() {" +
+                            "  var el = document.evaluate(\"%s\", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;" +
+                            "  if (el) el.focus();" +
+                            "})()",
+                    escapeXPath(selector)
+            );
+        } else {
+            script = String.format(
+                    "(function() {" +
+                            "  var el = document.querySelector(\"%s\");" +
+                            "  if (el) el.focus();" +
+                            "})()",
+                    escapeCss(selector)
+            );
+        }
 
         evaluate(script);
     }
@@ -1726,23 +1964,39 @@ public class Page {
     /**
      * Selects an option from a dropdown.
      *
-     * @param xpath the XPath expression for the select element
-     * @param value the value to select
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector the XPath or CSS selector for the select element
+     * @param value    the value to select
      * @throws TimeoutException if the operation times out
      */
-    public void select(String xpath, String value) throws TimeoutException {
+    public void select(String selector, String value) throws TimeoutException {
         ensureRuntimeEnabled();
 
-        String script = String.format(
-                "(function() {" +
-                        "  var el = document.evaluate(\"%s\", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;" +
-                        "  if (el) {" +
-                        "    el.value = '%s';" +
-                        "    el.dispatchEvent(new Event('change', { bubbles: true }));" +
-                        "  }" +
-                        "})()",
-                escapeXPath(xpath), escapeJs(value)
-        );
+        String script;
+        if (isXPath(selector)) {
+            script = String.format(
+                    "(function() {" +
+                            "  var el = document.evaluate(\"%s\", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;" +
+                            "  if (el) {" +
+                            "    el.value = '%s';" +
+                            "    el.dispatchEvent(new Event('change', { bubbles: true }));" +
+                            "  }" +
+                            "})()",
+                    escapeXPath(selector), escapeJs(value)
+            );
+        } else {
+            script = String.format(
+                    "(function() {" +
+                            "  var el = document.querySelector(\"%s\");" +
+                            "  if (el) {" +
+                            "    el.value = '%s';" +
+                            "    el.dispatchEvent(new Event('change', { bubbles: true }));" +
+                            "  }" +
+                            "})()",
+                    escapeCss(selector), escapeJs(value)
+            );
+        }
 
         evaluate(script);
     }
@@ -1853,13 +2107,15 @@ public class Page {
     /**
      * Scrolls an element into view.
      *
-     * @param xpath the XPath expression
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector the XPath or CSS selector
      * @throws TimeoutException if the operation times out
      */
-    public void scrollIntoView(String xpath) throws TimeoutException {
-        BoundingBox box = querySelector(xpath);
+    public void scrollIntoView(String selector) throws TimeoutException {
+        BoundingBox box = querySelector(selector);
         if (box == null) {
-            throw new TimeoutException("Element not found: " + xpath);
+            throw new TimeoutException("Element not found: " + selector);
         }
 
         // Check if already in viewport
@@ -1925,13 +2181,21 @@ public class Page {
         cdp.send("Input.dispatchMouseEvent", params);
     }
 
-
     /**
      * Fills a form field with click, delay, type, delay pattern.
+     *
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector      the XPath or CSS selector
+     * @param value         the value to type
+     * @param preTypeDelay  delay before typing (ms)
+     * @param postTypeDelay delay after typing (ms)
+     * @throws TimeoutException     if the operation times out
+     * @throws InterruptedException if interrupted during sleep
      */
-    public void fillFormField(String xpath, String value, long preTypeDelay, long postTypeDelay)
+    public void fillFormField(String selector, String value, long preTypeDelay, long postTypeDelay)
             throws TimeoutException, InterruptedException {
-        click(xpath);
+        click(selector);
         sleep(preTypeDelay);
         type(value);
         sleep(postTypeDelay);
@@ -1997,9 +2261,17 @@ public class Page {
         return result != null ? Integer.parseInt(result) : 0;
     }
 
-    public String getFrameTree() throws TimeoutException {
+    public String frameTree() throws TimeoutException {
         JsonObject result = cdp.send("Page.getFrameTree", null);
-        return result.getAsString();
+        return result.toString();
+    }
+
+    /**
+     * @deprecated Use {@link #frameTree()} instead
+     */
+    @Deprecated
+    public String getFrameTree() throws TimeoutException {
+        return frameTree();
     }
 
     // ==================== Screenshots ====================
@@ -2044,14 +2316,16 @@ public class Page {
     /**
      * Takes a screenshot of a specific element.
      *
-     * @param xpath the XPath expression
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector the XPath or CSS selector
      * @return the screenshot as PNG bytes
      * @throws TimeoutException if the operation times out
      */
-    public byte[] screenshotElementBytes(String xpath) throws TimeoutException {
-        BoundingBox box = querySelector(xpath);
+    public byte[] screenshotElementBytes(String selector) throws TimeoutException {
+        BoundingBox box = querySelector(selector);
         if (box == null) {
-            throw new TimeoutException("Element not found: " + xpath);
+            throw new TimeoutException("Element not found: " + selector);
         }
 
         ensurePageEnabled();

@@ -146,11 +146,6 @@ public class Browser implements AutoCloseable {
         // Setup target discovery to track all pages
         browser.setupTargetDiscovery();
 
-        // Apply CDP-based fingerprint settings (screen emulation, etc.)
-        if (fingerprint != null) {
-            browser.applyFingerprintViaCDP();
-        }
-
         System.out.println("[Browser] Ready on port " + port);
 
         return browser;

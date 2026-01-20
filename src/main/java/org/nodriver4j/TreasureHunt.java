@@ -22,12 +22,12 @@ public class TreasureHunt {
     private static final String URL = "https://creations.mattel.com/pages/2025-super-treasure-hunt-draw";
 
     // Number of concurrent browser sessions
-    private static final int SESSION_COUNT = 2;
+    private static final int SESSION_COUNT = 1;
 
     public static void main(String[] args) {
         String executablePath = System.getenv("chromepath");
-        String profileInputPath = System.getenv("profiles_input");
-        String profileOutputPath = System.getenv("profiles_output");
+        String profileInputPath = System.getenv("mattel_profiles_input");
+        String profileOutputPath = System.getenv("mattel_profiles_output");
 
         if (executablePath == null || executablePath.isBlank()) {
             System.err.println("ERROR: 'chromepath' environment variable is not set.");
@@ -45,9 +45,9 @@ public class TreasureHunt {
                 .executablePath(executablePath)
                 .fingerprintEnabled(true)
                 .webrtcPolicy("default")
-                .proxyEnabled(true)
-                .headless(true)
-                .warmProfile(true);
+                .proxyEnabled(false)
+                .headless(false)
+                .warmProfile(false);
 
 
         // Add profile paths if provided via env vars
