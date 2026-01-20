@@ -41,32 +41,9 @@ public class MattelDraw {
 
     private static final String FIRST_NAME_TEXT = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[3]/div/input";
     private static final String LAST_NAME_TEXT = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[4]/div/input";
-    private static final String PHONE_NUMBER_TEXT = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[5]/div/input";
-    private static final String MONTH_TEXT = "/html/body/div[1]/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[6]/div/div/div[1]/input";
-    private static final String DAY_TEXT = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[6]/div/div/div[3]/input";
-    private static final String YEAR_TEXT = "/html/body/div[1]/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[6]/div/div/div[5]/input";
     private static final String EMAIL_TEXT = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[7]/div/input";
-    private static final String PASSWORD_TEXT = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[8]/div/input";
-    private static final String CONFIRM_PASSWORD_TEXT = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[9]/div/input[1]";
-    private static final String EMAIL_OPT_IN_CHECKBOX = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[10]/div/input[1]";
-    private static final String STATE_DROPDOWN = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[12]/div/div[1]/div/select";
-    private static final String STORE_DROPDOWN = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[12]/div/div[2]/div/select";
     private static final String SUBMIT_BUTTON = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[13]/div/button";
     private static final String SUCCESS_MESSAGE = "/html/body/div[1]/div[2]/div[1]/div[2]/div/div/div/div[2]/div/p[1]";
-
-    // ==================== Password Generation ====================
-
-    private static final String UPPERCASE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    private static final String LOWERCASE_CHARS = "abcdefghijklmnopqrstuvwxyz";
-    private static final String DIGIT_CHARS = "0123456789";
-    private static final String SPECIAL_CHARS = "!@#$%^&*";
-    private static final String ALL_CHARS = UPPERCASE_CHARS + LOWERCASE_CHARS + DIGIT_CHARS + SPECIAL_CHARS;
-    private static final int PASSWORD_LENGTH = 16;
-
-    // ==================== Birthday Generation ====================
-
-    private static final int MIN_BIRTH_YEAR = 1945;
-    private static final int MIN_AGE_YEARS = 20;
 
     // ==================== Fields ====================
 
@@ -76,7 +53,7 @@ public class MattelDraw {
 
 
     /**
-     * Creates a SandwichGen script with a referrer URL.
+     * Creates a MattelDraw script with a referrer URL.
      *
      * @param page        the Page to automate
      * @param profile     the profile containing user data
@@ -123,184 +100,41 @@ public class MattelDraw {
             // Navigate to registration page
             page.navigate(PRODUCT_URL);
 
-            /*
-
-            int captchaWait = 10000;
-            int retries = 0;
-            while(retries <= 2) {
-                page.solvePressHoldCaptcha(4000);
-
-                if (page.exists(FIRST_NAME_TEXT))
-                    break;
-                page.sleep(captchaWait);
-                captchaWait += 2000;
-                retries++;
-            }
-
-            // Fill form fields
-            fillFormField(FIRST_NAME_TEXT, profile.firstName(), 900, 2000);
-            fillFormField(LAST_NAME_TEXT, profile.lastName(), 900, 2000);
-            fillFormField(PHONE_NUMBER_TEXT, profile.shippingPhone(), 900, 2000);
-
-            // Birthday fields
-            fillFormField(MONTH_TEXT, birthday.month(), 900, 1300);
-            fillFormField(DAY_TEXT, birthday.day(), 900, 1300);
-            fillFormField(YEAR_TEXT, birthday.year(), 900, 2000);
-
-            // Email and password
-            fillFormField(EMAIL_TEXT, profile.emailAddress(), 900, 2000);
-            fillFormField(PASSWORD_TEXT, password, 900, 2000);
-            fillFormField(CONFIRM_PASSWORD_TEXT, password, 900, 2000);
-
-            // Email opt-in
-            page.click(EMAIL_OPT_IN_CHECKBOX);
-            page.sleep(500);
-
-            // Scroll to bottom for dropdowns
-            page.scrollToBottom();
-            page.sleep(1000);
-
-            // State selection (California = 258)
-            page.click(STATE_DROPDOWN);
-            page.sleep(2500);
-            page.select(STATE_DROPDOWN, "258");
-            page.sleep(3000);
-
-            int captchaWait2 = 4000;
-            int retries2 = 0;
-            while(retries2 <= 2) {
-                page.solvePressHoldCaptcha(2000);
-
-                if (page.exists(FIRST_NAME_TEXT))
-                    break;
-
-                if (retries2 == 0)
-                    System.out.println("[SandwichGen] 2nd captcha detected for: " + profile.emailAddress());
-                page.sleep(captchaWait2);
-                captchaWait2 += 2000;
-                retries2++;
-            }
-
-            // Store selection (Del Mar = 401)
-            page.click(STORE_DROPDOWN);
-            page.sleep(2500);
-            page.select(STORE_DROPDOWN, "401");
-            page.sleep(1500);
-
-            // Submit form
-            page.click(SUBMIT_BUTTON);
-            page.sleep(3000);
-
-
-            page.waitForSelector(SUCCESS_MESSAGE, 15000);
-            page.screenshot();
-            writeCompletedProfile(password, birthday);
-
-            System.out.println("[SandwichGen] Account created successfully for: " + profile.emailAddress());
-            */
+            // 1. I need to reject third party cookies by pressing a button
+            //    the regular click method will work for this.
+            // 2. After 5 - 15 seconds on the page, there is a popup that asks for my email
+            //    if filled, they say they will get 10% off. This popup obstucts the form,
+            //    so we need to detect it when it pops up, and close it. The issue is that
+            //    it seems to be outside the normal page context. page.exists(xpath) doesn't
+            //    work for elements that are part of the popup. I also can't any elements on
+            //    the popup (because they can't be found). I need you help troubleshooting this.
+            // 3. I think we need an additional page method that can validate text field inputs.
+            //    It would take the xpath and expected value of the form field and return true or
+            //    false depending on whether the actual value matches the expected value.
+            // 4. I'm going to be using the page.fillFormField method to fill in the firstname,
+            //    lastname, and email fields. Then I'll use a simple click method to submit. Since
+            //    the popup could obstruct the view of the form at any time, causing the field to
+            //    be filled incorrectly, we have to validate the form input after each fillFormField
+            //    call.
+            // Overall, we may need new functionality for the page click() and exists() methods
+            // (and potentially other related methods) to allow it to access the popup html.
+            // We need to add the validateForm() method to Page. We also need the checkForPopup
+            // method within this MattelDraw class.
         } catch (TimeoutException e) {
             throw new RuntimeException("Timeout during account creation: " + e.getMessage(), e);
         }
     }
 
 
+
+
     /**
      * Writes the completed profile to the output file with extra fields.
      */
-    private void writeCompletedProfile(String password, Birthday birthday) throws IOException {
+    private void writeCompletedProfile() throws IOException {
         Profile completed = profile.toBuilder()
                 .build();
 
         profilePool.writeCompleted(completed);
-    }
-
-    // ==================== Birthday Generation ====================
-
-    /**
-     * Generates a birthday for account registration.
-     *
-     * <p>Rules:</p>
-     * <ul>
-     *   <li>Month: Next month from current date (December wraps to January)</li>
-     *   <li>Day: Always the 1st</li>
-     *   <li>Year: Random between 1945 and (current_year - 20)</li>
-     * </ul>
-     *
-     * @return a Birthday record with month, day, and year
-     */
-    private Birthday generateBirthday() {
-        LocalDate today = LocalDate.now();
-
-        // Next month (wrap December -> January)
-        int nextMonth = today.getMonthValue() + 1;
-        if (nextMonth > 12) {
-            nextMonth = 1;
-        }
-
-        // Format month as 2-digit string
-        String month = String.format("%02d", nextMonth);
-
-        // Day is always 1st
-        String day = "01";
-
-        // Year: 1945 to (current_year - 20)
-        int maxBirthYear = today.getYear() - MIN_AGE_YEARS;
-        int randomYear = ThreadLocalRandom.current().nextInt(MIN_BIRTH_YEAR, maxBirthYear + 1);
-        String year = String.valueOf(randomYear);
-
-        return new Birthday(month, day, year);
-    }
-
-    // ==================== Password Generation ====================
-
-    /**
-     * Generates a secure random password meeting complexity requirements.
-     *
-     * <p>The generated password contains:</p>
-     * <ul>
-     *   <li>At least one uppercase letter</li>
-     *   <li>At least one lowercase letter</li>
-     *   <li>At least one digit</li>
-     *   <li>At least one special character (!@#$%^&*)</li>
-     * </ul>
-     *
-     * @return a 16-character random password
-     */
-    private String generatePassword() {
-        SecureRandom random = new SecureRandom();
-        char[] password = new char[PASSWORD_LENGTH];
-
-        // Ensure at least one of each required character type
-        password[0] = UPPERCASE_CHARS.charAt(random.nextInt(UPPERCASE_CHARS.length()));
-        password[1] = LOWERCASE_CHARS.charAt(random.nextInt(LOWERCASE_CHARS.length()));
-        password[2] = DIGIT_CHARS.charAt(random.nextInt(DIGIT_CHARS.length()));
-        password[3] = SPECIAL_CHARS.charAt(random.nextInt(SPECIAL_CHARS.length()));
-
-        // Fill remaining positions with random characters from all sets
-        for (int i = 4; i < PASSWORD_LENGTH; i++) {
-            password[i] = ALL_CHARS.charAt(random.nextInt(ALL_CHARS.length()));
-        }
-
-        // Shuffle to randomize positions of required characters
-        for (int i = PASSWORD_LENGTH - 1; i > 0; i--) {
-            int j = random.nextInt(i + 1);
-            char temp = password[i];
-            password[i] = password[j];
-            password[j] = temp;
-        }
-
-        return new String(password);
-    }
-
-    // ==================== Inner Classes ====================
-
-    /**
-     * Record holding generated birthday data.
-     */
-    private record Birthday(String month, String day, String year) {
-        @Override
-        public String toString() {
-            return month + "/" + day + "/" + year;
-        }
     }
 }
