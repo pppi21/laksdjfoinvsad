@@ -47,7 +47,7 @@ import java.util.concurrent.TimeUnit;
  */
 public class Page {
 
-    private static final int DEFAULT_NAVIGATION_TIMEOUT = 12000;
+    private static final int DEFAULT_NAVIGATION_TIMEOUT = 30000;
 
     // ==================== Press-and-Hold Captcha ====================
 

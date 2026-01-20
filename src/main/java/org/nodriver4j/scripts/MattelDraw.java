@@ -36,14 +36,16 @@ import java.util.concurrent.TimeoutException;
 public class MattelDraw {
 
     private static final String PRODUCT_URL = "https://creations.mattel.com/pages/2025-super-treasure-hunt-draw";
-
+    private static final int RETRIES = 2;
     // ==================== Form XPaths ====================
 
-    private static final String FIRST_NAME_TEXT = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[3]/div/input";
-    private static final String LAST_NAME_TEXT = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[4]/div/input";
-    private static final String EMAIL_TEXT = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[7]/div/input";
-    private static final String SUBMIT_BUTTON = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[13]/div/button";
-    private static final String SUCCESS_MESSAGE = "/html/body/div[1]/div[2]/div[1]/div[2]/div/div/div/div[2]/div/p[1]";
+    private static final String CLOSE_POPUP_BUTTON = "button[aria-label='Close dialog']";
+    private static final String REJECT_COOKIES_BUTTON = "button[id='truste-consent-required']";
+    private static final String FIRST_NAME_TEXT = "/html/body/div[8]/main/div[4]/section/div/div/div/form/div/div[3]/div[1]/div/input";
+    private static final String LAST_NAME_TEXT = "/html/body/div[8]/main/div[4]/section/div/div/div/form/div/div[3]/div[2]/div/input";
+    private static final String EMAIL_TEXT = "/html/body/div[8]/main/div[4]/section/div/div/div/form/div/div[4]/div/div/input";
+    private static final String SUBMIT_BUTTON = "/html/body/div[8]/main/div[4]/section/div/div/div/form/div/div[5]/div/button";
+    private static final String SUCCESS_MESSAGE = "span[class='ql-font-poppins']";
 
     // ==================== Fields ====================
 
@@ -98,36 +100,56 @@ public class MattelDraw {
 
         try {
             // Navigate to registration page
-            page.navigate(PRODUCT_URL, 30000);
-            while(!page.exists("body > div:nth-child(86) > div > div:nth-child(2) > div > div > div > div > div > button")){
-                page.sleep(5000);
-            }
+            page.navigate(PRODUCT_URL);
+            rejectCookies();
+            fillFormField(FIRST_NAME_TEXT, profile.firstName());
+            fillFormField(LAST_NAME_TEXT, profile.lastName());
+            fillFormField(EMAIL_TEXT, profile.emailAddress());
+            submit(RETRIES);
 
-            page.click("body > div:nth-child(86) > div > div:nth-child(2) > div > div > div > div > div > button");
-            // 1. I need to reject third party cookies by pressing a button
-            //    the regular click method will work for this.
-            // 2. After 5 - 15 seconds on the page, there is a popup that asks for my email
-            //    if filled, they say they will get 10% off. This popup obstucts the form,
-            //    so we need to detect it when it pops up, and close it. The issue is that
-            //    it's selector/xpath varies from session to session based on multiple variables,
-            //    so it's hard to id with accuracy.
-            // 3. I think we need an additional page method that can validate text field inputs.
-            //    It would take the xpath/selector and expected value of the form field and return true or
-            //    false depending on whether the actual value matches the expected value.
-            // 4. I'm going to be using the page.fillFormField method to fill in the firstname,
-            //    lastname, and email fields. Then I'll use a simple click method to submit. Since
-            //    the popup could obstruct the view of the form at any time, causing the field to
-            //    be filled incorrectly, we have to validate the form input after each fillFormField
-            //    call.
-            // Overall, we may need new functionality for the page click() and exists() methods
-            // (and potentially other related methods) to allow it to identify the popup element.
-            // We need to add the validateForm() method to Page. We also need the checkForPopup
-            // method within this MattelDraw class.
         } catch (TimeoutException e) {
             throw new RuntimeException("Timeout during account creation: " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
         }
     }
 
+    private void fillFormField(String selector, String value) throws InterruptedException, TimeoutException {
+        checkForPopup();
+        page.fillFormField(selector, value, 900,1100);
+        if(!page.validateValue(selector, value)) {
+            checkForPopup();
+            page.sleep(500);
+            page.clear(selector);
+            fillFormField(selector,value);
+        }
+    }
+
+    private boolean checkForPopup() throws TimeoutException {
+        if(page.exists(CLOSE_POPUP_BUTTON)){
+            page.click(CLOSE_POPUP_BUTTON);
+            return true;
+        }
+        return false;
+    }
+
+    private void rejectCookies() throws TimeoutException {
+        while(!page.exists(REJECT_COOKIES_BUTTON)){
+            page.sleep(1000);
+        }
+        page.click(REJECT_COOKIES_BUTTON);
+        page.sleep(1500);
+    }
+
+    private boolean submit(int retries) throws TimeoutException {
+        page.sleep(2000);
+        checkForPopup();
+        page.click(SUBMIT_BUTTON);
+        if(!page.exists(SUCCESS_MESSAGE) && retries > 0){
+            submit(retries-1);
+        }
+        return true;
+    }
 
 
 
