@@ -33,7 +33,9 @@ import java.util.concurrent.TimeoutException;
  * @see Profile
  * @see ProfilePool
  */
-public class SandwichGen {
+public class MattelDraw {
+
+    private static final String PRODUCT_URL = "https://creations.mattel.com/pages/2025-super-treasure-hunt-draw";
 
     // ==================== Form XPaths ====================
 
@@ -71,18 +73,7 @@ public class SandwichGen {
     private final Page page;
     private final Profile profile;
     private final ProfilePool profilePool;
-    private final String referrerUrl;
 
-    /**
-     * Creates a SandwichGen script without a referrer URL.
-     *
-     * @param page        the Page to automate
-     * @param profile     the profile containing user data
-     * @param profilePool the pool for writing completed profiles
-     */
-    public SandwichGen(Page page, Profile profile, ProfilePool profilePool) {
-        this(page, profile, profilePool, null);
-    }
 
     /**
      * Creates a SandwichGen script with a referrer URL.
@@ -90,9 +81,8 @@ public class SandwichGen {
      * @param page        the Page to automate
      * @param profile     the profile containing user data
      * @param profilePool the pool for writing completed profiles
-     * @param referrerUrl the referral link URL (or null for default)
      */
-    public SandwichGen(Page page, Profile profile, ProfilePool profilePool, String referrerUrl) {
+    public MattelDraw(Page page, Profile profile, ProfilePool profilePool) {
         if (page == null) {
             throw new IllegalArgumentException("Page cannot be null");
         }
@@ -106,7 +96,6 @@ public class SandwichGen {
         this.page = page;
         this.profile = profile;
         this.profilePool = profilePool;
-        this.referrerUrl = referrerUrl;
     }
 
     /**
@@ -126,21 +115,15 @@ public class SandwichGen {
      *
      * @throws RuntimeException if navigation or form interaction fails
      */
-    public void createAccount() {
-        // Generate transient data
-        Birthday birthday = generateBirthday();
-        String password = generatePassword();
+    public void enterDraw() {
 
-        System.out.println("[SandwichGen] Creating account for: " + profile.emailAddress());
-        System.out.println("[SandwichGen] Birthday: " + birthday);
+        System.out.println("[MattelDraw] Entering draw for: " + profile.emailAddress());
 
         try {
             // Navigate to registration page
-            if (referrerUrl != null && !referrerUrl.isBlank()) {
-                page.navigate(referrerUrl);
-            } else {
-                throw new IllegalStateException("Referrer URL is required");
-            }
+            page.navigate(PRODUCT_URL);
+
+            /*
 
             int captchaWait = 10000;
             int retries = 0;
@@ -155,19 +138,19 @@ public class SandwichGen {
             }
 
             // Fill form fields
-            page.fillFormField(FIRST_NAME_TEXT, profile.firstName(), 900, 2000);
-            page.fillFormField(LAST_NAME_TEXT, profile.lastName(), 900, 2000);
-            page.fillFormField(PHONE_NUMBER_TEXT, profile.shippingPhone(), 900, 2000);
+            fillFormField(FIRST_NAME_TEXT, profile.firstName(), 900, 2000);
+            fillFormField(LAST_NAME_TEXT, profile.lastName(), 900, 2000);
+            fillFormField(PHONE_NUMBER_TEXT, profile.shippingPhone(), 900, 2000);
 
             // Birthday fields
-            page.fillFormField(MONTH_TEXT, birthday.month(), 900, 1300);
-            page.fillFormField(DAY_TEXT, birthday.day(), 900, 1300);
-            page.fillFormField(YEAR_TEXT, birthday.year(), 900, 2000);
+            fillFormField(MONTH_TEXT, birthday.month(), 900, 1300);
+            fillFormField(DAY_TEXT, birthday.day(), 900, 1300);
+            fillFormField(YEAR_TEXT, birthday.year(), 900, 2000);
 
             // Email and password
-            page.fillFormField(EMAIL_TEXT, profile.emailAddress(), 900, 2000);
-            page.fillFormField(PASSWORD_TEXT, password, 900, 2000);
-            page.fillFormField(CONFIRM_PASSWORD_TEXT, password, 900, 2000);
+            fillFormField(EMAIL_TEXT, profile.emailAddress(), 900, 2000);
+            fillFormField(PASSWORD_TEXT, password, 900, 2000);
+            fillFormField(CONFIRM_PASSWORD_TEXT, password, 900, 2000);
 
             // Email opt-in
             page.click(EMAIL_OPT_IN_CHECKBOX);
@@ -214,27 +197,18 @@ public class SandwichGen {
             writeCompletedProfile(password, birthday);
 
             System.out.println("[SandwichGen] Account created successfully for: " + profile.emailAddress());
-
+            */
         } catch (TimeoutException e) {
             throw new RuntimeException("Timeout during account creation: " + e.getMessage(), e);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("Interrupted during account creation", e);
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to write completed profile: " + e.getMessage(), e);
         }
     }
+
 
     /**
      * Writes the completed profile to the output file with extra fields.
      */
     private void writeCompletedProfile(String password, Birthday birthday) throws IOException {
         Profile completed = profile.toBuilder()
-                .accountLoginInfo(profile.emailAddress() + ":" + password)
-                .extraField("Birthday Month", birthday.month())
-                .extraField("Birthday Day", birthday.day())
-                .extraField("Birthday Year", birthday.year())
-                .extraField("Referrer URL", referrerUrl != null ? referrerUrl : "")
                 .build();
 
         profilePool.writeCompleted(completed);

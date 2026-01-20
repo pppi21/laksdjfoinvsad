@@ -40,7 +40,7 @@ public class HUMANCaptchaTest {
                 .proxyEnabled(false)
                 .warmProfile(false)
                 .chromeArguement(HEADLESS_UA)
-                .headless(true)
+                //.headless(true)
                 .build();
 
         List<Browser> browsers = null;

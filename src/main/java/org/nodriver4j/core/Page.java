@@ -145,25 +145,25 @@ public class Page {
             const BUFFER_MS = %d;
             const DEFAULT_DURATION_MS = %d;
             const BUTTON_XPATH = '%s';
-            
+        
             const button = document.evaluate(
                 BUTTON_XPATH, document, null,
                 XPathResult.FIRST_ORDERED_NODE_TYPE, null
             ).singleNodeValue;
-            
+        
             if (!button) {
                 return JSON.stringify({ success: false, error: 'BUTTON_NOT_FOUND', duration: 0 });
             }
-            
+        
             button.dispatchEvent(new MouseEvent('mousedown', {
                 bubbles: true, cancelable: true, view: window, button: 0
             }));
             button.dispatchEvent(new PointerEvent('pointerdown', {
                 bubbles: true, cancelable: true, view: window, pointerType: 'mouse'
             }));
-            
+        
             await new Promise(r => setTimeout(r, INITIAL_WAIT_MS));
-            
+        
             let animationDuration = DEFAULT_DURATION_MS;
             const style = button.getAttribute('style') || '';
             const match = style.match(/animation:\\s*([\\d.]+)(ms|s)/i);
@@ -172,17 +172,17 @@ public class Page {
                 const unit = match[2].toLowerCase();
                 animationDuration = unit === 's' ? value * 1000 : value;
             }
-            
+        
             const remainingHold = Math.max(0, animationDuration - INITIAL_WAIT_MS + BUFFER_MS);
             await new Promise(r => setTimeout(r, remainingHold));
-            
+        
             button.dispatchEvent(new MouseEvent('mouseup', {
                 bubbles: true, cancelable: true, view: window, button: 0
             }));
             button.dispatchEvent(new PointerEvent('pointerup', {
                 bubbles: true, cancelable: true, view: window, pointerType: 'mouse'
             }));
-            
+        
             return JSON.stringify({ success: true, error: null, duration: animationDuration });
         })();
         """;
@@ -486,7 +486,7 @@ public class Page {
             // Step 8: Pre-click hesitation
             int hesitation = HumanBehavior.hesitationDelay(
                     options.getPreClickDelayMin(), options.getPreClickDelayMax());
-            sleep(hesitation);
+            sleep((long)hesitation);
 
             // Step 9: Mouse down via CDP Input
             System.out.println("[Page] Pressing button...");
@@ -823,18 +823,18 @@ public class Page {
             if (box.getTop() < margin) {
                 deltaY = (int) box.getTop() - vpHeight / 2;
             } else if (box.getBottom() > vpHeight - margin) {
-                deltaY = (int) (box.getBottom() - vpHeight / 2);
+                deltaY = (int) (box.getBottom() - (double) vpHeight / 2);
             }
 
             if (box.getLeft() < margin) {
                 deltaX = (int) box.getLeft() - vpWidth / 2;
             } else if (box.getRight() > vpWidth - margin) {
-                deltaX = (int) (box.getRight() - vpWidth / 2);
+                deltaX = (int) (box.getRight() - (double) vpWidth / 2);
             }
 
             if (deltaX != 0 || deltaY != 0) {
                 scrollBy(deltaX, deltaY);
-                sleep(500); // Allow scroll to settle
+                sleep((long)500); // Allow scroll to settle
             }
         }
     }
@@ -1923,6 +1923,18 @@ public class Page {
         params.addProperty("deltaY", deltaY);
 
         cdp.send("Input.dispatchMouseEvent", params);
+    }
+
+
+    /**
+     * Fills a form field with click, delay, type, delay pattern.
+     */
+    public void fillFormField(String xpath, String value, long preTypeDelay, long postTypeDelay)
+            throws TimeoutException, InterruptedException {
+        click(xpath);
+        sleep(preTypeDelay);
+        type(value);
+        sleep(postTypeDelay);
     }
 
     // ==================== JavaScript Execution ====================
