@@ -46,7 +46,7 @@ public class TreasureHunt {
                 .fingerprintEnabled(true)
                 .webrtcPolicy("default")
                 .proxyEnabled(false)
-                .headless(false)
+                .headless(true)
                 .warmProfile(false);
 
 

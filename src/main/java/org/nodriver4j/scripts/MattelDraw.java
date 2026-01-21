@@ -1,43 +1,20 @@
 package org.nodriver4j.scripts;
 
-import com.google.gson.JsonObject;
 import org.nodriver4j.core.Page;
 import org.nodriver4j.profiles.Profile;
 import org.nodriver4j.profiles.ProfilePool;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.security.SecureRandom;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeoutException;
 
 /**
- * Automation script for creating Ike's sandwich rewards accounts.
- *
- * <p>This script automates the account registration process on the Ike's
- * rewards platform using profile data from CSV files.</p>
- *
- * <h2>Usage Example</h2>
- * <pre>{@code
- * ProfilePool pool = manager.profilePool();
- * Profile profile = pool.consumeFirst();
- *
- * SandwichGen script = new SandwichGen(page, profile, pool, referrerUrl);
- * script.createAccount();
- * // Profile is automatically written to output on success
- * }</pre>
- *
- * @see Profile
- * @see ProfilePool
+ * Automation script for entering the Mattel Super Treasure Hunt draw.
  */
 public class MattelDraw {
 
     private static final String PRODUCT_URL = "https://creations.mattel.com/pages/2025-super-treasure-hunt-draw";
     private static final int RETRIES = 2;
+
     // ==================== Form XPaths ====================
 
     private static final String CLOSE_POPUP_BUTTON = "button[aria-label='Close dialog']";
@@ -46,7 +23,7 @@ public class MattelDraw {
     private static final String LAST_NAME_TEXT = "/html/body/div[8]/main/div[4]/section/div/div/div/form/div/div[3]/div[2]/div/input";
     private static final String EMAIL_TEXT = "/html/body/div[8]/main/div[4]/section/div/div/div/form/div/div[4]/div/div/input";
     private static final String SUBMIT_BUTTON = "/html/body/div[8]/main/div[4]/section/div/div/div/form/div/div[5]/div/button";
-    private static final String SUCCESS_MESSAGE = "/html/body/div[8]/main/div[4]/section/div/div/div/form/div/div[1]/div/div/p/span";
+    private static final String SUCCESS_MESSAGE = "span.ql-font-poppins";
 
     // ==================== Fields ====================
 
@@ -79,21 +56,10 @@ public class MattelDraw {
     }
 
     /**
-     * Creates an Ike's rewards account using the configured profile.
+     * Enters the Mattel draw using the configured profile.
      *
-     * <p>This method performs the full account creation flow:</p>
-     * <ol>
-     *   <li>Navigates to the registration page</li>
-     *   <li>Fills in all form fields with profile data</li>
-     *   <li>Generates a random birthday and password</li>
-     *   <li>Submits the form</li>
-     *   <li>Writes the completed profile to the output file</li>
-     * </ol>
-     *
-     * <p>On success, the completed profile is written to the ProfilePool
-     * with additional fields including the generated password and birthday.</p>
-     *
-     * @throws RuntimeException if navigation or form interaction fails
+     * @return true if entry was successful
+     * @throws RuntimeException if entry fails after all retries
      */
     public void enterDraw() {
 
@@ -106,27 +72,38 @@ public class MattelDraw {
             fillFormField(FIRST_NAME_TEXT, profile.firstName());
             fillFormField(LAST_NAME_TEXT, profile.lastName());
             fillFormField(EMAIL_TEXT, profile.emailAddress());
-            submit(RETRIES);
-            page.screenshot();
+
+            boolean success = submit();
+
+            if (success) {
+                System.out.println("[MattelDraw] ✓ Entry successful for: " + profile.emailAddress());
+                writeCompletedProfile();
+            } else {
+                System.err.println("[MattelDraw] ✗ Entry failed for: " + profile.emailAddress());
+            }
 
         } catch (TimeoutException e) {
-            throw new RuntimeException("Timeout during account creation: " + e.getMessage(), e);
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
+            throw new RuntimeException("Timeout during draw entry: " + e.getMessage(), e);
         } catch (IOException e) {
+            throw new RuntimeException("Failed to write completed profile: " + e.getMessage(), e);
+        } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }
     }
 
     private void fillFormField(String selector, String value) throws InterruptedException, TimeoutException {
-        checkForPopup();
-        page.fillFormField(selector, value, 900,1100);
-        if(!page.validateValue(selector, value)) {
+        for (int attempt = 0; attempt <= RETRIES; attempt++) {
             checkForPopup();
-            page.sleep(500);
+            page.fillFormField(selector, value, 150, 300);
+            if (page.validateValue(selector, value)) {
+                return;
+            }
+            checkForPopup();
+            page.sleep(200);
             page.clear(selector);
-            fillFormField(selector,value);
         }
+        throw new TimeoutException("Failed to fill field after " + RETRIES + " attempts: " + selector);
+
     }
 
     private boolean checkForPopup() throws TimeoutException {
@@ -138,33 +115,62 @@ public class MattelDraw {
     }
 
     private void rejectCookies() throws TimeoutException {
-        while(!page.exists(REJECT_COOKIES_BUTTON)){
-            page.sleep(1000);
+        if(page.isVisible(REJECT_COOKIES_BUTTON)){
+            return;
         }
+        page.waitForSelector(REJECT_COOKIES_BUTTON);
         page.click(REJECT_COOKIES_BUTTON);
-        page.sleep(1500);
+        try {
+            page.waitForSelectorHidden(REJECT_COOKIES_BUTTON, 10000);
+        } catch (TimeoutException _) {}
+
     }
 
-    private boolean submit(int retries) throws TimeoutException {
-        page.sleep(200);
-        checkForPopup();
-        page.click(SUBMIT_BUTTON);
-        page.sleep(2000);
-        if(!page.containsTextTrimmed(SUCCESS_MESSAGE,"YOUR ENTRY IS IN!") && retries > 0){
-            submit(retries-1);
+    private boolean submit() throws TimeoutException {
+        for (int attempt = 0; attempt <= RETRIES; attempt++) {
+            System.out.println("[MattelDraw] Submitting form (attempt " + attempt + "/" + RETRIES + ")...");
+            checkForPopup();
+            page.click(SUBMIT_BUTTON);
+            if (waitForSuccessMessage()) {
+                return true;
+            }
+            if (attempt < RETRIES) {
+                System.out.println("[MattelDraw] Success message not found, retrying...");
+                page.sleep(1000);
+            }
         }
-        return page.containsTextTrimmed(SUCCESS_MESSAGE,"YOUR ENTRY IS IN!");
+        return false;
+    }
+
+    /**
+     * Waits for the success message to appear with the expected text.
+     *
+     * @return true if success message appears within timeout
+     */
+    private boolean waitForSuccessMessage() {
+        long deadline = System.currentTimeMillis() + 4000;
+
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                if (page.exists(SUCCESS_MESSAGE) &&
+                        page.containsTextTrimmed(SUCCESS_MESSAGE, "YOUR ENTRY IS IN!")) {
+                    return true;
+                }
+            } catch (TimeoutException _) {
+            }
+            page.sleep(200);
+        }
+
+        return false;
     }
 
 
 
     /**
-     * Writes the completed profile to the output file with extra fields.
+     * Writes the completed profile to the output file.
      */
     private void writeCompletedProfile() throws IOException {
-        Profile completed = profile.toBuilder()
-                .build();
-
+        Profile completed = profile.toBuilder().build();
         profilePool.writeCompleted(completed);
     }
 }
