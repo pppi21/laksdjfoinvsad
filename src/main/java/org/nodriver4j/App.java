@@ -27,8 +27,8 @@ public class App {
 
     public static void main(String[] args) {
         String executablePath = System.getenv("chromepath");
-        String profileInputPath = System.getenv("profiles_input");
-        String profileOutputPath = System.getenv("profiles_output");
+        String profileInputPath = System.getenv("ikes_profiles_input");
+        String profileOutputPath = System.getenv("ikes_profiles_output");
 
         if (executablePath == null || executablePath.isBlank()) {
             System.err.println("ERROR: 'chromepath' environment variable is not set.");
