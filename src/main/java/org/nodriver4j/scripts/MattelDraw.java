@@ -159,7 +159,7 @@ public class MattelDraw {
     private void fillFormField(String selector, String value) throws InterruptedException, TimeoutException {
         for (int attempt = 0; attempt <= RETRIES; attempt++) {
             checkForPopup();
-            page.waitForSelector(selector, 100000);
+            page.waitForVisible(selector, 100000);
             page.fillFormField(selector, value, 150, 300);
             if (page.validateValue(selector, value)) {
                 return;
@@ -195,13 +195,24 @@ public class MattelDraw {
         return false;
     }
 
-    private void rejectCookies() {
-        try {
-            page.waitForSelector(REJECT_COOKIES_BUTTON, 60000);
-            page.click(REJECT_COOKIES_BUTTON);
-            page.waitForSelectorHidden(REJECT_COOKIES_BUTTON, 60000);
-        } catch (TimeoutException _) {
-            System.out.println("[MattelDraw] Reject cookies timeout");
+    private void rejectCookies() throws IOException, TimeoutException {
+        for (int attempt = 0; attempt <= RETRIES; attempt++) {
+            try {
+                page.waitForSelector(REJECT_COOKIES_BUTTON, 60000);
+                checkForPopup();
+                page.click(REJECT_COOKIES_BUTTON);
+                page.sleep(200);
+                if (!page.isVisible(REJECT_COOKIES_BUTTON)) {
+                    return;
+                }
+
+                if (attempt < RETRIES) {
+                    System.out.println("[MattelDraw] Reject cookies not loaded, retrying...");
+                    page.sleep(10000);
+                }
+            } catch (TimeoutException _) {
+                page.screenshot();
+            }
         }
     }
 

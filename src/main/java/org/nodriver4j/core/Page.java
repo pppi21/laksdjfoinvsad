@@ -1695,6 +1695,21 @@ public class Page {
         throw new TimeoutException("Element still visible: " + selector);
     }
 
+    public void waitForVisible(String selector) throws TimeoutException {
+        waitForVisible(selector, options.getDefaultTimeout());
+    }
+
+    public void waitForVisible(String selector, int timeoutMs) throws TimeoutException {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+
+        while (System.currentTimeMillis() < deadline) {
+            if(exists(selector) && isVisible(selector)) {
+                return;
+            }
+            sleep(options.getRetryInterval());
+        }
+    }
+
     /**
      * Waits for a navigation event.
      *

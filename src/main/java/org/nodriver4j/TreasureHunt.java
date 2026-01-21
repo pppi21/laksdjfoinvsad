@@ -42,8 +42,8 @@ public class TreasureHunt {
         BrowserManager.Builder managerBuilder = BrowserManager.builder()
                 .executablePath(executablePath)
                 .fingerprintEnabled(true)
-                //.webrtcPolicy("default")
-                .proxyEnabled(true)
+                .webrtcPolicy("default")
+                .proxyEnabled(false)
                 .headless(true)
                 .warmProfile(false);
 
