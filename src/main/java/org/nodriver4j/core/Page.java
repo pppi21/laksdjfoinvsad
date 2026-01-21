@@ -1481,6 +1481,56 @@ public class Page {
         return actualValue.equals(expectedValue);
     }
 
+    /**
+     * Validates that an element's text content exactly matches the expected text.
+     *
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * <p>This performs an exact match comparison. For substring matching, use
+     * {@link #getText(String)} and perform your own comparison.</p>
+     *
+     * @param selector     the XPath or CSS selector
+     * @param expectedText the exact text expected
+     * @return true if the element's innerText exactly matches expectedText
+     * @throws TimeoutException if the operation times out
+     */
+    public boolean containsText(String selector, String expectedText) throws TimeoutException {
+        String actualText = getText(selector);
+
+        if (actualText == null && expectedText == null) {
+            return true;
+        }
+        if (actualText == null || expectedText == null) {
+            return false;
+        }
+
+        return actualText.equals(expectedText);
+    }
+
+    /**
+     * Validates that an element's text content exactly matches the expected text,
+     * ignoring leading and trailing whitespace.
+     *
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector     the XPath or CSS selector
+     * @param expectedText the exact text expected (will be trimmed for comparison)
+     * @return true if the element's trimmed innerText matches trimmed expectedText
+     * @throws TimeoutException if the operation times out
+     */
+    public boolean containsTextTrimmed(String selector, String expectedText) throws TimeoutException {
+        String actualText = getText(selector);
+
+        if (actualText == null && expectedText == null) {
+            return true;
+        }
+        if (actualText == null || expectedText == null) {
+            return false;
+        }
+
+        return actualText.trim().equals(expectedText.trim());
+    }
+
     // ==================== Script Builders ====================
 
     private String buildXPathScript(String xpath, boolean multiple) {
@@ -2007,6 +2057,13 @@ public class Page {
         String code = getKeyCode(key);
         int windowsVirtualKeyCode = getWindowsVirtualKeyCode(key);
 
+        // Determine if this is a printable character that should insert text
+        // Text should only be inserted for printable characters without Ctrl/Alt modifiers
+        String textToInsert = null;
+        if (!ctrl && !alt && isPrintableCharacter(key)) {
+            textToInsert = key;
+        }
+
         JsonObject keyDown = new JsonObject();
         keyDown.addProperty("type", "keyDown");
         keyDown.addProperty("key", key);
@@ -2014,6 +2071,12 @@ public class Page {
         keyDown.addProperty("windowsVirtualKeyCode", windowsVirtualKeyCode);
         keyDown.addProperty("nativeVirtualKeyCode", windowsVirtualKeyCode);
         keyDown.addProperty("modifiers", modifiers);
+
+        // Add text property for printable characters (required for actual text input)
+        if (textToInsert != null) {
+            keyDown.addProperty("text", textToInsert);
+        }
+
         cdp.send("Input.dispatchKeyEvent", keyDown);
 
         JsonObject keyUp = new JsonObject();
@@ -2024,6 +2087,24 @@ public class Page {
         keyUp.addProperty("nativeVirtualKeyCode", windowsVirtualKeyCode);
         keyUp.addProperty("modifiers", modifiers);
         cdp.send("Input.dispatchKeyEvent", keyUp);
+    }
+
+    /**
+     * Determines if a key represents a printable character that should insert text.
+     *
+     * @param key the key string
+     * @return true if this key should insert text into an input field
+     */
+    private boolean isPrintableCharacter(String key) {
+        if (key == null || key.length() != 1) {
+            return false;
+        }
+
+        char c = key.charAt(0);
+
+        // Printable ASCII characters (space through tilde)
+        // Space (32) through ~ (126)
+        return c >= 32 && c <= 126;
     }
 
     /**

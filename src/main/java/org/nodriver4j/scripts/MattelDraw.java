@@ -1,5 +1,6 @@
 package org.nodriver4j.scripts;
 
+import com.google.gson.JsonObject;
 import org.nodriver4j.core.Page;
 import org.nodriver4j.profiles.Profile;
 import org.nodriver4j.profiles.ProfilePool;
@@ -45,7 +46,7 @@ public class MattelDraw {
     private static final String LAST_NAME_TEXT = "/html/body/div[8]/main/div[4]/section/div/div/div/form/div/div[3]/div[2]/div/input";
     private static final String EMAIL_TEXT = "/html/body/div[8]/main/div[4]/section/div/div/div/form/div/div[4]/div/div/input";
     private static final String SUBMIT_BUTTON = "/html/body/div[8]/main/div[4]/section/div/div/div/form/div/div[5]/div/button";
-    private static final String SUCCESS_MESSAGE = "span[class='ql-font-poppins']";
+    private static final String SUCCESS_MESSAGE = "/html/body/div[8]/main/div[4]/section/div/div/div/form/div/div[1]/div/div/p/span";
 
     // ==================== Fields ====================
 
@@ -106,10 +107,13 @@ public class MattelDraw {
             fillFormField(LAST_NAME_TEXT, profile.lastName());
             fillFormField(EMAIL_TEXT, profile.emailAddress());
             submit(RETRIES);
+            page.screenshot();
 
         } catch (TimeoutException e) {
             throw new RuntimeException("Timeout during account creation: " + e.getMessage(), e);
         } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        } catch (IOException e) {
             throw new RuntimeException(e);
         }
     }
@@ -142,13 +146,14 @@ public class MattelDraw {
     }
 
     private boolean submit(int retries) throws TimeoutException {
-        page.sleep(2000);
+        page.sleep(200);
         checkForPopup();
         page.click(SUBMIT_BUTTON);
-        if(!page.exists(SUCCESS_MESSAGE) && retries > 0){
+        page.sleep(2000);
+        if(!page.containsTextTrimmed(SUCCESS_MESSAGE,"YOUR ENTRY IS IN!") && retries > 0){
             submit(retries-1);
         }
-        return true;
+        return page.containsTextTrimmed(SUCCESS_MESSAGE,"YOUR ENTRY IS IN!");
     }
 
 
