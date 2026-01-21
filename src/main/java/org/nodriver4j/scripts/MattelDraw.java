@@ -17,7 +17,8 @@ public class MattelDraw {
 
     private static final String[] DISALLOWED_URLS = {
             "corporate.mattel.com/privacy-statement",
-            "creations.mattel.com/pages/welcome-offer-terms"
+            "creations.mattel.com/pages/welcome-offer-terms",
+            "mattelsupport.com/cookies-and-technologies"
     };
 
     // ==================== Form XPaths ====================
@@ -158,6 +159,7 @@ public class MattelDraw {
     private void fillFormField(String selector, String value) throws InterruptedException, TimeoutException {
         for (int attempt = 0; attempt <= RETRIES; attempt++) {
             checkForPopup();
+            page.waitForSelector(selector, 100000);
             page.fillFormField(selector, value, 150, 300);
             if (page.validateValue(selector, value)) {
                 return;
@@ -193,16 +195,14 @@ public class MattelDraw {
         return false;
     }
 
-    private void rejectCookies() throws TimeoutException {
-        if(page.isVisible(REJECT_COOKIES_BUTTON)){
-            return;
-        }
-        page.waitForSelector(REJECT_COOKIES_BUTTON);
-        page.click(REJECT_COOKIES_BUTTON);
+    private void rejectCookies() {
         try {
-            page.waitForSelectorHidden(REJECT_COOKIES_BUTTON, 10000);
-        } catch (TimeoutException _) {}
-
+            page.waitForSelector(REJECT_COOKIES_BUTTON, 60000);
+            page.click(REJECT_COOKIES_BUTTON);
+            page.waitForSelectorHidden(REJECT_COOKIES_BUTTON, 60000);
+        } catch (TimeoutException _) {
+            System.out.println("[MattelDraw] Reject cookies timeout");
+        }
     }
 
     private boolean submit() throws TimeoutException {
@@ -216,7 +216,7 @@ public class MattelDraw {
             verifyOnDrawPage();
             if (attempt < RETRIES) {
                 System.out.println("[MattelDraw] Success message not found, retrying...");
-                page.sleep(1000);
+                page.sleep(10000);
             }
         }
         return false;

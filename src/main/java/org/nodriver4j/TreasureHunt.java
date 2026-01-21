@@ -19,10 +19,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class TreasureHunt {
 
-    private static final String URL = "https://creations.mattel.com/pages/2025-super-treasure-hunt-draw";
-
     // Number of concurrent browser sessions
-    private static final int SESSION_COUNT = 1;
+    private static final int SESSION_COUNT = 10;
 
     public static void main(String[] args) {
         String executablePath = System.getenv("chromepath");
@@ -44,8 +42,8 @@ public class TreasureHunt {
         BrowserManager.Builder managerBuilder = BrowserManager.builder()
                 .executablePath(executablePath)
                 .fingerprintEnabled(true)
-                .webrtcPolicy("default")
-                .proxyEnabled(false)
+                //.webrtcPolicy("default")
+                .proxyEnabled(true)
                 .headless(true)
                 .warmProfile(false);
 
