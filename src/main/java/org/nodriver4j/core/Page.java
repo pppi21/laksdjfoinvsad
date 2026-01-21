@@ -1887,28 +1887,16 @@ public class Page {
             }
 
             // Type the character
-            typeCharacter(c);
+            boolean needsShift = isShiftRequired(c);
+            String key = String.valueOf(c);
+            pressKey(key, false, false, needsShift);
+
 
             // Inter-key delay
             sleep(delay);
 
             previousChar = c;
         }
-    }
-
-    /**
-     * Types text into an element after clicking it.
-     *
-     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
-     *
-     * @param selector the XPath or CSS selector
-     * @param text     the text to type
-     * @throws TimeoutException if the operation times out
-     */
-    public void type(String selector, String text) throws TimeoutException {
-        click(selector);
-        sleep(100); // Small delay after click before typing
-        type(text);
     }
 
     /**
@@ -2001,27 +1989,10 @@ public class Page {
         evaluate(script);
     }
 
-    private void typeCharacter(char c) throws TimeoutException {
-        String text = String.valueOf(c);
-
-        // Key down - inserts the character
-        JsonObject keyDown = new JsonObject();
-        keyDown.addProperty("type", "keyDown");
-        keyDown.addProperty("text", text);
-        keyDown.addProperty("key", text);
-        cdp.send("Input.dispatchKeyEvent", keyDown);
-
-        // Key up
-        JsonObject keyUp = new JsonObject();
-        keyUp.addProperty("type", "keyUp");
-        keyUp.addProperty("key", text);
-        cdp.send("Input.dispatchKeyEvent", keyUp);
-    }
-
     /**
-     * Presses a key with optional modifiers.
+     * Presses a key with optional modifiers using full CDP parameters for realistic simulation.
      *
-     * @param key   the key to press
+     * @param key   the key to press (character like "a" or special key like "Backspace", "Enter")
      * @param ctrl  if true, hold Ctrl
      * @param alt   if true, hold Alt
      * @param shift if true, hold Shift
@@ -2033,17 +2004,195 @@ public class Page {
         if (ctrl) modifiers |= 2;
         if (shift) modifiers |= 8;
 
+        String code = getKeyCode(key);
+        int windowsVirtualKeyCode = getWindowsVirtualKeyCode(key);
+
         JsonObject keyDown = new JsonObject();
         keyDown.addProperty("type", "keyDown");
         keyDown.addProperty("key", key);
+        keyDown.addProperty("code", code);
+        keyDown.addProperty("windowsVirtualKeyCode", windowsVirtualKeyCode);
+        keyDown.addProperty("nativeVirtualKeyCode", windowsVirtualKeyCode);
         keyDown.addProperty("modifiers", modifiers);
         cdp.send("Input.dispatchKeyEvent", keyDown);
 
         JsonObject keyUp = new JsonObject();
         keyUp.addProperty("type", "keyUp");
         keyUp.addProperty("key", key);
+        keyUp.addProperty("code", code);
+        keyUp.addProperty("windowsVirtualKeyCode", windowsVirtualKeyCode);
+        keyUp.addProperty("nativeVirtualKeyCode", windowsVirtualKeyCode);
         keyUp.addProperty("modifiers", modifiers);
         cdp.send("Input.dispatchKeyEvent", keyUp);
+    }
+
+    /**
+     * Gets the physical key code (e.g., "KeyA", "Digit1", "Backspace") for CDP.
+     *
+     * @param key the key character or name
+     * @return the physical key code
+     */
+    private String getKeyCode(String key) {
+        if (key == null || key.isEmpty()) {
+            return "";
+        }
+
+        // Special keys
+        return switch (key) {
+            case "Backspace" -> "Backspace";
+            case "Tab" -> "Tab";
+            case "Enter" -> "Enter";
+            case "Shift" -> "ShiftLeft";
+            case "Control" -> "ControlLeft";
+            case "Alt" -> "AltLeft";
+            case "Escape" -> "Escape";
+            case " " -> "Space";
+            case "ArrowLeft" -> "ArrowLeft";
+            case "ArrowUp" -> "ArrowUp";
+            case "ArrowRight" -> "ArrowRight";
+            case "ArrowDown" -> "ArrowDown";
+            case "Delete" -> "Delete";
+            case "Home" -> "Home";
+            case "End" -> "End";
+            case "PageUp" -> "PageUp";
+            case "PageDown" -> "PageDown";
+            default -> {
+                if (key.length() == 1) {
+                    char c = key.charAt(0);
+                    // Letters
+                    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+                        yield "Key" + Character.toUpperCase(c);
+                    }
+                    // Digits
+                    if (c >= '0' && c <= '9') {
+                        yield "Digit" + c;
+                    }
+                    // Common symbols (US keyboard layout)
+                    yield switch (c) {
+                        case '-', '_' -> "Minus";
+                        case '=', '+' -> "Equal";
+                        case '[', '{' -> "BracketLeft";
+                        case ']', '}' -> "BracketRight";
+                        case '\\', '|' -> "Backslash";
+                        case ';', ':' -> "Semicolon";
+                        case '\'', '"' -> "Quote";
+                        case ',', '<' -> "Comma";
+                        case '.', '>' -> "Period";
+                        case '/', '?' -> "Slash";
+                        case '`', '~' -> "Backquote";
+                        case '!', '@', '#', '$', '%', '^', '&', '*', '(', ')' -> "Digit" + getShiftedDigit(c);
+                        default -> "Unidentified";
+                    };
+                }
+                yield key; // Return as-is for unknown keys
+            }
+        };
+    }
+
+    /**
+     * Gets the digit that produces a shifted symbol.
+     */
+    private char getShiftedDigit(char symbol) {
+        return switch (symbol) {
+            case '!' -> '1';
+            case '@' -> '2';
+            case '#' -> '3';
+            case '$' -> '4';
+            case '%' -> '5';
+            case '^' -> '6';
+            case '&' -> '7';
+            case '*' -> '8';
+            case '(' -> '9';
+            case ')' -> '0';
+            default -> '0';
+        };
+    }
+
+    /**
+     * Gets the Windows virtual key code for a key.
+     *
+     * @param key the key character or name
+     * @return the virtual key code
+     */
+    private int getWindowsVirtualKeyCode(String key) {
+        if (key == null || key.isEmpty()) {
+            return 0;
+        }
+
+        // Special keys
+        return switch (key) {
+            case "Backspace" -> 8;
+            case "Tab" -> 9;
+            case "Enter" -> 13;
+            case "Shift" -> 16;
+            case "Control" -> 17;
+            case "Alt" -> 18;
+            case "Escape" -> 27;
+            case " " -> 32;
+            case "PageUp" -> 33;
+            case "PageDown" -> 34;
+            case "End" -> 35;
+            case "Home" -> 36;
+            case "ArrowLeft" -> 37;
+            case "ArrowUp" -> 38;
+            case "ArrowRight" -> 39;
+            case "ArrowDown" -> 40;
+            case "Delete" -> 46;
+            default -> {
+                if (key.length() == 1) {
+                    char c = key.charAt(0);
+                    // Letters (A-Z = 65-90, both upper and lower use uppercase code)
+                    if (c >= 'a' && c <= 'z') {
+                        yield c - 'a' + 65;
+                    }
+                    if (c >= 'A' && c <= 'Z') {
+                        yield c - 'A' + 65;
+                    }
+                    // Digits (0-9 = 48-57)
+                    if (c >= '0' && c <= '9') {
+                        yield c;
+                    }
+                    // Shifted digit symbols use the digit's key code
+                    yield switch (c) {
+                        case '!' -> 49;  // 1
+                        case '@' -> 50;  // 2
+                        case '#' -> 51;  // 3
+                        case '$' -> 52;  // 4
+                        case '%' -> 53;  // 5
+                        case '^' -> 54;  // 6
+                        case '&' -> 55;  // 7
+                        case '*' -> 56;  // 8
+                        case '(' -> 57;  // 9
+                        case ')' -> 48;  // 0
+                        case '-', '_' -> 189;
+                        case '=', '+' -> 187;
+                        case '[', '{' -> 219;
+                        case ']', '}' -> 221;
+                        case '\\', '|' -> 220;
+                        case ';', ':' -> 186;
+                        case '\'', '"' -> 222;
+                        case ',', '<' -> 188;
+                        case '.', '>' -> 190;
+                        case '/', '?' -> 191;
+                        case '`', '~' -> 192;
+                        default -> 0;
+                    };
+                }
+                yield 0;
+            }
+        };
+    }
+
+    /**
+     * Determines if Shift is required to type a character.
+     */
+    private boolean isShiftRequired(char c) {
+        // Uppercase letters
+        if (c >= 'A' && c <= 'Z') {
+            return true;
+        }
+        // Shifted symbols
+        return "~!@#$%^&*()_+{}|:\"<>?".indexOf(c) >= 0;
     }
 
     // ==================== Scrolling ====================
