@@ -1710,6 +1710,105 @@ public class Page {
         }
     }
 
+    // ==================== Clickability Checks ====================
+
+    // ==================== Clickability Checks ====================
+
+    /**
+     * Checks if an element is ready to be clicked by performing the same
+     * validation steps as {@link #click(String)}.
+     *
+     * <p>This method mirrors the click process exactly:</p>
+     * <ol>
+     *   <li>Scrolls the element into view (same as click)</li>
+     *   <li>Waits for a valid bounding box (same as click)</li>
+     * </ol>
+     *
+     * <p><strong>Note:</strong> This method has a side effect - it scrolls the page
+     * if the element is not in the viewport. This is necessary to accurately predict
+     * whether {@link #click(String)} will succeed, as scrolling can change element state
+     * (lazy loading, viewport-dependent rendering, etc.).</p>
+     *
+     * <p>Supports both XPath and CSS selectors.</p>
+     *
+     * @param selector the XPath or CSS selector
+     * @return true if click() would succeed on this element
+     */
+    public boolean isClickable(String selector) {
+        return isClickable(selector, options.getDefaultTimeout());
+    }
+
+    /**
+     * Checks if an element is ready to be clicked within a specified timeout.
+     *
+     * <p>Mirrors {@link #click(String)} behavior:</p>
+     * <ol>
+     *   <li>Scrolls element into view via {@link #scrollIntoView(String)}</li>
+     *   <li>Checks for valid bounding box via {@link #querySelector(String, int)} or
+     *       {@link #waitForSelector(String, int)}</li>
+     * </ol>
+     *
+     * @param selector  the XPath or CSS selector
+     * @param timeoutMs maximum time to wait for element to become clickable (0 for immediate check)
+     * @return true if click() would succeed on this element
+     */
+    public boolean isClickable(String selector, int timeoutMs) {
+        try {
+            // Step 1: Same as click() - scroll element into view
+            // This may trigger lazy loading, change element state, etc.
+            scrollIntoView(selector);
+
+            // Step 2: Same as click() - get bounding box
+            BoundingBox box;
+            if (timeoutMs <= 0) {
+                // Immediate check - querySelector directly
+                // (waitForSelector with 0 timeout would throw immediately)
+                box = querySelector(selector, 0);
+            } else {
+                // Wait for element - same as click() uses waitForSelector
+                box = waitForSelector(selector, timeoutMs);
+            }
+
+            // Step 3: Same validation as waitForSelector
+            return box != null && box.isValid();
+
+        } catch (TimeoutException e) {
+            // scrollIntoView or waitForSelector failed
+            return false;
+        }
+    }
+
+    /**
+     * Waits for an element to become clickable.
+     *
+     * <p>This method performs the same steps as {@link #click(String)} but throws
+     * on failure instead of returning false. Use this in automation flows where
+     * failure should halt execution.</p>
+     *
+     * @param selector the XPath or CSS selector
+     * @return the element's bounding box (ready for clicking)
+     * @throws TimeoutException if element doesn't become clickable within timeout
+     */
+    public BoundingBox waitForClickable(String selector) throws TimeoutException {
+        return waitForClickable(selector, options.getDefaultTimeout());
+    }
+
+    /**
+     * Waits for an element to become clickable.
+     *
+     * @param selector  the XPath or CSS selector
+     * @param timeoutMs timeout in milliseconds
+     * @return the element's bounding box (ready for clicking)
+     * @throws TimeoutException if element doesn't become clickable within timeout
+     */
+    public BoundingBox waitForClickable(String selector, int timeoutMs) throws TimeoutException {
+        // Step 1: Same as click() - scroll into view
+        scrollIntoView(selector);
+
+        // Step 2: Same as click() - wait for valid box
+        return waitForSelector(selector, timeoutMs);
+    }
+
     /**
      * Waits for a navigation event.
      *

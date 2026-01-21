@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class TreasureHunt {
 
     // Number of concurrent browser sessions
-    private static final int SESSION_COUNT = 10;
+    private static final int SESSION_COUNT = 6;
 
     public static void main(String[] args) {
         String executablePath = System.getenv("chromepath");
@@ -42,8 +42,8 @@ public class TreasureHunt {
         BrowserManager.Builder managerBuilder = BrowserManager.builder()
                 .executablePath(executablePath)
                 .fingerprintEnabled(true)
-                .webrtcPolicy("default")
-                .proxyEnabled(false)
+                //.webrtcPolicy("default")
+                .proxyEnabled(true)
                 .headless(true)
                 .warmProfile(false);
 

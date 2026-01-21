@@ -24,6 +24,7 @@ public class MattelDraw {
     // ==================== Form XPaths ====================
 
     private static final String CLOSE_POPUP_BUTTON = "button[aria-label='Close dialog']";
+    private static final String COOKIES_DISPLAY = "[class='ta-show ta-display-block']";
     private static final String REJECT_COOKIES_BUTTON = "button[id='truste-consent-required']";
     private static final String FIRST_NAME_TEXT = "/html/body/div[8]/main/div[4]/section/div/div/div/form/div/div[3]/div[1]/div/input";
     private static final String LAST_NAME_TEXT = "/html/body/div[8]/main/div[4]/section/div/div/div/form/div/div[3]/div[2]/div/input";
@@ -70,16 +71,18 @@ public class MattelDraw {
     public void enterDraw() {
         System.out.println("[MattelDraw] Entering draw for: " + profile.emailAddress());
 
-        for (int flowAttempt = 0; flowAttempt <= RETRIES; flowAttempt++) {
+        int totalAttempts = RETRIES + 1;
+
+        for (int attempt = 1; attempt <= totalAttempts; attempt++) {
             try {
                 attemptEntry();
-                return; // Success - exit retry loop
+                return; // Success - exit
 
-            } catch (UnexpectedNavigationException e) {
-                System.out.println("[MattelDraw] ⚠ Unexpected navigation to: " + e.getUrl());
+            } catch (UnexpectedNavigationException | SubmissionFailedException e) {
+                System.out.println("[MattelDraw] ⚠ Attempt " + attempt + " failed: " + e.getMessage());
 
-                if (flowAttempt < RETRIES) {
-                    System.out.println("[MattelDraw] Restarting flow (attempt " + (flowAttempt + 1) + "/" + RETRIES + ")...");
+                if (attempt < totalAttempts) {
+                    System.out.println("[MattelDraw] Restarting flow (attempt " + (attempt + 1) + "/" + totalAttempts + ")...");
                     resetFlowState();
 
                     try {
@@ -88,10 +91,13 @@ public class MattelDraw {
                         throw new RuntimeException("Failed to navigate back to draw page: " + te.getMessage(), te);
                     }
                 } else {
-                    throw new RuntimeException("Entry failed due to repeated unexpected navigation: " + e.getUrl(), e);
+                    throw new RuntimeException("Entry failed after " + totalAttempts + " attempts: " + e.getMessage(), e);
                 }
             }
         }
+
+        // This line should never be reached, but just in case:
+        throw new RuntimeException("Entry failed: loop exited unexpectedly");
     }
 
     /**
@@ -124,10 +130,12 @@ public class MattelDraw {
                 System.out.println("[MattelDraw] ✓ Entry successful for: " + profile.emailAddress());
                 writeCompletedProfile();
             } else {
-                System.err.println("[MattelDraw] ✗ Entry failed for: " + profile.emailAddress());
+                throw new SubmissionFailedException("Form submission did not succeed");
             }
 
         } catch (UnexpectedNavigationException e) {
+            throw e; // Re-throw for flow retry handling
+        } catch (SubmissionFailedException e) {
             throw e; // Re-throw for flow retry handling
         } catch (TimeoutException e) {
             throw new RuntimeException("Timeout during draw entry: " + e.getMessage(), e);
@@ -156,7 +164,7 @@ public class MattelDraw {
         }
     }
 
-    private void fillFormField(String selector, String value) throws InterruptedException, TimeoutException {
+    private void fillFormField(String selector, String value) throws InterruptedException, TimeoutException, IOException {
         for (int attempt = 0; attempt <= RETRIES; attempt++) {
             checkForPopup();
             page.waitForVisible(selector, 100000);
@@ -168,7 +176,8 @@ public class MattelDraw {
             page.sleep(200);
             page.clear(selector);
         }
-        throw new TimeoutException("Failed to fill field after " + RETRIES + " attempts: " + selector);
+        page.screenshot();
+        throw new TimeoutException("Failed to fill field after " + (RETRIES+1) + " attempts: " + selector);
 
     }
 
@@ -195,14 +204,15 @@ public class MattelDraw {
         return false;
     }
 
+
     private void rejectCookies() throws IOException, TimeoutException {
         for (int attempt = 0; attempt <= RETRIES; attempt++) {
             try {
-                page.waitForSelector(REJECT_COOKIES_BUTTON, 60000);
+                page.waitForClickable(REJECT_COOKIES_BUTTON, 100000);
                 checkForPopup();
                 page.click(REJECT_COOKIES_BUTTON);
                 page.sleep(200);
-                if (!page.isVisible(REJECT_COOKIES_BUTTON)) {
+                if (!page.exists(COOKIES_DISPLAY)) {
                     return;
                 }
 
@@ -211,14 +221,13 @@ public class MattelDraw {
                     page.sleep(10000);
                 }
             } catch (TimeoutException _) {
-                page.screenshot();
             }
         }
     }
 
     private boolean submit() throws TimeoutException {
         for (int attempt = 0; attempt <= RETRIES; attempt++) {
-            System.out.println("[MattelDraw] Submitting form (attempt " + attempt + "/" + RETRIES + ")...");
+            System.out.println("[MattelDraw] Submitting form (attempt " + (attempt+1) + "/" + (RETRIES+1) + ")...");
             checkForPopup();
             page.click(SUBMIT_BUTTON);
             if (waitForSuccessMessage()) {
@@ -282,6 +291,15 @@ public class MattelDraw {
 
         public String getUrl() {
             return url;
+        }
+    }
+
+    /**
+     * Thrown when form submission completes but does not succeed.
+     */
+    public static class SubmissionFailedException extends RuntimeException {
+        public SubmissionFailedException(String message) {
+            super(message);
         }
     }
 }
