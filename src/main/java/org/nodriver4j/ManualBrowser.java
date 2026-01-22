@@ -17,7 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class ManualBrowser {
 
 
-    private static String URL = "https://www.ubereats.com/";
+    private static String URL = "https://recaptcha-demo.appspot.com/";
 
 
     // Number of concurrent browser sessions
@@ -82,8 +82,8 @@ public class ManualBrowser {
 
                 Page page  = browser.getPage();
 
-                page.sleep(2000);
-                page.navigate(URL);
+//                page.sleep(2000);
+//                page.navigate(URL);
 //                page.waitForSelector("p._1fr98s7[class*='1fr98s7']");
 //                page.scrollIntoView("p._1fr98s7[class*='1fr98s7']");
 //                page.screenshot();
@@ -102,7 +102,7 @@ public class ManualBrowser {
         } catch (InterruptedException e) {
             System.err.println("Interrupted: " + e.getMessage());
             Thread.currentThread().interrupt();
-        } catch (RuntimeException | TimeoutException e) {
+        } catch (RuntimeException e) {
             System.err.println("Unexpected error: " + e.getMessage());
             e.printStackTrace();
         } finally {

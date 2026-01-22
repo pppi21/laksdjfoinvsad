@@ -44,7 +44,7 @@ public class UEA {
                 //.webrtcPolicy("default")
                 .proxyEnabled(true)
                 .headless(false)
-                .warmProfile(true);
+                .warmProfile(false);
 
 
         // Add profile paths if provided via env vars

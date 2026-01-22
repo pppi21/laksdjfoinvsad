@@ -25,10 +25,12 @@ public class UberGen {
 
     private static final String GOOGLE_SEARCH_TEXT = "/html/body/div[2]/div[4]/form/div[1]/div[1]/div[1]/div[1]/div[3]/textarea";
     private static final String UE_RESULT_BUTTON = "[data-pcu^='https://www.ubereats.com/']";
-    private static final String REJECT_COOKIES_BUTTON = "button[id='truste-consent-required']";
-    private static final String FIRST_NAME_TEXT = "/html/body/div[8]/main/div[4]/section/div/div/div/form/div/div[3]/div[1]/div/input";
-    private static final String LAST_NAME_TEXT = "/html/body/div[8]/main/div[4]/section/div/div/div/form/div/div[3]/div[2]/div/input";
-    private static final String EMAIL_TEXT = "/html/body/div[8]/main/div[4]/section/div/div/div/form/div/div[4]/div/div/input";
+    private static final String[] SIGN_IN_BUTTON = {
+            "a._bo._cn._co._cp._es._da._db._bc._af._bw._et._eu._f2._f3._f4._f5._ey._ez._f0[href^='https://auth.uber.com/v2/']",
+            "a._dr._g6._g7[href^='https://auth.uber.com/v2/']"
+    };
+    private static final String EMAIL_TEXT = "input#PHONE_NUMBER_or_EMAIL_ADDRESS[type='email']";
+    private static final String SUMBIT_EMAIL_BUTTON = "#forward-button";
     private static final String SUBMIT_BUTTON = "/html/body/div[8]/main/div[4]/section/div/div/div/form/div/div[5]/div/button";
     private static final String SUCCESS_MESSAGE = "span.ql-font-poppins";
 
@@ -81,6 +83,8 @@ public class UberGen {
 
             try {
                 navigateToUber();
+
+                signUpWithEmail();
             } catch (UnexpectedNavigationException e) {
                 System.out.println("[UberGen] ⚠ Attempt failed: " + e.getMessage());
             }
@@ -99,8 +103,29 @@ public class UberGen {
                 page.sleep(2000);
                 page.waitForSelector(UE_RESULT_BUTTON,100000);
                 page.click(UE_RESULT_BUTTON);
-                page.sleep(2000);
+                return;
+
+            } catch (TimeoutException | InterruptedException e) {
+                System.out.println("[UberGen] navigateToUber attempt " + attempt + " failed: " + e.getMessage());
+            }
+        }
+        throw new RuntimeException("navigateToUber failed: Maximum " + totalAttempts + " attempts reached");
+    }
+
+    private void signUpWithEmail() throws RuntimeException {
+        int totalAttempts = RETRIES + 1;
+
+        for (int attempt = 1; attempt <= totalAttempts; attempt++) {
+            try {
+                int signInSeed = (int)(Math.random() * 100);
+                if(attempt > 1) page.navigate("https://www.ubereats.com/");
+                page.waitForLoadEvent(60000);
+                page.click(SIGN_IN_BUTTON[signInSeed % 2]);
                 page.waitForLoadEvent(100000);
+                page.sleep(2000);
+                fillFormField(EMAIL_TEXT, profile.emailAddress());
+                if(signInSeed % 3 == 0) { page.pressKey("Enter", false,false,false); }
+                else { page.click(SUMBIT_EMAIL_BUTTON); }
                 return;
 
             } catch (TimeoutException | InterruptedException e) {
