@@ -17,7 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class ManualBrowser {
 
 
-    private static String URL = "https://www.google.com/";
+    private static String URL = "https://www.ubereats.com/";
 
 
     // Number of concurrent browser sessions
@@ -43,7 +43,8 @@ public class ManualBrowser {
                 .fingerprintEnabled(true)
                 //.webrtcPolicy("default")
                 .proxyEnabled(true)
-                .warmProfile(true);
+                .headless(false)
+                .warmProfile(false);
 
 
         BrowserManager manager = managerBuilder.build();
@@ -83,6 +84,10 @@ public class ManualBrowser {
 
                 page.sleep(2000);
                 page.navigate(URL);
+//                page.waitForSelector("p._1fr98s7[class*='1fr98s7']");
+//                page.scrollIntoView("p._1fr98s7[class*='1fr98s7']");
+//                page.screenshot();
+
             }
 
             // Wait for user input before closing

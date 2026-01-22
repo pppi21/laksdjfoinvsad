@@ -14,6 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.IntConsumer;
+import java.util.Random;
 
 /**
  * Manages a Chrome browser instance with automatic resource cleanup.
@@ -49,6 +50,10 @@ public class Browser implements AutoCloseable {
 
     private static final int CDP_CONNECTION_RETRY_DELAY_MS = 500;
     private static final int CDP_CONNECTION_MAX_RETRIES = 20;
+    private static final int[][] HEADLESS_RESOLUTIONS = {
+            {1920, 1080},  // 1080p
+            {2560, 1440}   // 1440p
+    };
 
     private final BrowserConfig config;
     private final Process process;
@@ -886,6 +891,17 @@ public class Browser implements AutoCloseable {
         // Headless mode
         if (config.isHeadless()) {
             args.add("--headless=new");
+
+            // Random screen dimensions (50/50 between 1080p and 1440p)
+            int[] resolution = HEADLESS_RESOLUTIONS[new Random().nextInt(HEADLESS_RESOLUTIONS.length)];
+            args.add("--window-size=" + resolution[0] + "," + resolution[1]);
+
+            // GPU acceleration (opt-in)
+            if (config.isHeadlessGpuAcceleration()) {
+                args.add("--enable-gpu");
+                args.add("--enable-webgl");
+                args.add("--use-gl=desktop");
+            }
         }
 
         // WebRTC policy

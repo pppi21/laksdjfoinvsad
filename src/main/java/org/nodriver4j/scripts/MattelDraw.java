@@ -78,7 +78,7 @@ public class MattelDraw {
                 attemptEntry();
                 return; // Success - exit
 
-            } catch (UnexpectedNavigationException | SubmissionFailedException e) {
+            } catch (UnexpectedNavigationException | SubmissionFailedException | IOException | TimeoutException e) {
                 System.out.println("[MattelDraw] ⚠ Attempt " + attempt + " failed: " + e.getMessage());
 
                 if (attempt < totalAttempts) {
@@ -113,9 +113,10 @@ public class MattelDraw {
      * @return true if entry was successful
      * @throws RuntimeException if entry fails after all retries
      */
-    private void attemptEntry() {
+    private void attemptEntry() throws IOException, TimeoutException {
         try {
             page.navigate(PRODUCT_URL);
+            page.waitForLoadEvent(60000);
             rejectCookies();
             fillFormField(FIRST_NAME_TEXT, profile.firstName());
             verifyOnDrawPage();
@@ -133,11 +134,10 @@ public class MattelDraw {
                 throw new SubmissionFailedException("Form submission did not succeed");
             }
 
-        } catch (UnexpectedNavigationException e) {
-            throw e; // Re-throw for flow retry handling
-        } catch (SubmissionFailedException e) {
+        } catch (UnexpectedNavigationException | SubmissionFailedException e) {
             throw e; // Re-throw for flow retry handling
         } catch (TimeoutException e) {
+            page.screenshot();
             throw new RuntimeException("Timeout during draw entry: " + e.getMessage(), e);
         } catch (IOException e) {
             throw new RuntimeException("Failed to write completed profile: " + e.getMessage(), e);
@@ -167,7 +167,7 @@ public class MattelDraw {
     private void fillFormField(String selector, String value) throws InterruptedException, TimeoutException, IOException {
         for (int attempt = 0; attempt <= RETRIES; attempt++) {
             checkForPopup();
-            page.waitForVisible(selector, 100000);
+            page.waitForSelector(selector, 100000);
             page.fillFormField(selector, value, 150, 300);
             if (page.validateValue(selector, value)) {
                 return;
@@ -197,8 +197,11 @@ public class MattelDraw {
 
         if (page.exists(CLOSE_POPUP_BUTTON)) {
             page.click(CLOSE_POPUP_BUTTON);
-            popupClosed = true;
-            return true;
+            page.sleep(1000);
+            if (!page.exists(CLOSE_POPUP_BUTTON)) {
+                popupClosed = true;
+                return true;
+            }
         }
 
         return false;
@@ -207,36 +210,37 @@ public class MattelDraw {
 
     private void rejectCookies() throws IOException, TimeoutException {
         for (int attempt = 0; attempt <= RETRIES; attempt++) {
-            try {
-                page.waitForClickable(REJECT_COOKIES_BUTTON, 100000);
-                checkForPopup();
-                page.click(REJECT_COOKIES_BUTTON);
-                page.sleep(200);
-                if (!page.exists(COOKIES_DISPLAY)) {
-                    return;
-                }
+            page.waitForClickable(COOKIES_DISPLAY, 100000);
+            checkForPopup();
+            page.click(REJECT_COOKIES_BUTTON);
+            page.sleep(300);
+            if (!page.exists(COOKIES_DISPLAY)) {
+                return;
+            }
 
-                if (attempt < RETRIES) {
-                    System.out.println("[MattelDraw] Reject cookies not loaded, retrying...");
-                    page.sleep(10000);
-                }
-            } catch (TimeoutException _) {
+            if (attempt < RETRIES) {
+                System.out.println("[MattelDraw] Reject cookies not loaded, retrying...");
+                page.sleep(10000);
             }
         }
     }
 
-    private boolean submit() throws TimeoutException {
+    private boolean submit() {
         for (int attempt = 0; attempt <= RETRIES; attempt++) {
-            System.out.println("[MattelDraw] Submitting form (attempt " + (attempt+1) + "/" + (RETRIES+1) + ")...");
-            checkForPopup();
-            page.click(SUBMIT_BUTTON);
-            if (waitForSuccessMessage()) {
-                return true;
-            }
-            verifyOnDrawPage();
-            if (attempt < RETRIES) {
-                System.out.println("[MattelDraw] Success message not found, retrying...");
-                page.sleep(10000);
+            try {
+                System.out.println("[MattelDraw] Submitting form (attempt " + (attempt + 1) + "/" + (RETRIES + 1) + ")...");
+                checkForPopup();
+                page.click(SUBMIT_BUTTON);
+                if (waitForSuccessMessage()) {
+                    return true;
+                }
+                verifyOnDrawPage();
+                if (attempt < RETRIES) {
+                    System.out.println("[MattelDraw] Success message not found, retrying...");
+                    page.sleep(10000);
+                }
+            } catch (TimeoutException e) {
+                System.out.println("[MattelDraw] Submission attempt " + attempt + " failed: " + e.getMessage());
             }
         }
         return false;

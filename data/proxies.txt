@@ -1,5 +1,3 @@
-res-us.lightningproxies.net:9999:NoDriver4j-zone-lightning-region-us-st-california-session-nCq2selsKbBQ-sessTime-120:69693Eca829cb145A
-res-us.lightningproxies.net:9999:NoDriver4j-zone-lightning-region-us-st-california-session-LKkWJ5kSNSLy-sessTime-120:69693Eca829cb145A
 res-us.lightningproxies.net:9999:NoDriver4j-zone-lightning-region-us-st-california-session-Wdot4PZ1mKSa-sessTime-120:69693Eca829cb145A
 res-us.lightningproxies.net:9999:NoDriver4j-zone-lightning-region-us-st-california-session-5WIUVnri4Ykl-sessTime-120:69693Eca829cb145A
 res-us.lightningproxies.net:9999:NoDriver4j-zone-lightning-region-us-st-california-session-UFKnNCq0A5oA-sessTime-120:69693Eca829cb145A

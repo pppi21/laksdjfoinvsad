@@ -11,6 +11,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 
+
 /**
  * Manages browser instances with automatic resource allocation and thread pool execution.
  *
@@ -115,6 +116,7 @@ public class BrowserManager implements AutoCloseable {
     private final boolean proxyEnabled;
     private final InteractionOptions interactionOptions;
     private final ArrayList<String> arguements;
+    private final boolean headlessGpuAcceleration;
 
     // Profile management
     private final String profileInputPath;
@@ -133,6 +135,7 @@ public class BrowserManager implements AutoCloseable {
         this.profileInputPath = builder.profileInputPath;
         this.profileOutputPath = builder.profileOutputPath;
         this.arguements = builder.arguements;
+        this.headlessGpuAcceleration = builder.headlessGpuAcceleration;
 
         this.isShutdown = new AtomicBoolean(false);
         this.activeBrowsers = ConcurrentHashMap.newKeySet();
@@ -534,6 +537,7 @@ public class BrowserManager implements AutoCloseable {
                 .warmProfile(warmProfile)
                 .headless(headless)
                 .webrtcPolicy(webrtcPolicy)
+                .headlessGpuAcceleration(headlessGpuAcceleration)
                 .chromeArguements(arguements);
 
         // Consume proxy from file if enabled
@@ -797,7 +801,8 @@ public class BrowserManager implements AutoCloseable {
         private InteractionOptions interactionOptions = InteractionOptions.defaults();
         private String profileInputPath;
         private String profileOutputPath;
-        private ArrayList<String> arguements = new ArrayList<>();
+        private final ArrayList<String> arguements = new ArrayList<>();
+        private final boolean headlessGpuAcceleration = false;
 
         private Builder() {}
 
@@ -997,6 +1002,8 @@ public class BrowserManager implements AutoCloseable {
             this.arguements.add(arguement);
             return this;
         }
+
+
 
         /**
          * Builds the BrowserManager with the configured settings.

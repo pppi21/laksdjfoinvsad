@@ -28,7 +28,7 @@ public class FingerprintCollector {
     private static final String API_URL = "https://fingerprints.bablosoft.com/preview";
     private static final String OUTPUT_FILE = "data/fingerprints.jsonl";
     private static final int TARGET_COUNT = 1000;
-    private static final int DELAY_MS = 1000;
+    private static final int DELAY_MS = 350;
 
     private final HttpClient httpClient;
     private final Set<String> existingFingerprints;

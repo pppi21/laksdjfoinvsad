@@ -4,7 +4,8 @@ import org.nodriver4j.core.Browser;
 import org.nodriver4j.core.BrowserManager;
 import org.nodriver4j.profiles.Profile;
 import org.nodriver4j.profiles.ProfilePool;
-import org.nodriver4j.scripts.MattelDraw;
+import org.nodriver4j.scripts.UberGen;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -15,15 +16,15 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class TreasureHunt {
+public class UEA {
 
     // Number of concurrent browser sessions
-    private static final int SESSION_COUNT = 2;
+    private static final int SESSION_COUNT = 1;
 
     public static void main(String[] args) {
         String executablePath = System.getenv("chromepath");
-        String profileInputPath = System.getenv("mattel_profiles_input");
-        String profileOutputPath = System.getenv("mattel_profiles_output");
+        String profileInputPath = System.getenv("ue_profiles_input");
+        String profileOutputPath = System.getenv("ue_profiles_output");
 
         if (executablePath == null || executablePath.isBlank()) {
             System.err.println("ERROR: 'chromepath' environment variable is not set.");
@@ -42,8 +43,8 @@ public class TreasureHunt {
                 .fingerprintEnabled(true)
                 //.webrtcPolicy("default")
                 .proxyEnabled(true)
-                .headless(true)
-                .warmProfile(false);
+                .headless(false)
+                .warmProfile(true);
 
 
         // Add profile paths if provided via env vars
@@ -106,7 +107,7 @@ public class TreasureHunt {
 
             System.out.println();
             System.out.println("==========================================");
-            System.out.println("  Running SandwichGen Scripts  ");
+            System.out.println("  Running UberGen Scripts  ");
             System.out.println("==========================================");
             System.out.println();
 
@@ -128,12 +129,12 @@ public class TreasureHunt {
                         System.out.println("[Browser " + browserIndex + "] Consumed profile: " + profile.emailAddress());
 
                         // Run the script
-                        MattelDraw script = new MattelDraw(
+                        UberGen script = new UberGen(
                                 browser.getPage(),
                                 profile,
                                 pool
                         );
-                        script.enterDraw();
+                        script.generate();
 
                         successCount.incrementAndGet();
                         return new ScriptResult(browserIndex, profile.emailAddress(), true, null);

@@ -27,6 +27,7 @@ public class BrowserConfig {
     private final String webrtcPolicy;
     private final ProxyConfig proxyConfig;
     private final ArrayList<String> arguements;
+    private final boolean headlessGpuAcceleration;
 
     private BrowserConfig(Builder builder) {
         this.executablePath = builder.executablePath;
@@ -38,6 +39,7 @@ public class BrowserConfig {
         this.webrtcPolicy = builder.webrtcPolicy;
         this.proxyConfig = builder.proxyConfig;
         this.arguements = builder.arguements;
+        this.headlessGpuAcceleration = builder.headlessGpuAcceleration;
     }
 
     public String getExecutablePath() {
@@ -73,6 +75,8 @@ public class BrowserConfig {
     }
 
     public ArrayList<String> getArguements() { return arguements; }
+
+    public boolean isHeadlessGpuAcceleration() { return headlessGpuAcceleration; }
 
     /**
      * Checks if a proxy is configured for this browser.
@@ -113,6 +117,7 @@ public class BrowserConfig {
         private String webrtcPolicy = DEFAULT_WEBRTC_POLICY;
         private ProxyConfig proxyConfig;
         private ArrayList<String> arguements;
+        private boolean headlessGpuAcceleration = false;
 
         private Builder() {}
 
@@ -227,6 +232,23 @@ public class BrowserConfig {
 
         public Builder chromeArguements(ArrayList<String> arguements) {
             this.arguements = arguements;
+            return this;
+        }
+
+        /**
+         * Enables GPU acceleration in headless mode.
+         *
+         * <p>When enabled, Chrome uses actual GPU hardware for rendering instead of
+         * software rendering (SwiftShader). This can improve performance on machines
+         * with available GPUs.</p>
+         *
+         * <p>Only applies when headless mode is also enabled. Default: false</p>
+         *
+         * @param headlessGpuAcceleration true to enable GPU acceleration in headless mode
+         * @return this builder
+         */
+        public Builder headlessGpuAcceleration(boolean headlessGpuAcceleration) {
+            this.headlessGpuAcceleration = headlessGpuAcceleration;
             return this;
         }
 
