@@ -135,5 +135,11 @@ public class AutoSolveAISolverService {
 
     @SerializedName("remaining")
     private final long remaining;
+
+    Selectors:
+
+    ".rc-imageselect-desc strong",
+            ".rc-imageselect-desc-no-canonical strong"
+            "#rc-imageselect > div.rc-imageselect-payload > div.rc-imageselect-instructions > div.rc-imageselect-desc-wrapper > div > strong"
      */
 }

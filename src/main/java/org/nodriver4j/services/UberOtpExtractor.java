@@ -53,7 +53,7 @@ public class UberOtpExtractor {
     // ==================== Uber Email Constants ====================
 
     private static final String UBER_SUBJECT = "Welcome to Uber";
-    private static final String UBER_SENDER_DOMAIN_CONTAINS = "uber.com";
+    private static final String UBER_SENDER_DOMAIN = "uber.com";
 
     // ==================== OTP Extraction Pattern ====================
 
@@ -223,7 +223,7 @@ public class UberOtpExtractor {
         EmailSearchCriteria criteria = EmailSearchCriteria.builder()
                 .subject(UBER_SUBJECT)
                 .recipient(recipient)
-                .senderDomain(UBER_SENDER_DOMAIN_CONTAINS)
+                .senderDomain(UBER_SENDER_DOMAIN)
                 .since(monitoringStartTime)
                 .build();
 

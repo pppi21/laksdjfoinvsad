@@ -15,7 +15,7 @@ import java.util.concurrent.TimeoutException;
  */
 public class UberGen {
 
-    private static final int RETRIES = 2;
+    private static final int ATTEMPTS = 3;
 
     private static final String[] DISALLOWED_URLS = {
             "corporate.mattel.com/privacy-statement",
@@ -30,8 +30,12 @@ public class UberGen {
     private static final String SIGN_IN_BUTTON = "[tabindex='0'][href^='https://auth.uber.com/v2/']";
     private static final String EMAIL_TEXT = "input#PHONE_NUMBER_or_EMAIL_ADDRESS[type='email']";
     private static final String SUMBIT_EMAIL_BUTTON = "#forward-button";
-    private static final String SUBMIT_BUTTON = "/html/body/div[8]/main/div[4]/section/div/div/div/form/div/div[5]/div/button";
-    private static final String SUCCESS_MESSAGE = "span.ql-font-poppins";
+    private static final String EMAIL_OTP_TEXT = "#EMAIL_OTP_CODE-0";
+    private static final String EMAIL_OTP_RESEND_BUTTON = "#alt-action-resend";
+    private static final String EMAIL_OTP_RESEND_CONFIRM_BUTTON = "#alt-action-resend[aria-label='Resend']";
+    private static final String FIRST_NAME_TEXT = "#FIRST_NAME";
+    private static final String LAST_NAME_TEXT = "#LAST_NAME";
+    private static final String CONTINUE_NAME_BUTTON = "#forward-button";
 
     // ==================== Password Generation ====================
 
@@ -86,6 +90,8 @@ public class UberGen {
                 signUpWithEmail();
 
                 enterEmailOTP();
+
+                enterName();
             } catch (UnexpectedNavigationException | GmailClient.GmailClientException e) {
                 System.out.println("[UberGen] ⚠ Attempt failed: " + e.getMessage());
             }
@@ -94,12 +100,11 @@ public class UberGen {
 
 
     private void navigateToUber() throws RuntimeException {
-        int totalAttempts = RETRIES + 1;
 
-        for (int attempt = 1; attempt <= totalAttempts; attempt++) {
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
             try {
                 page.navigate("https://www.google.com/");
-                fillFormField(GOOGLE_SEARCH_TEXT, "uber eats");
+                fillFormField(GOOGLE_SEARCH_TEXT, "uber eats", true);
                 page.pressKey("Enter", false,false,false);
                 if(!page.exists(UE_RESULT_BUTTON)) {
                     page.waitForSelector(UE_RESULT_BUTTON,100000);
@@ -112,13 +117,12 @@ public class UberGen {
                 System.out.println("[UberGen] navigateToUber attempt " + attempt + " failed: " + e.getMessage());
             }
         }
-        throw new RuntimeException("navigateToUber failed: Maximum " + totalAttempts + " attempts reached");
+        throw new RuntimeException("navigateToUber failed: Maximum " + ATTEMPTS + " attempts reached");
     }
 
     private void signUpWithEmail() throws RuntimeException {
-        int totalAttempts = RETRIES + 1;
 
-        for (int attempt = 1; attempt <= totalAttempts; attempt++) {
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
             try {
                 int signInSeed = (int)(Math.random() * 100);
                 if(attempt > 1) page.navigate("https://www.ubereats.com/");
@@ -126,7 +130,7 @@ public class UberGen {
                 page.click(SIGN_IN_BUTTON);
                 page.waitForLoadEvent(100000);
                 page.sleep(2000);
-                fillFormField(EMAIL_TEXT, profile.emailAddress());
+                fillFormField(EMAIL_TEXT, profile.emailAddress(), true);
                 if(signInSeed % 3 == 0) { page.pressKey("Enter", false,false,false); }
                 else { page.click(SUMBIT_EMAIL_BUTTON); }
                 return;
@@ -135,34 +139,59 @@ public class UberGen {
                 System.out.println("[UberGen] navigateToUber attempt " + attempt + " failed: " + e.getMessage());
             }
         }
-        throw new RuntimeException("navigateToUber failed: Maximum " + totalAttempts + " attempts reached");
+        throw new RuntimeException("navigateToUber failed: Maximum " + ATTEMPTS + " attempts reached");
     }
 
     private void enterEmailOTP() throws GmailClient.GmailClientException {
-            GmailClient gmail = new GmailClient(profile.emailAddress(), profile.catchallEmail(), profile.imapPassword());
-            gmail.connect();
-            UberOtpExtractor extractor = new UberOtpExtractor(gmail);
+        GmailClient gmail = new GmailClient(profile.emailAddress(), profile.catchallEmail(), profile.imapPassword());
+        gmail.connect();
+        UberOtpExtractor extractor = new UberOtpExtractor(gmail);
 
-            try{
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            try {
+                String attemptStr = "Attempt " + attempt + "/" + ATTEMPTS + " - ";
+                if(attempt > 1) {
+                    page.click(EMAIL_OTP_RESEND_BUTTON);
+                    page.sleep(1500);
+                    page.click(EMAIL_OTP_RESEND_CONFIRM_BUTTON);
+                }
                 String otp = extractor.extractOtp(); // Polls for up to 60 seconds
-                System.out.println("[UberGen] Enter OTP: " + otp);
-            } catch (UberOtpExtractor.OtpExtractionException e) {
-                System.out.println("[UberGen] OTP extraction failed: " + e.getMessage());
-            }
+                System.out.println("[UberGen] " + attemptStr+ "Retrieved email OTP for " + profile.emailAddress() + ": " + otp);
+                fillFormField(EMAIL_OTP_TEXT, otp, false);
+                page.waitForSelector(FIRST_NAME_TEXT, 15000);
+                return;
 
+            } catch (UberOtpExtractor.OtpExtractionException | InterruptedException | TimeoutException e) {
+                System.out.println("[UberGen] OTP extraction failed for " + profile.emailAddress() + ": " + e.getMessage());
+            }
+        }
+        throw new RuntimeException("Mail OTP failed: Maximum " + ATTEMPTS + " attempts reached");
     }
 
-    private void fillFormField(String selector, String value) throws InterruptedException, TimeoutException {
-        for (int attempt = 0; attempt <= RETRIES; attempt++) {
-            page.waitForSelector(selector, 100000);
-            page.fillFormField(selector, value, 150, 300);
-            if (page.validateValue(selector, value)) {
+    private void enterName() {
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            String attemptStr = "Attempt " + attempt + "/" + ATTEMPTS + " - ";
+            try{
+                fillFormField(FIRST_NAME_TEXT, profile.firstName(), true);
+                fillFormField(LAST_NAME_TEXT, profile.lastName(), true);
+                page.click(CONTINUE_NAME_BUTTON);
+                return;
+            } catch (InterruptedException | TimeoutException e) {
+                System.out.println("[UberGen] Name stage failed for " + profile.emailAddress() + ": " + e.getMessage());
+            }
+        }
+    }
+
+    private void fillFormField(String selector, String value, boolean validate) throws InterruptedException, TimeoutException {
+        for (int attempt = 0; attempt <= ATTEMPTS; attempt++) {
+            page.fillFormField(selector, value, 300, 600);
+            if (page.validateValue(selector, value) || !validate) {
                 return;
             }
             page.sleep(200);
             page.clear(selector);
         }
-        throw new TimeoutException("Failed to fill field after " + (RETRIES+1) + " attempts: " + selector);
+        throw new TimeoutException("Failed to fill field after " + ATTEMPTS + " attempts: " + selector);
 
     }
 

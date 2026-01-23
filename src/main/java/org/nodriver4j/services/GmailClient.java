@@ -301,7 +301,7 @@ public class GmailClient implements AutoCloseable {
             return true;
         }
 
-        String recipient = extractBetweenBrackets(message.recipient());
+        String recipient = message.recipient();
         System.out.println(recipient);
         if (recipient == null) {
             return false;
@@ -326,8 +326,8 @@ public class GmailClient implements AutoCloseable {
             return true;
         }
 
-        String sender = extractBetweenBrackets(message.sender());
-        System.out.println(sender);
+        String sender = message.sender();
+        System.out.println(sender + criteria.senderExact + criteria.senderDomain);
         if (sender == null) {
             return false;
         }
@@ -337,7 +337,7 @@ public class GmailClient implements AutoCloseable {
 
         // Exact match (already filtered by IMAP, but double-check)
         if (criteria.senderExact != null && !criteria.senderExact.isBlank()) {
-            if (!sender.contains(criteria.senderExact.toLowerCase())) {
+            if (!sender.equals(criteria.senderExact.toLowerCase())) {
                 return false;
             }
         }
@@ -380,18 +380,21 @@ public class GmailClient implements AutoCloseable {
         String recipient = (toAddress != null && toAddress.length > 0)
                 ? toAddress[0].toString()
                 : null;
+        System.out.println(recipient);
 
         // Extract sender
         Address[] fromAddresses = message.getFrom();
         String sender = (fromAddresses != null && fromAddresses.length > 0)
-                ? fromAddresses[0].toString()
+                ? extractBetweenBrackets(fromAddresses[0].toString())
                 : null;
+        System.out.println(sender);
 
         // Extract received date
         Date receivedDate = message.getReceivedDate();
         Instant receivedInstant = (receivedDate != null)
                 ? receivedDate.toInstant()
                 : Instant.now();
+        System.out.println(receivedInstant);
 
         // Extract body content
         String htmlBody = null;
@@ -412,7 +415,7 @@ public class GmailClient implements AutoCloseable {
             textBody = bodyContent.text;
         }
 
-        return new EmailMessage(subject, recipient,sender, htmlBody, textBody, receivedInstant);
+        return new EmailMessage(subject, recipient, sender, htmlBody, textBody, receivedInstant);
     }
 
     /**

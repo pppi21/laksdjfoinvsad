@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class HUMANCaptchaTest {
 
-    private static final String URL = "https://www.wayfair.com/";
+    private static final String URL = "https://recaptcha-demo.appspot.com/";
     private static final String HEADLESS_UA = "--user-agent=Mozilla/5.0 (Windows NT 6.0; Win64; x64; Xbox; Xbox One) AppleWebKit/606 (KHTML, like Gecko) HeadlessChrome/81.0.4015.0 Safari/606";
 
     // Number of concurrent browser sessions

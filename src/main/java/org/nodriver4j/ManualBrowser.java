@@ -41,8 +41,8 @@ public class ManualBrowser {
         BrowserManager.Builder managerBuilder = BrowserManager.builder()
                 .executablePath(executablePath)
                 .fingerprintEnabled(true)
-                //.webrtcPolicy("default")
-                .proxyEnabled(true)
+                .webrtcPolicy("default")
+                .proxyEnabled(false)
                 .headless(false)
                 .warmProfile(false);
 
