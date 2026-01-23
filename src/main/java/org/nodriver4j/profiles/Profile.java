@@ -64,6 +64,7 @@ public final class Profile {
             "Billing State",
             "Billing Country",
             "Account Login Info",
+            "Catchall Email",
             "IMAP Password"
     };
 
@@ -113,13 +114,14 @@ public final class Profile {
     // ==================== Output Fields ====================
 
     private final String accountLoginInfo;
+    private final String catchallEmail;
     private final String imapPassword;
 
     // ==================== Extra Fields ====================
 
     /**
      * Additional script-specific fields to be appended to CSV output.
-     * These are not part of the standard 30-column format.
+     * These are not part of the standard 31-column format.
      */
     private final Map<String, String> extraFields;
 
@@ -153,6 +155,7 @@ public final class Profile {
         this.billingState = builder.billingState;
         this.billingCountry = builder.billingCountry;
         this.accountLoginInfo = builder.accountLoginInfo;
+        this.catchallEmail = builder.catchallEmail;
         this.imapPassword = builder.imapPassword;
         this.extraFields = Collections.unmodifiableMap(new LinkedHashMap<>(builder.extraFields));
     }
@@ -171,12 +174,12 @@ public final class Profile {
     /**
      * Parses a CSV row into a Profile instance.
      *
-     * <p>The row must contain at least 30 comma-separated values matching
+     * <p>The row must contain at least 31 comma-separated values matching
      * the standard CSV format defined by {@link #CSV_HEADERS}.</p>
      *
      * @param csvRow the comma-separated row string
      * @return a new Profile instance
-     * @throws IllegalArgumentException if the row has fewer than 30 columns
+     * @throws IllegalArgumentException if the row has fewer than 31 columns
      */
     public static Profile fromCSVRow(String csvRow) {
         if (csvRow == null || csvRow.isBlank()) {
@@ -185,9 +188,9 @@ public final class Profile {
 
         String[] values = parseCSVRow(csvRow);
 
-        if (values.length < 30) {
+        if (values.length < 31) {
             throw new IllegalArgumentException(
-                    "CSV row must have at least 30 columns, found: " + values.length);
+                    "CSV row must have at least 31 columns, found: " + values.length);
         }
 
         return builder()
@@ -220,7 +223,8 @@ public final class Profile {
                 .billingState(values[26])
                 .billingCountry(values[27])
                 .accountLoginInfo(values[28])
-                .imapPassword(values[29])
+                .catchallEmail(values[29])
+                .imapPassword(values[30])
                 .build();
     }
 
@@ -261,6 +265,7 @@ public final class Profile {
                 .billingState(billingState)
                 .billingCountry(billingCountry)
                 .accountLoginInfo(accountLoginInfo)
+                .catchallEmail(catchallEmail)
                 .imapPassword(imapPassword);
 
         // Copy extra fields
@@ -276,7 +281,7 @@ public final class Profile {
     /**
      * Converts this profile to a CSV row string.
      *
-     * <p>The output includes all 30 standard columns followed by any extra fields
+     * <p>The output includes all 31 standard columns followed by any extra fields
      * in the order they were added.</p>
      *
      * @return comma-separated row string
@@ -284,7 +289,7 @@ public final class Profile {
     public String toCSVRow() {
         StringBuilder sb = new StringBuilder();
 
-        // Standard 30 columns
+        // Standard 31 columns
         appendCSVValue(sb, emailAddress);
         appendCSVValue(sb, profileName);
         appendCSVValue(sb, String.valueOf(onlyOneCheckout).toUpperCase());
@@ -314,6 +319,7 @@ public final class Profile {
         appendCSVValue(sb, billingState);
         appendCSVValue(sb, billingCountry);
         appendCSVValue(sb, accountLoginInfo);
+        appendCSVValue(sb, catchallEmail);
         appendCSVValue(sb, imapPassword);
 
         // Extra fields (appended at end)
@@ -539,6 +545,10 @@ public final class Profile {
         return accountLoginInfo;
     }
 
+    public String catchallEmail() {
+        return catchallEmail;
+    }
+
     public String imapPassword() {
         return imapPassword;
     }
@@ -634,6 +644,7 @@ public final class Profile {
         private String billingState = "";
         private String billingCountry = "";
         private String accountLoginInfo = "";
+        private String catchallEmail = "";
         private String imapPassword = "";
         private final Map<String, String> extraFields = new LinkedHashMap<>();
 
@@ -781,6 +792,11 @@ public final class Profile {
 
         public Builder accountLoginInfo(String accountLoginInfo) {
             this.accountLoginInfo = accountLoginInfo != null ? accountLoginInfo : "";
+            return this;
+        }
+
+        public Builder catchallEmail(String catchallEmail) {
+            this.catchallEmail = catchallEmail != null ? catchallEmail : "";
             return this;
         }
 

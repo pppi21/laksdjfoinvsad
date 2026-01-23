@@ -3,6 +3,8 @@ package org.nodriver4j.scripts;
 import org.nodriver4j.core.Page;
 import org.nodriver4j.profiles.Profile;
 import org.nodriver4j.profiles.ProfilePool;
+import org.nodriver4j.services.GmailClient;
+import org.nodriver4j.services.UberOtpExtractor;
 
 import java.io.IOException;
 import java.security.SecureRandom;
@@ -24,11 +26,8 @@ public class UberGen {
     // ==================== Form XPaths ====================
 
     private static final String GOOGLE_SEARCH_TEXT = "/html/body/div[2]/div[4]/form/div[1]/div[1]/div[1]/div[1]/div[3]/textarea";
-    private static final String UE_RESULT_BUTTON = "[data-pcu^='https://www.ubereats.com/']";
-    private static final String[] SIGN_IN_BUTTON = {
-            "a._bo._cn._co._cp._es._da._db._bc._af._bw._et._eu._f2._f3._f4._f5._ey._ez._f0[href^='https://auth.uber.com/v2/']",
-            "a._dr._g6._g7[href^='https://auth.uber.com/v2/']"
-    };
+    private static final String UE_RESULT_BUTTON = "a[href^='https://www.ubereats.com/'] > :nth-child(1)";
+    private static final String SIGN_IN_BUTTON = "[tabindex='0'][href^='https://auth.uber.com/v2/']";
     private static final String EMAIL_TEXT = "input#PHONE_NUMBER_or_EMAIL_ADDRESS[type='email']";
     private static final String SUMBIT_EMAIL_BUTTON = "#forward-button";
     private static final String SUBMIT_BUTTON = "/html/body/div[8]/main/div[4]/section/div/div/div/form/div/div[5]/div/button";
@@ -85,7 +84,9 @@ public class UberGen {
                 navigateToUber();
 
                 signUpWithEmail();
-            } catch (UnexpectedNavigationException e) {
+
+                enterEmailOTP();
+            } catch (UnexpectedNavigationException | GmailClient.GmailClientException e) {
                 System.out.println("[UberGen] ⚠ Attempt failed: " + e.getMessage());
             }
     }
@@ -100,8 +101,10 @@ public class UberGen {
                 page.navigate("https://www.google.com/");
                 fillFormField(GOOGLE_SEARCH_TEXT, "uber eats");
                 page.pressKey("Enter", false,false,false);
-                page.sleep(2000);
-                page.waitForSelector(UE_RESULT_BUTTON,100000);
+                if(!page.exists(UE_RESULT_BUTTON)) {
+                    page.waitForSelector(UE_RESULT_BUTTON,100000);
+                }
+                page.sleep(1500);
                 page.click(UE_RESULT_BUTTON);
                 return;
 
@@ -120,7 +123,7 @@ public class UberGen {
                 int signInSeed = (int)(Math.random() * 100);
                 if(attempt > 1) page.navigate("https://www.ubereats.com/");
                 page.waitForLoadEvent(60000);
-                page.click(SIGN_IN_BUTTON[signInSeed % 2]);
+                page.click(SIGN_IN_BUTTON);
                 page.waitForLoadEvent(100000);
                 page.sleep(2000);
                 fillFormField(EMAIL_TEXT, profile.emailAddress());
@@ -133,6 +136,20 @@ public class UberGen {
             }
         }
         throw new RuntimeException("navigateToUber failed: Maximum " + totalAttempts + " attempts reached");
+    }
+
+    private void enterEmailOTP() throws GmailClient.GmailClientException {
+            GmailClient gmail = new GmailClient(profile.emailAddress(), profile.catchallEmail(), profile.imapPassword());
+            gmail.connect();
+            UberOtpExtractor extractor = new UberOtpExtractor(gmail);
+
+            try{
+                String otp = extractor.extractOtp(); // Polls for up to 60 seconds
+                System.out.println("[UberGen] Enter OTP: " + otp);
+            } catch (UberOtpExtractor.OtpExtractionException e) {
+                System.out.println("[UberGen] OTP extraction failed: " + e.getMessage());
+            }
+
     }
 
     private void fillFormField(String selector, String value) throws InterruptedException, TimeoutException {
