@@ -36,6 +36,10 @@ public class UberGen {
     private static final String FIRST_NAME_TEXT = "#FIRST_NAME";
     private static final String LAST_NAME_TEXT = "#LAST_NAME";
     private static final String CONTINUE_NAME_BUTTON = "#forward-button";
+    private static final String ACCEPT_TERMS_CHECKBOX = "#LEGAL_ACCEPT_TERMS > span";
+    private static final String CONTINUE_TERMS_BUTTON = "#forward-button";
+    private static final String SKIP_SECURITY_BUTTON = "button[data-testid='skip']";
+    private static final String CONTINUE_SECURITY_BUTTON = "#guided-security-upgrade-ui > div[data-baseweb='block'] > button";
 
     // ==================== Password Generation ====================
 
