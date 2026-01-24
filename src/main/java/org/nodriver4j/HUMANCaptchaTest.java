@@ -37,7 +37,7 @@ public class HUMANCaptchaTest {
                 .executablePath(executablePath)
                 .fingerprintEnabled(false)
                 .webrtcPolicy("default")
-                .proxyEnabled(false)
+                .proxyEnabled(true)
                 .warmProfile(false)
                 .chromeArguement(HEADLESS_UA)
                 //.headless(true)

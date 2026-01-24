@@ -2639,6 +2639,43 @@ public class Page {
         System.out.println("[Page] Screenshot saved to: " + outputPath);
     }
 
+
+
+    /**
+     * Takes a screenshot of a specific region.
+     *
+     * @param box the bounding box defining the region to capture
+     * @return the screenshot as PNG bytes
+     * @throws TimeoutException if the operation times out
+     * @throws IllegalArgumentException if box is null or invalid
+     */
+    public byte[] screenshotRegionBytes(BoundingBox box) throws TimeoutException {
+        if (box == null) {
+            throw new IllegalArgumentException("BoundingBox cannot be null");
+        }
+        if (!box.isValid()) {
+            throw new IllegalArgumentException("BoundingBox is invalid: " + box);
+        }
+
+        ensurePageEnabled();
+
+        JsonObject clip = new JsonObject();
+        clip.addProperty("x", box.getX());
+        clip.addProperty("y", box.getY());
+        clip.addProperty("width", box.getWidth());
+        clip.addProperty("height", box.getHeight());
+        clip.addProperty("scale", 1);
+
+        JsonObject params = new JsonObject();
+        params.addProperty("format", "png");
+        params.add("clip", clip);
+
+        JsonObject result = cdp.send("Page.captureScreenshot", params);
+        String data = result.get("data").getAsString();
+
+        return Base64.getDecoder().decode(data);
+    }
+
     /**
      * Takes a screenshot of the page.
      *
@@ -2664,31 +2701,14 @@ public class Page {
      *
      * @param selector the XPath or CSS selector
      * @return the screenshot as PNG bytes
-     * @throws TimeoutException if the operation times out
+     * @throws TimeoutException if the operation times out or element not found
      */
     public byte[] screenshotElementBytes(String selector) throws TimeoutException {
         BoundingBox box = querySelector(selector);
         if (box == null) {
             throw new TimeoutException("Element not found: " + selector);
         }
-
-        ensurePageEnabled();
-
-        JsonObject clip = new JsonObject();
-        clip.addProperty("x", box.getX());
-        clip.addProperty("y", box.getY());
-        clip.addProperty("width", box.getWidth());
-        clip.addProperty("height", box.getHeight());
-        clip.addProperty("scale", 1);
-
-        JsonObject params = new JsonObject();
-        params.addProperty("format", "png");
-        params.add("clip", clip);
-
-        JsonObject result = cdp.send("Page.captureScreenshot", params);
-        String data = result.get("data").getAsString();
-
-        return Base64.getDecoder().decode(data);
+        return screenshotRegionBytes(box);
     }
 
     // ==================== Cookies ====================

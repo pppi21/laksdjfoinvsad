@@ -10,6 +10,7 @@ import java.util.Set;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
+import org.nodriver4j.services.AutoSolveAIService;
 
 
 /**
@@ -124,6 +125,11 @@ public class BrowserManager implements AutoCloseable {
     private volatile ProfilePool profilePool;
     private final Object profilePoolLock = new Object();
 
+    // AutoSolve AI integration
+    private final String autoSolveAIKey;
+    private volatile AutoSolveAIService autoSolveAIService;
+    private final Object autoSolveAIServiceLock = new Object();
+
     private BrowserManager(Builder builder) {
         this.executablePath = builder.executablePath;
         this.fingerprintEnabled = builder.fingerprintEnabled;
@@ -136,6 +142,7 @@ public class BrowserManager implements AutoCloseable {
         this.profileOutputPath = builder.profileOutputPath;
         this.arguements = builder.arguements;
         this.headlessGpuAcceleration = builder.headlessGpuAcceleration;
+        this.autoSolveAIKey = builder.autoSolveAIKey;
 
         this.isShutdown = new AtomicBoolean(false);
         this.activeBrowsers = ConcurrentHashMap.newKeySet();
@@ -239,6 +246,40 @@ public class BrowserManager implements AutoCloseable {
      */
     public String profileOutputPath() {
         return profileOutputPath;
+    }
+
+    // ==================== AutoSolve AI Service ====================
+
+    /**
+     * Gets the shared AutoSolveAIService for this manager.
+     *
+     * <p>The service is created lazily on first access. If no API key was
+     * configured via the builder, this method returns null.</p>
+     *
+     * @return the shared AutoSolveAIService instance, or null if not configured
+     */
+    public AutoSolveAIService autoSolveAIService() {
+        if (autoSolveAIKey == null) {
+            return null;
+        }
+
+        if (autoSolveAIService == null) {
+            synchronized (autoSolveAIServiceLock) {
+                if (autoSolveAIService == null) {
+                    autoSolveAIService = new AutoSolveAIService(autoSolveAIKey);
+                }
+            }
+        }
+        return autoSolveAIService;
+    }
+
+    /**
+     * Checks if AutoSolve AI is configured.
+     *
+     * @return true if an API key was provided
+     */
+    public boolean hasAutoSolveAI() {
+        return autoSolveAIKey != null && !autoSolveAIKey.isBlank();
     }
 
     // ==================== Task Submission Methods ====================
@@ -803,6 +844,7 @@ public class BrowserManager implements AutoCloseable {
         private String profileOutputPath;
         private final ArrayList<String> arguements = new ArrayList<>();
         private final boolean headlessGpuAcceleration = false;
+        private String autoSolveAIKey;
 
         private Builder() {}
 
@@ -927,6 +969,22 @@ public class BrowserManager implements AutoCloseable {
          */
         public Builder proxyEnabled(boolean enabled) {
             this.proxyEnabled = enabled;
+            return this;
+        }
+
+        /**
+         * Sets the AutoSolve AI API key for captcha solving.
+         *
+         * <p>When set, the manager provides access to a shared {@link AutoSolveAIService}
+         * via {@link BrowserManager#autoSolveAIService()}.</p>
+         *
+         * <p>If not set, captcha solving features will not be available.</p>
+         *
+         * @param apiKey the AutoSolve AI API key
+         * @return this builder
+         */
+        public Builder autoSolveAIKey(String apiKey) {
+            this.autoSolveAIKey = apiKey;
             return this;
         }
 
