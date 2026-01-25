@@ -3,6 +3,7 @@ package org.nodriver4j.core;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import org.nodriver4j.cdp.CDPClient;
 import org.nodriver4j.math.BoundingBox;
 import org.nodriver4j.math.HumanBehavior;
@@ -511,12 +512,7 @@ public class Page {
             }
 
             // Step 4: Create execution context in iframe
-            JsonObject createWorldParams = new JsonObject();
-            createWorldParams.addProperty("frameId", iframeInfo.frameId());
-            createWorldParams.addProperty("worldName", "nodriver4j_captcha");
-
-            JsonObject worldResult = cdp.send("Page.createIsolatedWorld", createWorldParams);
-            int executionContextId = worldResult.get("executionContextId").getAsInt();
+            int executionContextId = createIframeContext(iframeInfo.frameId());
 
             System.out.println("[Page] Created execution context: " + executionContextId);
 
@@ -700,6 +696,400 @@ public class Page {
             e.printStackTrace();
             return CaptchaSolveResult.error("Exception: " + e.getMessage());
         }
+    }
+
+    // ==================== Cross-Origin Iframe Helpers ====================
+
+    /**
+     * Holds information about an iframe needed for interaction.
+     */
+    public record IframeInfo(String frameId, int backendNodeId, BoundingBox boundingBox) {}
+
+    /**
+     * Finds an iframe by CSS selector and returns its CDP frame information.
+     *
+     * <p>This method is designed for cross-origin iframes (like reCAPTCHA) where
+     * direct JavaScript access is blocked. It uses CDP to retrieve the iframe's
+     * frameId, which can then be used with {@link #evaluateInFrame} or
+     * {@link #clickInFrame}.</p>
+     *
+     * @param iframeSelector CSS selector for the iframe element
+     * @return IframeInfo containing frameId, backendNodeId, and bounding box
+     * @throws TimeoutException if iframe not found or CDP operations fail
+     */
+    public IframeInfo getIframeInfo(String iframeSelector) throws TimeoutException {
+        return getIframeInfo(iframeSelector, 0);
+    }
+
+    /**
+     * Finds an iframe by CSS selector and index (for when multiple iframes match).
+     *
+     * @param iframeSelector CSS selector for the iframe element
+     * @param index          which matching iframe to select (0-based)
+     * @return IframeInfo containing frameId, backendNodeId, and bounding box
+     * @throws TimeoutException if iframe not found or CDP operations fail
+     */
+    public IframeInfo getIframeInfo(String iframeSelector, int index) throws TimeoutException {
+        ensureRuntimeEnabled();
+
+        // Use JavaScript to find all matching iframes and get the one at index
+        String script = String.format(
+                "(function() {" +
+                        "  var iframes = document.querySelectorAll(\"%s\");" +
+                        "  if (!iframes || iframes.length <= %d) return null;" +
+                        "  var iframe = iframes[%d];" +
+                        "  var rect = iframe.getBoundingClientRect();" +
+                        "  return JSON.stringify({" +
+                        "    name: iframe.name || ''," +
+                        "    src: iframe.src || ''," +
+                        "    x: rect.x," +
+                        "    y: rect.y," +
+                        "    width: rect.width," +
+                        "    height: rect.height" +
+                        "  });" +
+                        "})()",
+                escapeCss(iframeSelector), index, index
+        );
+
+        String result = evaluate(script);
+        if (result == null || result.equals("null")) {
+            throw new TimeoutException("Iframe not found: " + iframeSelector + " at index " + index);
+        }
+
+        JsonObject iframeData = JsonParser.parseString(result).getAsJsonObject();
+        String iframeName = iframeData.get("name").getAsString();
+        String iframeSrc = iframeData.get("src").getAsString();
+
+        BoundingBox boundingBox = new BoundingBox(
+                iframeData.get("x").getAsDouble(),
+                iframeData.get("y").getAsDouble(),
+                iframeData.get("width").getAsDouble(),
+                iframeData.get("height").getAsDouble()
+        );
+
+        // Now find the frameId using CDP frame tree
+        ensurePageEnabled();
+        JsonObject frameTreeResult = cdp.send("Page.getFrameTree", null);
+        JsonObject frameTree = frameTreeResult.getAsJsonObject("frameTree");
+
+        String frameId = findFrameIdInTree(frameTree, iframeName, iframeSrc);
+        if (frameId == null) {
+            throw new TimeoutException("Could not find frameId for iframe: " + iframeSelector);
+        }
+
+        System.out.println("[Page] Found iframe: frameId=" + frameId + ", bounds=" + boundingBox);
+
+        // backendNodeId is not strictly needed for cross-origin iframes, use -1 as placeholder
+        return new IframeInfo(frameId, -1, boundingBox);
+    }
+
+    /**
+     * Recursively searches the frame tree for a matching frame.
+     */
+    private String findFrameIdInTree(JsonObject frameTree, String targetName, String targetSrc) {
+        JsonObject frame = frameTree.getAsJsonObject("frame");
+        String frameId = frame.get("id").getAsString();
+        String frameName = frame.has("name") ? frame.get("name").getAsString() : "";
+        String frameUrl = frame.has("url") ? frame.get("url").getAsString() : "";
+
+        // Match by name (preferred) or by URL containing src
+        if (!targetName.isEmpty() && targetName.equals(frameName)) {
+            return frameId;
+        }
+        if (!targetSrc.isEmpty() && frameUrl.contains(extractDomain(targetSrc))) {
+            // Additional check: URL should be similar
+            if (urlsMatch(frameUrl, targetSrc)) {
+                return frameId;
+            }
+        }
+
+        // Search child frames
+        if (frameTree.has("childFrames")) {
+            JsonArray childFrames = frameTree.getAsJsonArray("childFrames");
+            for (JsonElement child : childFrames) {
+                String result = findFrameIdInTree(child.getAsJsonObject(), targetName, targetSrc);
+                if (result != null) {
+                    return result;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Extracts domain from a URL for matching purposes.
+     */
+    private String extractDomain(String url) {
+        if (url == null || url.isEmpty()) {
+            return "";
+        }
+        try {
+            // Extract host from URL
+            int protocolEnd = url.indexOf("://");
+            if (protocolEnd < 0) return url;
+            int start = protocolEnd + 3;
+            int end = url.indexOf('/', start);
+            if (end < 0) end = url.indexOf('?', start);
+            if (end < 0) end = url.length();
+            return url.substring(start, end);
+        } catch (Exception e) {
+            return url;
+        }
+    }
+
+    /**
+     * Checks if two URLs refer to the same resource (fuzzy match).
+     */
+    private boolean urlsMatch(String url1, String url2) {
+        if (url1 == null || url2 == null) return false;
+        // Both should be from same domain
+        String domain1 = extractDomain(url1);
+        String domain2 = extractDomain(url2);
+        return domain1.equals(domain2);
+    }
+
+    /**
+     * Creates an isolated JavaScript execution context within an iframe.
+     *
+     * @param frameId the CDP frameId of the iframe
+     * @return the execution context ID for use with evaluateInFrame
+     * @throws TimeoutException if context creation fails
+     */
+    public int createIframeContext(String frameId) throws TimeoutException {
+        ensurePageEnabled();
+
+        JsonObject params = new JsonObject();
+        params.addProperty("frameId", frameId);
+        params.addProperty("worldName", "nodriver4j_iframe_" + System.currentTimeMillis());
+
+        JsonObject result = cdp.send("Page.createIsolatedWorld", params);
+        return result.get("executionContextId").getAsInt();
+    }
+
+    /**
+     * Evaluates JavaScript within an iframe's context.
+     *
+     * @param frameId the CDP frameId of the iframe
+     * @param script  the JavaScript to execute
+     * @return the result as a string, or null
+     * @throws TimeoutException if evaluation fails
+     */
+    public String evaluateInFrame(String frameId, String script) throws TimeoutException {
+        int contextId = createIframeContext(frameId);
+
+        JsonObject params = new JsonObject();
+        params.addProperty("contextId", contextId);
+        params.addProperty("expression", script);
+        params.addProperty("returnByValue", true);
+        params.addProperty("awaitPromise", true);
+
+        JsonObject result = cdp.send("Runtime.evaluate", params);
+
+        if (result.has("exceptionDetails")) {
+            String exceptionText = result.getAsJsonObject("exceptionDetails").toString();
+            System.err.println("[Page] Script exception in iframe: " + exceptionText);
+            return null;
+        }
+
+        if (result.has("result")) {
+            JsonObject resultObj = result.getAsJsonObject("result");
+            if (resultObj.has("value")) {
+                JsonElement value = resultObj.get("value");
+                if (value.isJsonNull()) {
+                    return null;
+                }
+                if (value.isJsonPrimitive()) {
+                    return value.getAsString();
+                }
+                return value.toString();
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Gets an element's bounding box within an iframe.
+     *
+     * <p>The returned bounding box is relative to the iframe's origin, not the page.</p>
+     *
+     * @param frameId  the CDP frameId of the iframe
+     * @param selector CSS selector for the element within the iframe
+     * @return the element's bounding box (iframe-relative), or null if not found
+     * @throws TimeoutException if the operation fails
+     */
+    public BoundingBox querySelectorInFrame(String frameId, String selector) throws TimeoutException {
+        String script = String.format(
+                "(function() {" +
+                        "  var el = document.querySelector(\"%s\");" +
+                        "  if (!el) return null;" +
+                        "  var rect = el.getBoundingClientRect();" +
+                        "  return JSON.stringify({x: rect.x, y: rect.y, width: rect.width, height: rect.height});" +
+                        "})()",
+                escapeCss(selector)
+        );
+
+        String result = evaluateInFrame(frameId, script);
+        if (result == null || result.equals("null")) {
+            return null;
+        }
+
+        JsonObject obj = JsonParser.parseString(result).getAsJsonObject();
+        return new BoundingBox(
+                obj.get("x").getAsDouble(),
+                obj.get("y").getAsDouble(),
+                obj.get("width").getAsDouble(),
+                obj.get("height").getAsDouble()
+        );
+    }
+
+    /**
+     * Gets the text content of an element within an iframe.
+     *
+     * @param frameId  the CDP frameId of the iframe
+     * @param selector CSS selector for the element within the iframe
+     * @return the element's text content, or null if not found
+     * @throws TimeoutException if the operation fails
+     */
+    public String getTextInFrame(String frameId, String selector) throws TimeoutException {
+        String script = String.format(
+                "(function() {" +
+                        "  var el = document.querySelector(\"%s\");" +
+                        "  return el ? el.innerText || el.textContent : null;" +
+                        "})()",
+                escapeCss(selector)
+        );
+
+        return evaluateInFrame(frameId, script);
+    }
+
+    /**
+     * Checks if an element exists within an iframe.
+     *
+     * @param frameId  the CDP frameId of the iframe
+     * @param selector CSS selector for the element within the iframe
+     * @return true if the element exists
+     * @throws TimeoutException if the operation fails
+     */
+    public boolean existsInFrame(String frameId, String selector) throws TimeoutException {
+        String script = String.format(
+                "document.querySelector(\"%s\") !== null",
+                escapeCss(selector)
+        );
+
+        String result = evaluateInFrame(frameId, script);
+        return "true".equals(result);
+    }
+
+    /**
+     * Checks if an element has a specific CSS class within an iframe.
+     *
+     * @param frameId   the CDP frameId of the iframe
+     * @param selector  CSS selector for the element within the iframe
+     * @param className the class name to check for
+     * @return true if the element has the class
+     * @throws TimeoutException if the operation fails
+     */
+    public boolean hasClassInFrame(String frameId, String selector, String className) throws TimeoutException {
+        String script = String.format(
+                "(function() {" +
+                        "  var el = document.querySelector(\"%s\");" +
+                        "  return el ? el.classList.contains('%s') : false;" +
+                        "})()",
+                escapeCss(selector), escapeJs(className)
+        );
+
+        String result = evaluateInFrame(frameId, script);
+        return "true".equals(result);
+    }
+
+    /**
+     * Clicks an element inside a cross-origin iframe using CDP Input events.
+     *
+     * <p>This method:</p>
+     * <ol>
+     *   <li>Gets the iframe's position on the page</li>
+     *   <li>Gets the element's position within the iframe</li>
+     *   <li>Calculates absolute coordinates</li>
+     *   <li>Performs a human-like click at those coordinates</li>
+     * </ol>
+     *
+     * @param iframeInfo the iframe information (from {@link #getIframeInfo})
+     * @param selector   CSS selector for the element within the iframe
+     * @throws TimeoutException if the element cannot be found or clicked
+     */
+    public void clickInFrame(IframeInfo iframeInfo, String selector) throws TimeoutException {
+        // Get element position within iframe
+        BoundingBox elementBox = querySelectorInFrame(iframeInfo.frameId(), selector);
+        if (elementBox == null) {
+            throw new TimeoutException("Element not found in iframe: " + selector);
+        }
+
+        // Calculate absolute position
+        BoundingBox iframeBox = iframeInfo.boundingBox();
+        BoundingBox absoluteBox = new BoundingBox(
+                iframeBox.getX() + elementBox.getX(),
+                iframeBox.getY() + elementBox.getY(),
+                elementBox.getWidth(),
+                elementBox.getHeight()
+        );
+
+        System.out.println("[Page] Clicking in iframe at absolute position: " + absoluteBox);
+
+        // Use existing click behavior
+        clickAtBox(absoluteBox);
+    }
+
+    /**
+     * Clicks an element inside a cross-origin iframe (convenience method).
+     *
+     * @param iframeSelector CSS selector for the iframe
+     * @param elementSelector CSS selector for the element within the iframe
+     * @throws TimeoutException if the element cannot be found or clicked
+     */
+    public void clickInFrame(String iframeSelector, String elementSelector) throws TimeoutException {
+        clickInFrame(iframeSelector, 0, elementSelector);
+    }
+
+    /**
+     * Clicks an element inside a cross-origin iframe at a specific index.
+     *
+     * @param iframeSelector  CSS selector for the iframe
+     * @param iframeIndex     which matching iframe to use (0-based)
+     * @param elementSelector CSS selector for the element within the iframe
+     * @throws TimeoutException if the element cannot be found or clicked
+     */
+    public void clickInFrame(String iframeSelector, int iframeIndex, String elementSelector) throws TimeoutException {
+        IframeInfo iframeInfo = getIframeInfo(iframeSelector, iframeIndex);
+        clickInFrame(iframeInfo, elementSelector);
+    }
+
+    /**
+     * Takes a screenshot of a region within an iframe.
+     *
+     * @param iframeInfo the iframe information
+     * @param selector   CSS selector for the element within the iframe
+     * @return the screenshot as PNG bytes
+     * @throws TimeoutException if the operation fails
+     */
+    public byte[] screenshotElementInFrame(IframeInfo iframeInfo, String selector) throws TimeoutException {
+        // Get element position within iframe
+        BoundingBox elementBox = querySelectorInFrame(iframeInfo.frameId(), selector);
+        if (elementBox == null) {
+            throw new TimeoutException("Element not found in iframe: " + selector);
+        }
+
+        // Calculate absolute position
+        BoundingBox iframeBox = iframeInfo.boundingBox();
+        BoundingBox absoluteBox = new BoundingBox(
+                iframeBox.getX() + elementBox.getX(),
+                iframeBox.getY() + elementBox.getY(),
+                elementBox.getWidth(),
+                elementBox.getHeight()
+        );
+
+        return screenshotRegionBytes(absoluteBox);
     }
 
     // ==================== Captcha Helper Methods ====================

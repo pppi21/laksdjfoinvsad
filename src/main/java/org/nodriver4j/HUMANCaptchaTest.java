@@ -3,6 +3,8 @@ package org.nodriver4j;
 import org.nodriver4j.core.Browser;
 import org.nodriver4j.core.BrowserManager;
 import org.nodriver4j.core.Page;
+import org.nodriver4j.captcha.ReCaptchaSolver;
+import org.nodriver4j.services.AutoSolveAIService;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -15,6 +17,7 @@ public class HUMANCaptchaTest {
 
     private static final String URL = "https://recaptcha-demo.appspot.com/";
     private static final String HEADLESS_UA = "--user-agent=Mozilla/5.0 (Windows NT 6.0; Win64; x64; Xbox; Xbox One) AppleWebKit/606 (KHTML, like Gecko) HeadlessChrome/81.0.4015.0 Safari/606";
+    private static final String AUTOSOLVE_AI_KEY = System.getenv("AUTOSOLVE_AI_KEY");
 
     // Number of concurrent browser sessions
     private static final int SESSION_COUNT = 1;
@@ -35,11 +38,12 @@ public class HUMANCaptchaTest {
 
         BrowserManager manager = BrowserManager.builder()
                 .executablePath(executablePath)
-                .fingerprintEnabled(false)
+                .fingerprintEnabled(true)
                 .webrtcPolicy("default")
-                .proxyEnabled(true)
+                .proxyEnabled(false)
                 .warmProfile(false)
                 .chromeArguement(HEADLESS_UA)
+                .autoSolveAIKey(AUTOSOLVE_AI_KEY)
                 //.headless(true)
                 .build();
 
@@ -73,17 +77,19 @@ public class HUMANCaptchaTest {
                     try {
 
                         Page page = browser.getPage();
+                        AutoSolveAIService aiService = manager.autoSolveAIService();
 
                         page.navigate(URL);
 
-                        page.sleep(3000);
+                        Scanner scanner = new Scanner(System.in);
 
-                        page.solvePressHoldCaptcha(9000);
+                        scanner.nextLine();
 
-                        page.screenshot();
+                        ReCaptchaSolver.solve(page, aiService);
 
-                        page.sleep(3000);
+                        Scanner scanner2 = new Scanner(System.in);
 
+                        scanner2.nextLine();
 
 
                         successCount.incrementAndGet();
@@ -94,8 +100,6 @@ public class HUMANCaptchaTest {
                         System.err.println("[Browser " + browserIndex + "] Script failed: " + e.getMessage());
                         return new ScriptResult(browserIndex,  false, e.getMessage());
                     } catch (TimeoutException e) {
-                        throw new RuntimeException(e);
-                    } catch (IOException e) {
                         throw new RuntimeException(e);
                     }
                 }, scriptExecutor);
