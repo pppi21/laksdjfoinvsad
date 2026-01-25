@@ -17,6 +17,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.TimeUnit;
 
@@ -79,6 +80,7 @@ public class Page {
     private final CDPClient cdp;
     private final String targetId;
     private final InteractionOptions options;
+    private final ConcurrentHashMap<String, String> oopifSessions = new ConcurrentHashMap<>();
 
     // Current mouse position (tracked for realistic movement)
     private Vector mousePosition;
@@ -528,15 +530,15 @@ public class Page {
     /**
      * Holds information about an iframe needed for interaction.
      */
-    public record IframeInfo(String frameId, int backendNodeId, BoundingBox boundingBox) {}
+    public record IframeInfo(String frameId, int backendNodeId, BoundingBox boundingBox, String url) {}
 
     /**
      * Finds an iframe by CSS selector and returns its CDP frame information.
      *
      * <p>This method is designed for cross-origin iframes (like reCAPTCHA) where
-     * direct JavaScript access is blocked. It uses CDP to retrieve the iframe's
-     * frameId, which can then be used with {@link #evaluateInFrame} or
-     * {@link #clickInFrame}.</p>
+     * direct JavaScript access is blocked. It uses CDP's DOM domain to retrieve
+     * the iframe's frameId directly from the DOM node, bypassing frame tree
+     * limitations with cross-origin frames.</p>
      *
      * @param iframeSelector CSS selector for the iframe element
      * @return IframeInfo containing frameId, backendNodeId, and bounding box
@@ -549,129 +551,145 @@ public class Page {
     /**
      * Finds an iframe by CSS selector and index (for when multiple iframes match).
      *
+     * <p>Uses CDP DOM.describeNode to get frameId directly from the iframe element,
+     * which works reliably for cross-origin iframes that may appear as about:blank
+     * in the frame tree.</p>
+     *
      * @param iframeSelector CSS selector for the iframe element
      * @param index          which matching iframe to select (0-based)
      * @return IframeInfo containing frameId, backendNodeId, and bounding box
      * @throws TimeoutException if iframe not found or CDP operations fail
      */
     public IframeInfo getIframeInfo(String iframeSelector, int index) throws TimeoutException {
-        ensureRuntimeEnabled();
+        // Step 1: Get document root
+        JsonObject docParams = new JsonObject();
+        docParams.addProperty("depth", 0);
+        JsonObject docResult = cdp.send("DOM.getDocument", docParams);
+        int rootNodeId = docResult.getAsJsonObject("root").get("nodeId").getAsInt();
 
-        // Use JavaScript to find all matching iframes and get the one at index
-        String script = String.format(
-                "(function() {" +
-                        "  var iframes = document.querySelectorAll(\"%s\");" +
-                        "  if (!iframes || iframes.length <= %d) return null;" +
-                        "  var iframe = iframes[%d];" +
-                        "  var rect = iframe.getBoundingClientRect();" +
-                        "  return JSON.stringify({" +
-                        "    name: iframe.name || ''," +
-                        "    src: iframe.src || ''," +
-                        "    x: rect.x," +
-                        "    y: rect.y," +
-                        "    width: rect.width," +
-                        "    height: rect.height" +
-                        "  });" +
-                        "})()",
-                escapeCss(iframeSelector), index, index
-        );
+        // Step 2: Query for all matching iframes
+        JsonObject queryParams = new JsonObject();
+        queryParams.addProperty("nodeId", rootNodeId);
+        queryParams.addProperty("selector", iframeSelector);
 
-        String result = evaluate(script);
-        if (result == null || result.equals("null")) {
-            throw new TimeoutException("Iframe not found: " + iframeSelector + " at index " + index);
+        JsonObject queryResult = cdp.send("DOM.querySelectorAll", queryParams);
+
+        if (!queryResult.has("nodeIds")) {
+            throw new TimeoutException("Iframe not found: " + iframeSelector);
         }
 
-        JsonObject iframeData = JsonParser.parseString(result).getAsJsonObject();
-        String iframeName = iframeData.get("name").getAsString();
-        String iframeSrc = iframeData.get("src").getAsString();
+        JsonArray nodeIds = queryResult.getAsJsonArray("nodeIds");
 
-        BoundingBox boundingBox = new BoundingBox(
-                iframeData.get("x").getAsDouble(),
-                iframeData.get("y").getAsDouble(),
-                iframeData.get("width").getAsDouble(),
-                iframeData.get("height").getAsDouble()
-        );
-
-        // Now find the frameId using CDP frame tree
-        ensurePageEnabled();
-        JsonObject frameTreeResult = cdp.send("Page.getFrameTree", null);
-        JsonObject frameTree = frameTreeResult.getAsJsonObject("frameTree");
-
-        String frameId = findFrameIdInTree(frameTree, iframeName, iframeSrc);
-        if (frameId == null) {
-            throw new TimeoutException("Could not find frameId for iframe: " + iframeSelector);
+        if (nodeIds.isEmpty() || nodeIds.size() <= index) {
+            throw new TimeoutException("Iframe not found: " + iframeSelector + " at index " + index +
+                    " (found " + nodeIds.size() + " matches)");
         }
 
-        System.out.println("[Page] Found iframe: frameId=" + frameId + ", bounds=" + boundingBox);
+        int iframeNodeId = nodeIds.get(index).getAsInt();
 
-        // backendNodeId is not strictly needed for cross-origin iframes, use -1 as placeholder
-        return new IframeInfo(frameId, -1, boundingBox);
+        // Step 3: Describe the iframe node to get frameId
+        JsonObject describeParams = new JsonObject();
+        describeParams.addProperty("nodeId", iframeNodeId);
+        describeParams.addProperty("depth", 0);
+
+        JsonObject describeResult = cdp.send("DOM.describeNode", describeParams);
+
+        if (!describeResult.has("node")) {
+            throw new TimeoutException("Could not describe iframe node: " + iframeSelector);
+        }
+
+        JsonObject node = describeResult.getAsJsonObject("node");
+
+        // Verify it's an iframe
+        String nodeName = node.has("nodeName") ? node.get("nodeName").getAsString() : "";
+        if (!"IFRAME".equalsIgnoreCase(nodeName)) {
+            throw new TimeoutException("Selector matched non-iframe element: " + nodeName);
+        }
+
+        // Get frameId from the node
+        if (!node.has("frameId")) {
+            throw new TimeoutException("Iframe node has no frameId - iframe may not be loaded yet");
+        }
+
+        String frameId = node.get("frameId").getAsString();
+        int backendNodeId = node.has("backendNodeId") ? node.get("backendNodeId").getAsInt() : -1;
+
+        // Step 4: Get bounding box via DOM.getBoxModel
+        BoundingBox boundingBox = getNodeBoundingBox(backendNodeId);
+
+        if (boundingBox == null) {
+            // Fallback: try getting bounding box via JavaScript
+            boundingBox = getIframeBoundingBoxViaJs(iframeSelector, index);
+        }
+
+        if (boundingBox == null) {
+            throw new TimeoutException("Could not get bounding box for iframe: " + iframeSelector);
+        }
+
+        String iframeUrl = getIframeUrlFromNode(iframeNodeId);
+
+        System.out.println("[Page] Found iframe: frameId=" + frameId +
+                ", backendNodeId=" + backendNodeId + ", url=" + iframeUrl + ", bounds=" + boundingBox);
+
+        return new IframeInfo(frameId, backendNodeId, boundingBox, iframeUrl);
     }
 
     /**
-     * Recursively searches the frame tree for a matching frame.
+     * Gets the src URL from an iframe node.
      */
-    private String findFrameIdInTree(JsonObject frameTree, String targetName, String targetSrc) {
-        JsonObject frame = frameTree.getAsJsonObject("frame");
-        String frameId = frame.get("id").getAsString();
-        String frameName = frame.has("name") ? frame.get("name").getAsString() : "";
-        String frameUrl = frame.has("url") ? frame.get("url").getAsString() : "";
+    private String getIframeUrlFromNode(int nodeId) {
+        try {
+            JsonObject params = new JsonObject();
+            params.addProperty("nodeId", nodeId);
+            JsonObject result = cdp.send("DOM.getAttributes", params);
 
-        // Match by name (preferred) or by URL containing src
-        if (!targetName.isEmpty() && targetName.equals(frameName)) {
-            return frameId;
-        }
-        if (!targetSrc.isEmpty() && frameUrl.contains(extractDomain(targetSrc))) {
-            // Additional check: URL should be similar
-            if (urlsMatch(frameUrl, targetSrc)) {
-                return frameId;
-            }
-        }
-
-        // Search child frames
-        if (frameTree.has("childFrames")) {
-            JsonArray childFrames = frameTree.getAsJsonArray("childFrames");
-            for (JsonElement child : childFrames) {
-                String result = findFrameIdInTree(child.getAsJsonObject(), targetName, targetSrc);
-                if (result != null) {
-                    return result;
+            if (result.has("attributes")) {
+                JsonArray attrs = result.getAsJsonArray("attributes");
+                for (int i = 0; i < attrs.size() - 1; i += 2) {
+                    if ("src".equals(attrs.get(i).getAsString())) {
+                        return attrs.get(i + 1).getAsString();
+                    }
                 }
             }
+        } catch (TimeoutException e) {
+            // Ignore, URL is optional
         }
-
         return null;
     }
 
     /**
-     * Extracts domain from a URL for matching purposes.
+     * Gets an iframe's bounding box using JavaScript as a fallback.
      */
-    private String extractDomain(String url) {
-        if (url == null || url.isEmpty()) {
-            return "";
-        }
+    private BoundingBox getIframeBoundingBoxViaJs(String iframeSelector, int index) {
         try {
-            // Extract host from URL
-            int protocolEnd = url.indexOf("://");
-            if (protocolEnd < 0) return url;
-            int start = protocolEnd + 3;
-            int end = url.indexOf('/', start);
-            if (end < 0) end = url.indexOf('?', start);
-            if (end < 0) end = url.length();
-            return url.substring(start, end);
-        } catch (Exception e) {
-            return url;
-        }
-    }
+            ensureRuntimeEnabled();
 
-    /**
-     * Checks if two URLs refer to the same resource (fuzzy match).
-     */
-    private boolean urlsMatch(String url1, String url2) {
-        if (url1 == null || url2 == null) return false;
-        // Both should be from same domain
-        String domain1 = extractDomain(url1);
-        String domain2 = extractDomain(url2);
-        return domain1.equals(domain2);
+            String script = String.format(
+                    "(function() {" +
+                            "  var iframes = document.querySelectorAll(\"%s\");" +
+                            "  if (!iframes || iframes.length <= %d) return null;" +
+                            "  var iframe = iframes[%d];" +
+                            "  var rect = iframe.getBoundingClientRect();" +
+                            "  return JSON.stringify({x: rect.x, y: rect.y, width: rect.width, height: rect.height});" +
+                            "})()",
+                    escapeCss(iframeSelector), index, index
+            );
+
+            String result = evaluate(script);
+            if (result == null || result.equals("null")) {
+                return null;
+            }
+
+            JsonObject obj = JsonParser.parseString(result).getAsJsonObject();
+            return new BoundingBox(
+                    obj.get("x").getAsDouble(),
+                    obj.get("y").getAsDouble(),
+                    obj.get("width").getAsDouble(),
+                    obj.get("height").getAsDouble()
+            );
+        } catch (TimeoutException e) {
+            return null;
+        }
     }
 
     /**
@@ -694,15 +712,74 @@ public class Page {
 
     /**
      * Evaluates JavaScript within an iframe's context.
+     * Handles both same-origin (via createIsolatedWorld) and cross-origin OOPIFs (via session).
      *
-     * @param frameId the CDP frameId of the iframe
-     * @param script  the JavaScript to execute
+     * @param iframeInfo the iframe info (must include URL for OOPIF support)
+     * @param script     the JavaScript to execute
      * @return the result as a string, or null
      * @throws TimeoutException if evaluation fails
      */
-    public String evaluateInFrame(String frameId, String script) throws TimeoutException {
-        int contextId = createIframeContext(frameId);
+    public String evaluateInFrame(IframeInfo iframeInfo, String script) throws TimeoutException {
+        String frameId = iframeInfo.frameId();
 
+        // Check if this is an OOPIF (not in frame tree)
+        if (!isFrameInTree(frameId)) {
+            // OOPIF - need to use session-based approach
+            if (iframeInfo.url() == null) {
+                throw new TimeoutException("Cannot evaluate in OOPIF without URL");
+            }
+
+            String sessionId = attachToOOPIF(iframeInfo.url());
+            return evaluateInSession(sessionId, script);
+        }
+
+        // Same-origin iframe - use createIsolatedWorld
+        int contextId = createIframeContext(frameId);
+        return evaluateWithContext(contextId, script);
+    }
+
+    /**
+     * Evaluates JavaScript within an iframe by frameId only (legacy method).
+     * Note: For OOPIF support, prefer evaluateInFrame(IframeInfo, script).
+     */
+    public String evaluateInFrame(String frameId, String script) throws TimeoutException {
+        // This method doesn't have URL info, so can only work for same-origin iframes
+        int contextId = createIframeContext(frameId);
+        return evaluateWithContext(contextId, script);
+    }
+
+    /**
+     * Evaluates script in an OOPIF session.
+     */
+    private String evaluateInSession(String sessionId, String script) throws TimeoutException {
+        JsonObject params = new JsonObject();
+        params.addProperty("expression", script);
+        params.addProperty("returnByValue", true);
+        params.addProperty("awaitPromise", true);
+
+        JsonObject result = cdp.sendWithSession("Runtime.evaluate", params, sessionId);
+
+        if (result.has("exceptionDetails")) {
+            System.err.println("[Page] Script exception in OOPIF: " + result.getAsJsonObject("exceptionDetails"));
+            return null;
+        }
+
+        if (result.has("result")) {
+            JsonObject resultObj = result.getAsJsonObject("result");
+            if (resultObj.has("value")) {
+                JsonElement value = resultObj.get("value");
+                if (value.isJsonNull()) return null;
+                if (value.isJsonPrimitive()) return value.getAsString();
+                return value.toString();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Evaluates with a specific execution context.
+     */
+    private String evaluateWithContext(int contextId, String script) throws TimeoutException {
         JsonObject params = new JsonObject();
         params.addProperty("contextId", contextId);
         params.addProperty("expression", script);
@@ -712,8 +789,7 @@ public class Page {
         JsonObject result = cdp.send("Runtime.evaluate", params);
 
         if (result.has("exceptionDetails")) {
-            String exceptionText = result.getAsJsonObject("exceptionDetails").toString();
-            System.err.println("[Page] Script exception in iframe: " + exceptionText);
+            System.err.println("[Page] Script exception: " + result.getAsJsonObject("exceptionDetails"));
             return null;
         }
 
@@ -721,16 +797,11 @@ public class Page {
             JsonObject resultObj = result.getAsJsonObject("result");
             if (resultObj.has("value")) {
                 JsonElement value = resultObj.get("value");
-                if (value.isJsonNull()) {
-                    return null;
-                }
-                if (value.isJsonPrimitive()) {
-                    return value.getAsString();
-                }
+                if (value.isJsonNull()) return null;
+                if (value.isJsonPrimitive()) return value.getAsString();
                 return value.toString();
             }
         }
-
         return null;
     }
 
@@ -772,12 +843,12 @@ public class Page {
     /**
      * Gets the text content of an element within an iframe.
      *
-     * @param frameId  the CDP frameId of the iframe
+     * @param iframeInfo  Holds information about an iframe needed for interaction
      * @param selector CSS selector for the element within the iframe
      * @return the element's text content, or null if not found
      * @throws TimeoutException if the operation fails
      */
-    public String getTextInFrame(String frameId, String selector) throws TimeoutException {
+    public String getTextInFrame(IframeInfo iframeInfo, String selector) throws TimeoutException {
         String script = String.format(
                 "(function() {" +
                         "  var el = document.querySelector(\"%s\");" +
@@ -786,37 +857,37 @@ public class Page {
                 escapeCss(selector)
         );
 
-        return evaluateInFrame(frameId, script);
+        return evaluateInFrame(iframeInfo, script);
     }
 
     /**
      * Checks if an element exists within an iframe.
      *
-     * @param frameId  the CDP frameId of the iframe
+     * @param iframeInfo  Holds information about an iframe needed for interaction
      * @param selector CSS selector for the element within the iframe
      * @return true if the element exists
      * @throws TimeoutException if the operation fails
      */
-    public boolean existsInFrame(String frameId, String selector) throws TimeoutException {
+    public boolean existsInFrame(IframeInfo iframeInfo, String selector) throws TimeoutException {
         String script = String.format(
                 "document.querySelector(\"%s\") !== null",
                 escapeCss(selector)
         );
 
-        String result = evaluateInFrame(frameId, script);
+        String result = evaluateInFrame(iframeInfo, script);
         return "true".equals(result);
     }
 
     /**
      * Checks if an element has a specific CSS class within an iframe.
      *
-     * @param frameId   the CDP frameId of the iframe
+     * @param iframeInfo Holds information about an iframe needed for interaction
      * @param selector  CSS selector for the element within the iframe
      * @param className the class name to check for
      * @return true if the element has the class
      * @throws TimeoutException if the operation fails
      */
-    public boolean hasClassInFrame(String frameId, String selector, String className) throws TimeoutException {
+    public boolean hasClassInFrame(IframeInfo iframeInfo, String selector, String className) throws TimeoutException {
         String script = String.format(
                 "(function() {" +
                         "  var el = document.querySelector(\"%s\");" +
@@ -825,7 +896,7 @@ public class Page {
                 escapeCss(selector), escapeJs(className)
         );
 
-        String result = evaluateInFrame(frameId, script);
+        String result = evaluateInFrame(iframeInfo, script);
         return "true".equals(result);
     }
 
@@ -915,6 +986,99 @@ public class Page {
         );
 
         return screenshotRegionBytes(absoluteBox);
+    }
+
+    /**
+     * Attaches to an OOPIF target by URL and returns the session ID.
+     *
+     * @param targetUrl the URL of the iframe to attach to
+     * @return the session ID for the attached target
+     * @throws TimeoutException if attachment fails
+     */
+    private String attachToOOPIF(String targetUrl) throws TimeoutException {
+        // Check cache first
+        String cached = oopifSessions.get(targetUrl);
+        if (cached != null) {
+            return cached;
+        }
+
+        // Get all targets
+        JsonObject targetsResult = cdp.send("Target.getTargets", null);
+        JsonArray targetInfos = targetsResult.getAsJsonArray("targetInfos");
+
+        String targetId = null;
+        for (JsonElement elem : targetInfos) {
+            JsonObject target = elem.getAsJsonObject();
+            String type = target.get("type").getAsString();
+            String url = target.has("url") ? target.get("url").getAsString() : "";
+
+            // Match iframe targets by URL
+            if ("iframe".equals(type) && urlMatchesTarget(targetUrl, url)) {
+                targetId = target.get("targetId").getAsString();
+                System.out.println("[Page] Found OOPIF target: " + targetId + " for URL: " + url);
+                break;
+            }
+        }
+
+        if (targetId == null) {
+            throw new TimeoutException("No OOPIF target found for URL: " + targetUrl);
+        }
+
+        // Attach to the target
+        JsonObject attachParams = new JsonObject();
+        attachParams.addProperty("targetId", targetId);
+        attachParams.addProperty("flatten", true);
+
+        JsonObject attachResult = cdp.send("Target.attachToTarget", attachParams);
+        String sessionId = attachResult.get("sessionId").getAsString();
+
+        System.out.println("[Page] Attached to OOPIF, sessionId: " + sessionId);
+
+        // Cache it
+        oopifSessions.put(targetUrl, sessionId);
+
+        return sessionId;
+    }
+
+    /**
+     * Checks if a target URL matches an iframe src URL.
+     */
+    private boolean urlMatchesTarget(String iframeSrc, String targetUrl) {
+        if (iframeSrc == null || targetUrl == null) return false;
+        // Both should be from same origin and path
+        // For reCAPTCHA, both will be google.com/recaptcha/...
+        try {
+            // Extract origin + path (ignore query params which may differ)
+            String src1 = iframeSrc.split("\\?")[0];
+            String src2 = targetUrl.split("\\?")[0];
+            return src1.equals(src2);
+        } catch (Exception e) {
+            return iframeSrc.equals(targetUrl);
+        }
+    }
+
+    /**
+     * Checks if a frameId exists in the current frame tree.
+     */
+    private boolean isFrameInTree(String frameId) throws TimeoutException {
+        ensurePageEnabled();
+        JsonObject frameTreeResult = cdp.send("Page.getFrameTree", null);
+        return findFrameInTree(frameTreeResult.getAsJsonObject("frameTree"), frameId);
+    }
+
+    private boolean findFrameInTree(JsonObject frameTree, String targetFrameId) {
+        JsonObject frame = frameTree.getAsJsonObject("frame");
+        if (targetFrameId.equals(frame.get("id").getAsString())) {
+            return true;
+        }
+        if (frameTree.has("childFrames")) {
+            for (JsonElement child : frameTree.getAsJsonArray("childFrames")) {
+                if (findFrameInTree(child.getAsJsonObject(), targetFrameId)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     // ==================== Captcha Helper Methods ====================

@@ -148,6 +148,18 @@ public class Browser implements AutoCloseable {
             browser.setupProxyAuthentication();
         }
 
+        // Enable auto-attach to child frames (required for cross-origin iframe access)
+        try {
+            System.out.println("[Browser] Enabling frame auto-attach...");
+            JsonObject autoAttachParams = new JsonObject();
+            autoAttachParams.addProperty("autoAttach", true);
+            autoAttachParams.addProperty("waitForDebuggerOnStart", false);
+            autoAttachParams.addProperty("flatten", true);
+            browserCdpClient.send("Target.setAutoAttach", autoAttachParams);
+        } catch (TimeoutException e) {
+            System.err.println("[Browser] Warning: Failed to enable frame auto-attach: " + e.getMessage());
+        }
+
         // Setup target discovery to track all pages
         browser.setupTargetDiscovery();
 
@@ -233,6 +245,10 @@ public class Browser implements AutoCloseable {
             browserCdpClient.addEventListener("Target.targetCreated", this::onTargetCreated);
             browserCdpClient.addEventListener("Target.targetDestroyed", this::onTargetDestroyed);
             browserCdpClient.addEventListener("Target.targetInfoChanged", this::onTargetInfoChanged);
+            browserCdpClient.addEventListener("Target.attachedToTarget", params -> {
+                System.out.println("[DEBUG] Target attached: " + params);
+            });
+
 
             // Enable target discovery
             JsonObject params = new JsonObject();

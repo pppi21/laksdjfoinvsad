@@ -250,7 +250,8 @@ public final class ReCaptchaSolver {
     public static boolean isSolved(Page page) {
         try {
             IframeInfo checkboxIframe = page.getIframeInfo(CHECKBOX_IFRAME_SELECTOR, 0);
-            return page.hasClassInFrame(checkboxIframe.frameId(), CHECKBOX_SELECTOR, SOLVED_CLASS);
+            return page.hasClassInFrame(checkboxIframe, CHECKBOX_SELECTOR, SOLVED_CLASS)
+;
         } catch (TimeoutException e) {
             return false;
         }
@@ -265,7 +266,8 @@ public final class ReCaptchaSolver {
         // Check if already solved
         IframeInfo checkboxIframe = page.getIframeInfo(CHECKBOX_IFRAME_SELECTOR, 0);
 
-        if (page.hasClassInFrame(checkboxIframe.frameId(), CHECKBOX_SELECTOR, SOLVED_CLASS)) {
+        if (page.hasClassInFrame(checkboxIframe, CHECKBOX_SELECTOR, SOLVED_CLASS)
+) {
             return ClickCheckboxResult.ofAlreadySolved();
         }
 
@@ -280,7 +282,8 @@ public final class ReCaptchaSolver {
         checkboxIframe = page.getIframeInfo(CHECKBOX_IFRAME_SELECTOR, 0);
 
         // Check if solved without challenge (sometimes happens)
-        if (page.hasClassInFrame(checkboxIframe.frameId(), CHECKBOX_SELECTOR, SOLVED_CLASS)) {
+        if (page.hasClassInFrame(checkboxIframe, CHECKBOX_SELECTOR, SOLVED_CLASS)
+) {
             return ClickCheckboxResult.ofSolvedWithoutChallenge();
         }
 
@@ -305,7 +308,7 @@ public final class ReCaptchaSolver {
             IframeInfo challengeIframe = page.getIframeInfo(CHALLENGE_IFRAME_SELECTOR);
 
             // Extract description
-            String description = page.getTextInFrame(challengeIframe.frameId(), DESCRIPTION_SELECTOR);
+            String description = page.getTextInFrame(challengeIframe, DESCRIPTION_SELECTOR);
             if (description == null || description.isBlank()) {
                 return RoundResult.error("Could not extract challenge description");
             }
@@ -364,7 +367,7 @@ public final class ReCaptchaSolver {
                 String tileSelector = String.format(TILE_SELECTOR_PATTERN, tileId);
 
                 // Verify tile exists before clicking
-                if (page.existsInFrame(challengeIframe.frameId(), tileSelector)) {
+                if (page.existsInFrame(challengeIframe, tileSelector)) {
                     page.clickInFrame(challengeIframe, tileSelector);
                     clickedCount++;
 
@@ -386,12 +389,13 @@ public final class ReCaptchaSolver {
         IframeInfo checkboxIframe = page.getIframeInfo(CHECKBOX_IFRAME_SELECTOR, 0);
 
         // Check if solved
-        if (page.hasClassInFrame(checkboxIframe.frameId(), CHECKBOX_SELECTOR, SOLVED_CLASS)) {
+        if (page.hasClassInFrame(checkboxIframe, CHECKBOX_SELECTOR, SOLVED_CLASS)
+) {
             return RoundResult.solved();
         }
 
         // Check if expired
-        if (page.hasClassInFrame(checkboxIframe.frameId(), CHECKBOX_SELECTOR, EXPIRED_CLASS)) {
+        if (page.hasClassInFrame(checkboxIframe, CHECKBOX_SELECTOR, EXPIRED_CLASS)) {
             return RoundResult.expired();
         }
 

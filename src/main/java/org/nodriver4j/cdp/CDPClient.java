@@ -396,6 +396,57 @@ public class CDPClient implements AutoCloseable {
     }
 
     /**
+     * Sends a CDP command to a specific session (for OOPIFs).
+     *
+     * @param method    the CDP method name
+     * @param params    the parameters
+     * @param sessionId the target session ID
+     * @return the result from the response
+     * @throws TimeoutException if no response within timeout
+     */
+    public JsonObject sendWithSession(String method, JsonObject params, String sessionId)
+            throws TimeoutException {
+        return sendWithSession(method, params, sessionId, 30, TimeUnit.SECONDS);
+    }
+
+    /**
+     * Sends a CDP command to a specific session with custom timeout.
+     */
+    public JsonObject sendWithSession(String method, JsonObject params, String sessionId,
+                                      long timeout, TimeUnit unit) throws TimeoutException {
+        int id = messageId.incrementAndGet();
+
+        JsonObject message = new JsonObject();
+        message.addProperty("id", id);
+        message.addProperty("method", method);
+        if (sessionId != null) {
+            message.addProperty("sessionId", sessionId);
+        }
+        if (params != null) {
+            message.add("params", params);
+        }
+
+        CompletableFuture<JsonObject> future = new CompletableFuture<>();
+        pendingRequests.put(id, future);
+
+        webSocket.sendText(GSON.toJson(message), true);
+
+        try {
+            JsonObject response = future.get(timeout, unit);
+            if (response.has("error")) {
+                JsonObject error = response.getAsJsonObject("error");
+                throw new RuntimeException("CDP error: " + error.get("message").getAsString());
+            }
+            return response.has("result") ? response.getAsJsonObject("result") : new JsonObject();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Interrupted while waiting for response", e);
+        } catch (ExecutionException e) {
+            throw new RuntimeException("Error receiving response", e.getCause());
+        }
+    }
+
+    /**
      * Clears any pending events from the queue.
      */
     public void clearEvents() {
