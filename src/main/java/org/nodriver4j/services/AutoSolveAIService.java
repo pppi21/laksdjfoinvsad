@@ -132,10 +132,9 @@ public class AutoSolveAIService {
         body.addProperty("version", RECAPTCHA_VERSION);
         body.addProperty("description", description);
 
-        // Example images - always empty for our use case
         body.add("exampleImages", GSON.toJsonTree(new String[0]));
 
-        // Image data - single image as array
+        // image data
         body.add("imageData", GSON.toJsonTree(new String[]{imageBase64}));
 
         return GSON.toJson(body);

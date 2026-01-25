@@ -7,6 +7,10 @@ import org.nodriver4j.services.AutoSolveAIResponse;
 import org.nodriver4j.services.AutoSolveAIService;
 import org.nodriver4j.services.exceptions.AutoSolveAIException;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -314,9 +318,13 @@ public final class ReCaptchaSolver {
             }
             System.out.println("[ReCaptchaSolver] Challenge description: " + description);
 
-            // Screenshot the challenge
             byte[] imageBytes = page.screenshotElementInFrame(challengeIframe, CHALLENGE_IMAGE_SELECTOR);
             String imageBase64 = Base64.getEncoder().encodeToString(imageBytes);
+
+            System.out.println("[DEBUG] Image bytes length: " + imageBytes.length);
+            System.out.println("[DEBUG] Base64 length: " + imageBase64.length());
+            System.out.println("[DEBUG] Base64 starts with: " + imageBase64.substring(0, Math.min(50, imageBase64.length())));
+            System.out.println("[DEBUG] PNG header check: " + (imageBytes[0] == (byte)0x89 && imageBytes[1] == 'P' && imageBytes[2] == 'N' && imageBytes[3] == 'G'));
             System.out.println("[ReCaptchaSolver] Captured challenge image (" + imageBytes.length + " bytes)");
 
             // Send to AutoSolve AI

@@ -810,12 +810,12 @@ public class Page {
      *
      * <p>The returned bounding box is relative to the iframe's origin, not the page.</p>
      *
-     * @param frameId  the CDP frameId of the iframe
-     * @param selector CSS selector for the element within the iframe
+     * @param iframeInfo the iframe info
+     * @param selector   CSS selector for the element within the iframe
      * @return the element's bounding box (iframe-relative), or null if not found
      * @throws TimeoutException if the operation fails
      */
-    public BoundingBox querySelectorInFrame(String frameId, String selector) throws TimeoutException {
+    public BoundingBox querySelectorInFrame(IframeInfo iframeInfo, String selector) throws TimeoutException {
         String script = String.format(
                 "(function() {" +
                         "  var el = document.querySelector(\"%s\");" +
@@ -826,7 +826,7 @@ public class Page {
                 escapeCss(selector)
         );
 
-        String result = evaluateInFrame(frameId, script);
+        String result = evaluateInFrame(iframeInfo, script);
         if (result == null || result.equals("null")) {
             return null;
         }
@@ -916,8 +916,8 @@ public class Page {
      * @throws TimeoutException if the element cannot be found or clicked
      */
     public void clickInFrame(IframeInfo iframeInfo, String selector) throws TimeoutException {
-        // Get element position within iframe
-        BoundingBox elementBox = querySelectorInFrame(iframeInfo.frameId(), selector);
+        // Get element position within iframe - use IframeInfo version
+        BoundingBox elementBox = querySelectorInFrame(iframeInfo, selector);
         if (elementBox == null) {
             throw new TimeoutException("Element not found in iframe: " + selector);
         }
@@ -971,7 +971,7 @@ public class Page {
      */
     public byte[] screenshotElementInFrame(IframeInfo iframeInfo, String selector) throws TimeoutException {
         // Get element position within iframe
-        BoundingBox elementBox = querySelectorInFrame(iframeInfo.frameId(), selector);
+        BoundingBox elementBox = querySelectorInFrame(iframeInfo, selector);
         if (elementBox == null) {
             throw new TimeoutException("Element not found in iframe: " + selector);
         }
@@ -3045,9 +3045,15 @@ public class Page {
         clip.addProperty("height", box.getHeight());
         clip.addProperty("scale", 1);
 
+//        JsonObject params = new JsonObject();
+//        params.addProperty("format", "png");
+//        params.add("clip", clip);
+
         JsonObject params = new JsonObject();
-        params.addProperty("format", "png");
+        params.addProperty("format", "jpeg");  // Changed from "png" to "jpeg"
+        params.addProperty("quality", 90);      // Add quality for JPEG
         params.add("clip", clip);
+
 
         JsonObject result = cdp.send("Page.captureScreenshot", params);
         String data = result.get("data").getAsString();
