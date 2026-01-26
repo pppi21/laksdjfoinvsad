@@ -1,5 +1,6 @@
 package org.nodriver4j.captcha;
 
+import com.google.gson.JsonObject;
 import org.nodriver4j.core.Page;
 import org.nodriver4j.core.Page.IframeInfo;
 import org.nodriver4j.services.AutoSolveAIResponse;
@@ -312,6 +313,20 @@ public final class ReCaptchaSolver {
     private static ClickCheckboxResult clickCheckbox(Page page, SolveOptions options) throws TimeoutException {
         // Check if already solved
         IframeInfo checkboxIframe = page.getIframeInfo(CHECKBOX_IFRAME_SELECTOR, 0);
+
+        // Force the iframe into view and wait
+        page.scrollIntoView(CHECKBOX_IFRAME_SELECTOR);
+        page.sleep(500);
+
+// Try to "touch" the iframe via CDP to force attachment
+        try {
+            JsonObject params = new JsonObject();
+            params.addProperty("frameId", checkboxIframe.frameId());
+            page.cdpClient().send("Page.getFrameTree", null); // Force frame enumeration
+        } catch (Exception e) {
+            // Ignore
+        }
+        page.sleep(200);
 
         if (page.hasClassInFrame(checkboxIframe, CHECKBOX_SELECTOR, SOLVED_CLASS)) {
             return ClickCheckboxResult.ofAlreadySolved();

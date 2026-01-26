@@ -710,6 +710,7 @@ public class Page {
         return result.get("executionContextId").getAsInt();
     }
 
+
     /**
      * Evaluates JavaScript within an iframe's context.
      * Handles both same-origin (via createIsolatedWorld) and cross-origin OOPIFs (via session).
@@ -1042,19 +1043,71 @@ public class Page {
 
     /**
      * Checks if a target URL matches an iframe src URL.
+     * Compares base path and key query parameters to distinguish between
+     * multiple similar iframes (e.g., multiple reCAPTCHA instances).
      */
     private boolean urlMatchesTarget(String iframeSrc, String targetUrl) {
         if (iframeSrc == null || targetUrl == null) return false;
-        // Both should be from same origin and path
-        // For reCAPTCHA, both will be google.com/recaptcha/...
+
         try {
-            // Extract origin + path (ignore query params which may differ)
-            String src1 = iframeSrc.split("\\?")[0];
-            String src2 = targetUrl.split("\\?")[0];
-            return src1.equals(src2);
+            // Parse both URLs
+            java.net.URI srcUri = java.net.URI.create(iframeSrc);
+            java.net.URI targetUri = java.net.URI.create(targetUrl);
+
+            // Compare scheme, host, and path (must match exactly)
+            if (!java.util.Objects.equals(srcUri.getScheme(), targetUri.getScheme()) ||
+                    !java.util.Objects.equals(srcUri.getHost(), targetUri.getHost()) ||
+                    !java.util.Objects.equals(srcUri.getPath(), targetUri.getPath())) {
+                return false;
+            }
+
+            // Parse query parameters
+            java.util.Map<String, String> srcParams = parseQueryParams(srcUri.getQuery());
+            java.util.Map<String, String> targetParams = parseQueryParams(targetUri.getQuery());
+
+            // For reCAPTCHA and similar services, match on key identifying parameters
+            // 'k' = site key (unique per reCAPTCHA instance)
+            // 'size' = normal vs invisible
+            String[] keyParams = {"k", "size"};
+
+            for (String param : keyParams) {
+                String srcValue = srcParams.get(param);
+                String targetValue = targetParams.get(param);
+
+                // If the source URL has this param, target must match
+                if (srcValue != null && !srcValue.equals(targetValue)) {
+                    return false;
+                }
+            }
+
+            return true;
+
         } catch (Exception e) {
+            // Fallback to simple comparison if URL parsing fails
             return iframeSrc.equals(targetUrl);
         }
+    }
+
+    /**
+     * Parses query string into a map of key-value pairs.
+     */
+    private java.util.Map<String, String> parseQueryParams(String query) {
+        java.util.Map<String, String> params = new java.util.HashMap<>();
+
+        if (query == null || query.isBlank()) {
+            return params;
+        }
+
+        for (String pair : query.split("&")) {
+            int idx = pair.indexOf('=');
+            if (idx > 0) {
+                String key = pair.substring(0, idx);
+                String value = idx < pair.length() - 1 ? pair.substring(idx + 1) : "";
+                params.put(key, value);
+            }
+        }
+
+        return params;
     }
 
     /**
