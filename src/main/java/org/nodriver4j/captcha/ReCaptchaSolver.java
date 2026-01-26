@@ -2,19 +2,15 @@ package org.nodriver4j.captcha;
 
 import org.nodriver4j.core.Page;
 import org.nodriver4j.core.Page.IframeInfo;
-import org.nodriver4j.math.BoundingBox;
 import org.nodriver4j.services.AutoSolveAIResponse;
 import org.nodriver4j.services.AutoSolveAIService;
 import org.nodriver4j.services.exceptions.AutoSolveAIException;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
 
 /**
  * Static utility class for solving reCAPTCHA v2 image challenges.
@@ -24,6 +20,7 @@ import java.util.concurrent.TimeoutException;
  *   <li>Click the "I'm not a robot" checkbox</li>
  *   <li>Wait for the image challenge to appear</li>
  *   <li>Extract the challenge description</li>
+ *   <li>Detect grid size (3x3 or 4x4)</li>
  *   <li>Screenshot the image grid</li>
  *   <li>Send to AutoSolve AI for solving</li>
  *   <li>Click the indicated tiles</li>
@@ -53,6 +50,7 @@ import java.util.concurrent.TimeoutException;
  *
  * @see AutoSolveAIService
  * @see AutoSolveAIResponse
+ * @see GridSize
  */
 public final class ReCaptchaSolver {
 
@@ -77,7 +75,14 @@ public final class ReCaptchaSolver {
     private static final String VERIFY_BUTTON_SELECTOR = "#recaptcha-verify-button";
 
     /** Tile selector pattern (use String.format with tile ID 0-15) */
-    private static final String TILE_SELECTOR_PATTERN = "td#%d";
+    private static final String TILE_SELECTOR_PATTERN = "td#%s";
+
+    /** Selector for counting tiles to detect grid size */
+    private static final String TILE_COUNT_SELECTOR = "#rc-imageselect-target > table > tbody td";
+
+    // Add this constant near the other selectors
+    /** Selector for the challenge image element (any tile's image works - they all share the same src) */
+    private static final String CHALLENGE_IMAGE_ELEMENT_SELECTOR = "#rc-imageselect-target img";
 
     // ==================== Status Classes ====================
 
@@ -254,11 +259,49 @@ public final class ReCaptchaSolver {
     public static boolean isSolved(Page page) {
         try {
             IframeInfo checkboxIframe = page.getIframeInfo(CHECKBOX_IFRAME_SELECTOR, 0);
-            return page.hasClassInFrame(checkboxIframe, CHECKBOX_SELECTOR, SOLVED_CLASS)
-;
+            return page.hasClassInFrame(checkboxIframe, CHECKBOX_SELECTOR, SOLVED_CLASS);
         } catch (TimeoutException e) {
             return false;
         }
+    }
+
+    // ==================== Grid Detection ====================
+
+    /**
+     * Detects the grid size of the current reCAPTCHA challenge.
+     *
+     * <p>This method counts the number of td elements in the challenge grid table
+     * to determine whether it's a 3x3 (9 tiles) or 4x4 (16 tiles) challenge.</p>
+     *
+     * @param page           the Page containing the reCAPTCHA
+     * @param challengeIframe the challenge iframe info
+     * @return the detected GridSize
+     * @throws TimeoutException if the detection script fails
+     * @throws IllegalArgumentException if the tile count is not 9 or 16
+     */
+    private static GridSize detectGridSize(Page page, IframeInfo challengeIframe) throws TimeoutException {
+        String script = String.format(
+                "document.querySelectorAll(\"%s\").length",
+                TILE_COUNT_SELECTOR.replace("\"", "\\\"")
+        );
+
+        String result = page.evaluateInFrame(challengeIframe, script);
+
+        if (result == null || result.isBlank()) {
+            throw new TimeoutException("Failed to detect grid size: no result from tile count query");
+        }
+
+        int tileCount;
+        try {
+            tileCount = Integer.parseInt(result.trim());
+        } catch (NumberFormatException e) {
+            throw new TimeoutException("Failed to detect grid size: invalid tile count '" + result + "'");
+        }
+
+        GridSize gridSize = GridSize.fromTileCount(tileCount);
+        System.out.println("[ReCaptchaSolver] Detected grid size: " + gridSize);
+
+        return gridSize;
     }
 
     // ==================== Internal Flow Methods ====================
@@ -270,8 +313,7 @@ public final class ReCaptchaSolver {
         // Check if already solved
         IframeInfo checkboxIframe = page.getIframeInfo(CHECKBOX_IFRAME_SELECTOR, 0);
 
-        if (page.hasClassInFrame(checkboxIframe, CHECKBOX_SELECTOR, SOLVED_CLASS)
-) {
+        if (page.hasClassInFrame(checkboxIframe, CHECKBOX_SELECTOR, SOLVED_CLASS)) {
             return ClickCheckboxResult.ofAlreadySolved();
         }
 
@@ -286,8 +328,7 @@ public final class ReCaptchaSolver {
         checkboxIframe = page.getIframeInfo(CHECKBOX_IFRAME_SELECTOR, 0);
 
         // Check if solved without challenge (sometimes happens)
-        if (page.hasClassInFrame(checkboxIframe, CHECKBOX_SELECTOR, SOLVED_CLASS)
-) {
+        if (page.hasClassInFrame(checkboxIframe, CHECKBOX_SELECTOR, SOLVED_CLASS)) {
             return ClickCheckboxResult.ofSolvedWithoutChallenge();
         }
 
@@ -311,6 +352,9 @@ public final class ReCaptchaSolver {
             // Get challenge iframe
             IframeInfo challengeIframe = page.getIframeInfo(CHALLENGE_IFRAME_SELECTOR);
 
+            // Detect grid size before proceeding
+            GridSize gridSize = detectGridSize(page, challengeIframe);
+
             // Extract description
             String description = page.getTextInFrame(challengeIframe, DESCRIPTION_SELECTOR);
             if (description == null || description.isBlank()) {
@@ -318,19 +362,29 @@ public final class ReCaptchaSolver {
             }
             System.out.println("[ReCaptchaSolver] Challenge description: " + description);
 
-            byte[] imageBytes = page.screenshotElementInFrame(challengeIframe, CHALLENGE_IMAGE_SELECTOR);
-            String imageBase64 = Base64.getEncoder().encodeToString(imageBytes);
+            // Fetch the challenge image at native resolution
+            Page.ImageData imageData;
+            try {
+                imageData = page.fetchImageInFrame(challengeIframe, CHALLENGE_IMAGE_ELEMENT_SELECTOR);
+            } catch (TimeoutException e) {
+                return RoundResult.error("Failed to fetch challenge image: " + e.getMessage());
+            }
 
-            System.out.println("[DEBUG] Image bytes length: " + imageBytes.length);
-            System.out.println("[DEBUG] Base64 length: " + imageBase64.length());
-            System.out.println("[DEBUG] Base64 starts with: " + imageBase64.substring(0, Math.min(50, imageBase64.length())));
-            System.out.println("[DEBUG] PNG header check: " + (imageBytes[0] == (byte)0x89 && imageBytes[1] == 'P' && imageBytes[2] == 'N' && imageBytes[3] == 'G'));
-            System.out.println("[ReCaptchaSolver] Captured challenge image (" + imageBytes.length + " bytes)");
+            // Validate image dimensions match expected grid size
+            int expectedSize = gridSize.expectedImageSize();
+            if (!imageData.hasExpectedSize(expectedSize)) {
+                return RoundResult.error(String.format(
+                        "Image dimensions mismatch: expected %dx%d for %s grid, got %s",
+                        expectedSize, expectedSize, gridSize, imageData.dimensionsString()));
+            }
+
+            System.out.println("[ReCaptchaSolver] Fetched challenge image: " + imageData.dimensionsString() +
+                    " (" + imageData.mimeType() + ", " + imageData.base64().length() + " chars base64)");
 
             // Send to AutoSolve AI
             AutoSolveAIResponse aiResponse;
             try {
-                aiResponse = aiService.solve(description, imageBase64);
+                aiResponse = aiService.solve(description, imageData.base64());
             } catch (AutoSolveAIException e) {
                 return RoundResult.error("AutoSolve AI error: " + e.getMessage());
             }
@@ -344,7 +398,7 @@ public final class ReCaptchaSolver {
             }
 
             // Click the indicated tiles
-            int tilesClicked = clickTiles(page, challengeIframe, aiResponse, options);
+            int tilesClicked = clickTiles(page, challengeIframe, aiResponse, gridSize, options);
             System.out.println("[ReCaptchaSolver] Clicked " + tilesClicked + " tiles");
 
             // Click verify button
@@ -367,12 +421,14 @@ public final class ReCaptchaSolver {
     /**
      * Clicks all tiles indicated by the AI response.
      */
-    private static int clickTiles(Page page, IframeInfo challengeIframe, AutoSolveAIResponse response, SolveOptions options) throws TimeoutException {
+    private static int clickTiles(Page page, IframeInfo challengeIframe, AutoSolveAIResponse response,
+                                  GridSize gridSize, SolveOptions options) throws TimeoutException {
         int clickedCount = 0;
+        int totalTiles = gridSize.tileCount();
 
-        for (int tileId = 0; tileId < 16; tileId++) {
-            if (response.shouldSelectTileById(tileId)) {
-                String tileSelector = String.format(TILE_SELECTOR_PATTERN, tileId);
+        for (int tileId = 0; tileId < totalTiles; tileId++) {
+            if (response.shouldSelectTileById(tileId, gridSize)) {
+                String tileSelector = String.format(TILE_SELECTOR_PATTERN, escapeForCss(tileId));
 
                 // Verify tile exists before clicking
                 if (page.existsInFrame(challengeIframe, tileSelector)) {
@@ -397,8 +453,7 @@ public final class ReCaptchaSolver {
         IframeInfo checkboxIframe = page.getIframeInfo(CHECKBOX_IFRAME_SELECTOR, 0);
 
         // Check if solved
-        if (page.hasClassInFrame(checkboxIframe, CHECKBOX_SELECTOR, SOLVED_CLASS)
-) {
+        if (page.hasClassInFrame(checkboxIframe, CHECKBOX_SELECTOR, SOLVED_CLASS)) {
             return RoundResult.solved();
         }
 
@@ -415,6 +470,14 @@ public final class ReCaptchaSolver {
         // Challenge gone but not solved - unusual state
         return RoundResult.error("Challenge disappeared but captcha not solved");
     }
+
+    private static String escapeForCss(int id) {
+        return String.valueOf(id)
+                .chars()
+                .mapToObj(c -> String.format("\\%x", c))
+                .collect(Collectors.joining());
+    }
+
 
     // ==================== Result Types ====================
 
@@ -515,7 +578,6 @@ public final class ReCaptchaSolver {
     }
 
     private record ClickCheckboxResult(boolean alreadySolved, boolean solvedWithoutChallenge, boolean challengeAppeared) {
-        // Factory methods use different names to avoid shadowing auto-generated accessors
         static ClickCheckboxResult ofAlreadySolved() {
             return new ClickCheckboxResult(true, false, false);
         }

@@ -2997,6 +2997,171 @@ public class Page {
         return frameTree();
     }
 
+    // ==================== Image Extraction ====================
+
+    /**
+     * Data container for extracted image information.
+     *
+     * @param base64   the image data as base64 string (no data URL prefix)
+     * @param width    the natural/intrinsic width of the image in pixels
+     * @param height   the natural/intrinsic height of the image in pixels
+     * @param mimeType the MIME type of the image (e.g., "image/jpeg", "image/png")
+     */
+    public record ImageData(String base64, int width, int height, String mimeType) {
+
+        /**
+         * Checks if the image has the expected square dimensions.
+         *
+         * @param expectedSize the expected width and height in pixels
+         * @return true if both width and height match the expected size
+         */
+        public boolean hasExpectedSize(int expectedSize) {
+            return width == expectedSize && height == expectedSize;
+        }
+
+        /**
+         * Returns the image size as a formatted string (e.g., "300x300").
+         *
+         * @return the dimensions string
+         */
+        public String dimensionsString() {
+            return width + "x" + height;
+        }
+    }
+
+    /**
+     * Fetches an image from within an iframe and returns it as base64 data.
+     *
+     * <p>This method uses the browser's fetch API to retrieve the image at its
+     * native/intrinsic resolution, bypassing any CSS scaling applied in the DOM.</p>
+     *
+     * <p>The image's natural dimensions are read from the img element's
+     * {@code naturalWidth} and {@code naturalHeight} properties.</p>
+     *
+     * @param iframeInfo  the iframe containing the image
+     * @param imgSelector CSS selector for the img element within the iframe
+     * @return ImageData containing the base64 data and dimensions
+     * @throws TimeoutException if the image cannot be found or fetched
+     */
+    public ImageData fetchImageInFrame(IframeInfo iframeInfo, String imgSelector) throws TimeoutException {
+        String script = buildFetchImageScript(imgSelector);
+        String result = evaluateInFrame(iframeInfo, script);
+
+        if (result == null || result.isBlank()) {
+            throw new TimeoutException("Failed to fetch image: no result from script");
+        }
+
+        return parseImageDataResult(result);
+    }
+
+    /**
+     * Fetches an image from the main page and returns it as base64 data.
+     *
+     * @param imgSelector CSS selector for the img element
+     * @return ImageData containing the base64 data and dimensions
+     * @throws TimeoutException if the image cannot be found or fetched
+     */
+    public ImageData fetchImage(String imgSelector) throws TimeoutException {
+        ensureRuntimeEnabled();
+
+        String script = buildFetchImageScript(imgSelector);
+        String result = evaluate(script);
+
+        if (result == null || result.isBlank()) {
+            throw new TimeoutException("Failed to fetch image: no result from script");
+        }
+
+        return parseImageDataResult(result);
+    }
+
+    /**
+     * Builds the JavaScript to fetch an image and return its data.
+     */
+    private String buildFetchImageScript(String imgSelector) {
+        return String.format("""
+        (async function() {
+            var img = document.querySelector("%s");
+            if (!img) {
+                return JSON.stringify({error: "Image element not found"});
+            }
+            
+            // Wait for image to load if not complete
+            if (!img.complete) {
+                await new Promise((resolve, reject) => {
+                    img.onload = resolve;
+                    img.onerror = () => reject(new Error("Image failed to load"));
+                    // Timeout after 10 seconds
+                    setTimeout(() => reject(new Error("Image load timeout")), 10000);
+                });
+            }
+            
+            var naturalWidth = img.naturalWidth;
+            var naturalHeight = img.naturalHeight;
+            
+            if (naturalWidth === 0 || naturalHeight === 0) {
+                return JSON.stringify({error: "Image has zero dimensions"});
+            }
+            
+            try {
+                var response = await fetch(img.src, {credentials: 'include'});
+                if (!response.ok) {
+                    return JSON.stringify({error: "Fetch failed: " + response.status});
+                }
+                
+                var blob = await response.blob();
+                var mimeType = blob.type || "image/unknown";
+                
+                return new Promise((resolve) => {
+                    var reader = new FileReader();
+                    reader.onloadend = function() {
+                        var base64 = reader.result.split(',')[1];
+                        resolve(JSON.stringify({
+                            base64: base64,
+                            width: naturalWidth,
+                            height: naturalHeight,
+                            mimeType: mimeType
+                        }));
+                    };
+                    reader.onerror = function() {
+                        resolve(JSON.stringify({error: "FileReader error"}));
+                    };
+                    reader.readAsDataURL(blob);
+                });
+            } catch (e) {
+                return JSON.stringify({error: "Fetch error: " + e.message});
+            }
+        })();
+        """, escapeCss(imgSelector));
+    }
+
+    /**
+     * Parses the JSON result from the fetch image script.
+     */
+    private ImageData parseImageDataResult(String jsonResult) throws TimeoutException {
+        try {
+            JsonObject json = JsonParser.parseString(jsonResult).getAsJsonObject();
+
+            // Check for error
+            if (json.has("error")) {
+                throw new TimeoutException("Failed to fetch image: " + json.get("error").getAsString());
+            }
+
+            // Extract fields
+            String base64 = json.get("base64").getAsString();
+            int width = json.get("width").getAsInt();
+            int height = json.get("height").getAsInt();
+            String mimeType = json.has("mimeType") ? json.get("mimeType").getAsString() : "image/unknown";
+
+            return new ImageData(base64, width, height, mimeType);
+
+        } catch (Exception e) {
+            if (e instanceof TimeoutException) {
+                throw (TimeoutException) e;
+            }
+            throw new TimeoutException("Failed to parse image data: " + e.getMessage());
+        }
+    }
+
     // ==================== Screenshots ====================
 
     /**
@@ -3045,15 +3210,9 @@ public class Page {
         clip.addProperty("height", box.getHeight());
         clip.addProperty("scale", 1);
 
-//        JsonObject params = new JsonObject();
-//        params.addProperty("format", "png");
-//        params.add("clip", clip);
-
         JsonObject params = new JsonObject();
-        params.addProperty("format", "jpeg");  // Changed from "png" to "jpeg"
-        params.addProperty("quality", 90);      // Add quality for JPEG
+        params.addProperty("format", "png");
         params.add("clip", clip);
-
 
         JsonObject result = cdp.send("Page.captureScreenshot", params);
         String data = result.get("data").getAsString();
