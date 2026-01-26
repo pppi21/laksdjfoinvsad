@@ -85,6 +85,9 @@ public final class ReCaptchaSolver {
     /** Selector for the challenge image element (any tile's image works - they all share the same src) */
     private static final String CHALLENGE_IMAGE_ELEMENT_SELECTOR = "#rc-imageselect-target img";
 
+    /** Selector pattern for individual tile image (use String.format with tile ID) */
+    private static final String TILE_IMAGE_SELECTOR_PATTERN = "td#%s > div > div > img";
+
     // ==================== Status Classes ====================
 
     /** Class present when captcha is solved */
@@ -112,6 +115,15 @@ public final class ReCaptchaSolver {
 
     /** Maximum full attempts (from checkbox) before giving up */
     private static final int MAX_FULL_ATTEMPTS = 3;
+
+    /** Maximum iterations for fade-away tile processing */
+    private static final int MAX_FADE_AWAY_ITERATIONS = 20;
+
+    /** Buffer time after transition completes before fetching replacement image */
+    private static final int FADE_AWAY_BUFFER_MS = 1000;
+
+    /** Delay after clicking a replacement tile before checking for new fade */
+    private static final int POST_REPLACEMENT_CLICK_DELAY_MS = 200;
 
     // ==================== Private Constructor ====================
 
@@ -413,8 +425,21 @@ public final class ReCaptchaSolver {
             }
 
             // Click the indicated tiles
-            int tilesClicked = clickTiles(page, challengeIframe, aiResponse, gridSize, options);
-            System.out.println("[ReCaptchaSolver] Clicked " + tilesClicked + " tiles");
+            List<Integer> clickedTileIds = clickTiles(page, challengeIframe, aiResponse, gridSize, options);
+            System.out.println("[ReCaptchaSolver] Clicked " + clickedTileIds.size() + " tiles");
+
+            // Check for fade-away captcha (only applies to 3x3 grids)
+            if (gridSize == GridSize.THREE_BY_THREE && !clickedTileIds.isEmpty()) {
+                // Small delay to let styles apply
+                page.sleep(200);
+
+                // Re-fetch iframe info in case position changed
+                challengeIframe = page.getIframeInfo(CHALLENGE_IFRAME_SELECTOR);
+
+                if (isFadeAwayCaptcha(page, challengeIframe, clickedTileIds)) {
+                    handleFadeAwayTiles(page, challengeIframe, clickedTileIds, description, aiService);
+                }
+            }
 
             // Click verify button
             System.out.println("[ReCaptchaSolver] Clicking verify button...");
@@ -435,10 +460,12 @@ public final class ReCaptchaSolver {
 
     /**
      * Clicks all tiles indicated by the AI response.
+     *
+     * @return list of tile IDs that were clicked
      */
-    private static int clickTiles(Page page, IframeInfo challengeIframe, AutoSolveAIResponse response,
-                                  GridSize gridSize, SolveOptions options) throws TimeoutException {
-        int clickedCount = 0;
+    private static List<Integer> clickTiles(Page page, IframeInfo challengeIframe, AutoSolveAIResponse response,
+                                            GridSize gridSize, SolveOptions options) throws TimeoutException {
+        List<Integer> clickedTileIds = new ArrayList<>();
         int totalTiles = gridSize.tileCount();
 
         for (int tileId = 0; tileId < totalTiles; tileId++) {
@@ -448,7 +475,7 @@ public final class ReCaptchaSolver {
                 // Verify tile exists before clicking
                 if (page.existsInFrame(challengeIframe, tileSelector)) {
                     page.clickInFrame(challengeIframe, tileSelector);
-                    clickedCount++;
+                    clickedTileIds.add(tileId);
 
                     // Small delay between tile clicks
                     page.sleep(POST_TILE_CLICK_DELAY_MS);
@@ -458,7 +485,229 @@ public final class ReCaptchaSolver {
             }
         }
 
-        return clickedCount;
+        return clickedTileIds;
+    }
+
+    /**
+     * Checks if any of the clicked tiles have a fade-away transition style.
+     *
+     * @param page            the Page
+     * @param challengeIframe the challenge iframe
+     * @param clickedTileIds  list of tile IDs that were clicked
+     * @return true if at least one tile has a transition style
+     */
+    private static boolean isFadeAwayCaptcha(Page page, IframeInfo challengeIframe,
+                                             List<Integer> clickedTileIds) throws TimeoutException {
+        for (int tileId : clickedTileIds) {
+            String style = getTileStyle(page, challengeIframe, tileId);
+            if (style != null && style.contains("transition")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Gets the style attribute of a tile element.
+     *
+     * @param page            the Page
+     * @param challengeIframe the challenge iframe
+     * @param tileId          the tile ID
+     * @return the style attribute value, or null if not present
+     */
+    private static String getTileStyle(Page page, IframeInfo challengeIframe, int tileId) throws TimeoutException {
+        String tileSelector = String.format(TILE_SELECTOR_PATTERN, escapeForCss(tileId));
+        String escapedSelector = tileSelector.replace("\\", "\\\\").replace("\"", "\\\"");
+        String script = String.format(
+                "(function() {" +
+                        "  var el = document.querySelector(\"%s\");" +
+                        "  return el ? el.getAttribute('style') : null;" +
+                        "})()",
+                escapedSelector
+        );
+        return page.evaluateInFrame(challengeIframe, script);
+    }
+
+    /**
+     * Parses the transition duration from a style attribute.
+     *
+     * <p>Looks for patterns like:</p>
+     * <ul>
+     *   <li>"transition: opacity 4s;" → 4000ms</li>
+     *   <li>"transition: opacity 500ms;" → 500ms</li>
+     *   <li>"opacity 3.5s ease" → 3500ms</li>
+     * </ul>
+     *
+     * @param style the style attribute value
+     * @return duration in milliseconds, or -1 if not found
+     */
+    private static long parseTransitionDuration(String style) {
+        if (style == null || style.isBlank()) {
+            return -1;
+        }
+
+        // Pattern matches "opacity Xs" or "opacity Xms" where X is a number (possibly decimal)
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
+                "opacity\\s+([\\d.]+)(s|ms)",
+                java.util.regex.Pattern.CASE_INSENSITIVE
+        );
+        java.util.regex.Matcher matcher = pattern.matcher(style);
+
+        if (matcher.find()) {
+            try {
+                double value = Double.parseDouble(matcher.group(1));
+                String unit = matcher.group(2).toLowerCase();
+                return (long) (unit.equals("s") ? value * 1000 : value);
+            } catch (NumberFormatException e) {
+                return -1;
+            }
+        }
+
+        return -1;
+    }
+
+    /**
+     * Fetches the replacement image for a single tile.
+     *
+     * @param page            the Page
+     * @param challengeIframe the challenge iframe
+     * @param tileId          the tile ID
+     * @return ImageData for the 100x100 replacement tile
+     * @throws TimeoutException if the image cannot be fetched
+     */
+    private static Page.ImageData fetchReplacementTileImage(Page page, IframeInfo challengeIframe,
+                                                            int tileId) throws TimeoutException {
+        String imgSelector = String.format(TILE_IMAGE_SELECTOR_PATTERN, escapeForCss(tileId));
+        return page.fetchImageInFrame(challengeIframe, imgSelector);
+    }
+
+    /**
+     * Handles fade-away tile processing for reCAPTCHA challenges.
+     *
+     * <p>This method processes tiles that fade away and are replaced with new images.
+     * Each replacement tile is sent individually to the AI service for classification.</p>
+     *
+     * @param page              the Page
+     * @param challengeIframe   the challenge iframe
+     * @param initialClickedIds list of initially clicked tile IDs
+     * @param description       the challenge description (e.g., "Select all images with traffic lights")
+     * @param aiService         the AutoSolve AI service
+     * @return true if processing completed successfully (regardless of clicks made)
+     */
+    private static boolean handleFadeAwayTiles(Page page, IframeInfo challengeIframe,
+                                               List<Integer> initialClickedIds, String description,
+                                               AutoSolveAIService aiService) {
+        System.out.println("[ReCaptchaSolver] Detected fade-away captcha, processing replacement tiles...");
+
+        java.util.PriorityQueue<PendingTile> pendingQueue = new java.util.PriorityQueue<>();
+        int totalIterations = 0;
+
+        try {
+            // Initialize queue with initially clicked tiles that have transition styles
+            long now = System.currentTimeMillis();
+            for (int tileId : initialClickedIds) {
+                String style = getTileStyle(page, challengeIframe, tileId);
+                long duration = parseTransitionDuration(style);
+
+                if (duration > 0) {
+                    long readyAt = now + duration + FADE_AWAY_BUFFER_MS;
+                    pendingQueue.add(new PendingTile(tileId, readyAt));
+                    System.out.println("[ReCaptchaSolver] Tile " + tileId + " fading, ready in " +
+                            (duration + FADE_AWAY_BUFFER_MS) + "ms");
+                }
+            }
+
+            // Process tiles as they become ready
+            while (!pendingQueue.isEmpty() && totalIterations < MAX_FADE_AWAY_ITERATIONS) {
+                totalIterations++;
+                PendingTile pending = pendingQueue.poll();
+
+                // Wait until tile is ready
+                long waitTime = pending.readyAtSystemMs() - System.currentTimeMillis();
+                if (waitTime > 0) {
+                    System.out.println("[ReCaptchaSolver] Waiting " + waitTime + "ms for tile " + pending.tileId());
+                    page.sleep(waitTime);
+                }
+
+                System.out.println("[ReCaptchaSolver] Processing replacement tile " + pending.tileId() +
+                        " (iteration " + totalIterations + "/" + MAX_FADE_AWAY_ITERATIONS + ")");
+
+                // Fetch the replacement image
+                Page.ImageData imageData;
+                try {
+                    imageData = fetchReplacementTileImage(page, challengeIframe, pending.tileId());
+                } catch (TimeoutException e) {
+                    System.err.println("[ReCaptchaSolver] Failed to fetch replacement image for tile " +
+                            pending.tileId() + ": " + e.getMessage());
+                    continue;
+                }
+
+                // Validate it's a 100x100 replacement tile
+                if (!imageData.hasExpectedSize(GridSize.ONE_BY_ONE.expectedImageSize())) {
+                    System.err.println("[ReCaptchaSolver] Unexpected replacement image size: " +
+                            imageData.dimensionsString() + " (expected 100x100)");
+                    continue;
+                }
+
+                // Send to AI service
+                AutoSolveAIResponse aiResponse;
+                try {
+                    aiResponse = aiService.solve(description, imageData.base64());
+                    System.out.println("[ReCaptchaSolver] AI response for tile " + pending.tileId() +
+                            ": " + aiResponse);
+                } catch (AutoSolveAIException e) {
+                    System.err.println("[ReCaptchaSolver] AI error for tile " + pending.tileId() +
+                            ": " + e.getMessage());
+                    continue;
+                }
+
+                // Check if we should click this tile
+                // For 1x1, the grid is boolean[1][1], so check squares[0][0]
+                boolean shouldClick = aiResponse.success() &&
+                        aiResponse.hasValidGrid() &&
+                        aiResponse.shouldSelectTile(0, 0);
+
+                if (shouldClick) {
+                    System.out.println("[ReCaptchaSolver] Clicking replacement tile " + pending.tileId());
+                    String tileSelector = String.format(TILE_SELECTOR_PATTERN, escapeForCss(pending.tileId()));
+
+                    try {
+                        page.clickInFrame(challengeIframe, tileSelector);
+                    } catch (TimeoutException e) {
+                        System.err.println("[ReCaptchaSolver] Failed to click tile " + pending.tileId() +
+                                ": " + e.getMessage());
+                        continue;
+                    }
+
+                    // Wait briefly then check if this click triggered another fade
+                    page.sleep(POST_REPLACEMENT_CLICK_DELAY_MS);
+
+                    String newStyle = getTileStyle(page, challengeIframe, pending.tileId());
+                    long newDuration = parseTransitionDuration(newStyle);
+
+                    if (newDuration > 0) {
+                        long newReadyAt = System.currentTimeMillis() + newDuration + FADE_AWAY_BUFFER_MS;
+                        pendingQueue.add(new PendingTile(pending.tileId(), newReadyAt));
+                        System.out.println("[ReCaptchaSolver] Tile " + pending.tileId() +
+                                " fading again, ready in " + (newDuration + FADE_AWAY_BUFFER_MS) + "ms");
+                    }
+                } else {
+                    System.out.println("[ReCaptchaSolver] Skipping tile " + pending.tileId() + " (AI says no match)");
+                }
+            }
+
+            if (totalIterations >= MAX_FADE_AWAY_ITERATIONS) {
+                System.err.println("[ReCaptchaSolver] Warning: Hit max fade-away iterations (" +
+                        MAX_FADE_AWAY_ITERATIONS + ")");
+            }
+
+            System.out.println("[ReCaptchaSolver] Fade-away processing complete after " + totalIterations + " iterations");
+            return true;
+
+        } catch (TimeoutException e) {
+            System.err.println("[ReCaptchaSolver] Timeout during fade-away processing: " + e.getMessage());
+            return false;
+        }
     }
 
     /**
@@ -562,6 +811,19 @@ public final class ReCaptchaSolver {
             public SolveOptions build() {
                 return new SolveOptions(maxRounds, maxFullAttempts, elementTimeoutMs);
             }
+        }
+    }
+
+    /**
+     * Represents a tile that is fading away and will have a replacement image.
+     *
+     * @param tileId          the tile ID (0-15 for 4x4, 0-8 for 3x3)
+     * @param readyAtSystemMs system time when the replacement image should be ready
+     */
+    private record PendingTile(int tileId, long readyAtSystemMs) implements Comparable<PendingTile> {
+        @Override
+        public int compareTo(PendingTile other) {
+            return Long.compare(this.readyAtSystemMs, other.readyAtSystemMs);
         }
     }
 

@@ -3,10 +3,11 @@ package org.nodriver4j.captcha;
 /**
  * Represents the grid size of a reCAPTCHA v2 image challenge.
  *
- * <p>reCAPTCHA v2 presents challenges in two formats:</p>
+ * <p>reCAPTCHA v2 presents challenges in several formats:</p>
  * <ul>
  *   <li><strong>3x3 grid</strong>: 9 tiles, single composite image at 300x300 pixels</li>
  *   <li><strong>4x4 grid</strong>: 16 tiles, single composite image at 450x450 pixels</li>
+ *   <li><strong>1x1 tile</strong>: Single replacement tile at 100x100 pixels (fade-away challenges)</li>
  * </ul>
  *
  * <p>This enum provides utility methods for converting between tile IDs (0-8 or 0-15)
@@ -15,6 +16,12 @@ package org.nodriver4j.captcha;
  * @see ReCaptchaSolver
  */
 public enum GridSize {
+
+    /**
+     * 1x1 replacement tile used in fade-away challenges.
+     * Single tile at 100x100 pixels.
+     */
+    ONE_BY_ONE(1, 100),
 
     /**
      * 3x3 grid challenge with 9 tiles.
@@ -39,7 +46,7 @@ public enum GridSize {
     }
 
     /**
-     * Returns the grid dimension (3 or 4).
+     * Returns the grid dimension (1, 3, or 4).
      *
      * @return the dimension
      */
@@ -50,7 +57,7 @@ public enum GridSize {
     /**
      * Returns the total number of tiles in this grid.
      *
-     * @return 9 for 3x3, 16 for 4x4
+     * @return 1 for 1x1, 9 for 3x3, 16 for 4x4
      */
     public int tileCount() {
         return dimension * dimension;
@@ -61,11 +68,12 @@ public enum GridSize {
      *
      * <p>reCAPTCHA serves images at specific sizes:</p>
      * <ul>
+     *   <li>1x1 replacement tiles: 100x100 pixels</li>
      *   <li>3x3 challenges: 300x300 pixels</li>
      *   <li>4x4 challenges: 450x450 pixels</li>
      * </ul>
      *
-     * @return 300 for 3x3, 450 for 4x4
+     * @return 100 for 1x1, 300 for 3x3, 450 for 4x4
      */
     public int expectedImageSize() {
         return imageSize;
@@ -131,32 +139,34 @@ public enum GridSize {
     /**
      * Determines the grid size from the number of tiles.
      *
-     * @param tileCount the number of tiles (9 or 16)
+     * @param tileCount the number of tiles (1, 9, or 16)
      * @return the corresponding GridSize
-     * @throws IllegalArgumentException if tileCount is not 9 or 16
+     * @throws IllegalArgumentException if tileCount is not 1, 9, or 16
      */
     public static GridSize fromTileCount(int tileCount) {
         return switch (tileCount) {
+            case 1 -> ONE_BY_ONE;
             case 9 -> THREE_BY_THREE;
             case 16 -> FOUR_BY_FOUR;
             default -> throw new IllegalArgumentException(
-                    "Unsupported tile count: " + tileCount + ". Expected 9 (3x3) or 16 (4x4).");
+                    "Unsupported tile count: " + tileCount + ". Expected 1, 9 (3x3), or 16 (4x4).");
         };
     }
 
     /**
      * Determines the grid size from the grid dimension.
      *
-     * @param dimension the grid dimension (3 or 4)
+     * @param dimension the grid dimension (1, 3, or 4)
      * @return the corresponding GridSize
-     * @throws IllegalArgumentException if dimension is not 3 or 4
+     * @throws IllegalArgumentException if dimension is not 1, 3, or 4
      */
     public static GridSize fromDimension(int dimension) {
         return switch (dimension) {
+            case 1 -> ONE_BY_ONE;
             case 3 -> THREE_BY_THREE;
             case 4 -> FOUR_BY_FOUR;
             default -> throw new IllegalArgumentException(
-                    "Unsupported grid dimension: " + dimension + ". Expected 3 or 4.");
+                    "Unsupported grid dimension: " + dimension + ". Expected 1, 3, or 4.");
         };
     }
 
