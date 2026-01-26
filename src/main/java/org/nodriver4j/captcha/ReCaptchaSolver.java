@@ -8,7 +8,6 @@ import org.nodriver4j.services.AutoSolveAIService;
 import org.nodriver4j.services.exceptions.AutoSolveAIException;
 
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
@@ -585,7 +584,7 @@ public final class ReCaptchaSolver {
      * Handles fade-away tile processing for reCAPTCHA challenges.
      *
      * <p>This method processes tiles that fade away and are replaced with new images.
-     * Each replacement tile is sent individually to the AI service for classification.</p>
+     * All replacement tiles from a round are sent together in a batch API request.</p>
      *
      * @param page              the Page
      * @param challengeIframe   the challenge iframe
@@ -599,100 +598,107 @@ public final class ReCaptchaSolver {
                                                AutoSolveAIService aiService) {
         System.out.println("[ReCaptchaSolver] Detected fade-away captcha, processing replacement tiles...");
 
-        java.util.PriorityQueue<PendingTile> pendingQueue = new java.util.PriorityQueue<>();
         int totalIterations = 0;
+        List<Integer> pendingTileIds = new ArrayList<>(initialClickedIds);
 
         try {
-            // Initialize queue with initially clicked tiles that have transition styles
-            long now = System.currentTimeMillis();
-            for (int tileId : initialClickedIds) {
-                String style = getTileStyle(page, challengeIframe, tileId);
-                long duration = parseTransitionDuration(style);
-
-                if (duration > 0) {
-                    long readyAt = now + duration + FADE_AWAY_BUFFER_MS;
-                    pendingQueue.add(new PendingTile(tileId, readyAt));
-                    System.out.println("[ReCaptchaSolver] Tile " + tileId + " fading, ready in " +
-                            (duration + FADE_AWAY_BUFFER_MS) + "ms");
-                }
-            }
-
-            // Process tiles as they become ready
-            while (!pendingQueue.isEmpty() && totalIterations < MAX_FADE_AWAY_ITERATIONS) {
+            while (!pendingTileIds.isEmpty() && totalIterations < MAX_FADE_AWAY_ITERATIONS) {
                 totalIterations++;
-                PendingTile pending = pendingQueue.poll();
+                System.out.println("[ReCaptchaSolver] Fade-away round " + totalIterations +
+                        " with " + pendingTileIds.size() + " tiles");
 
-                // Wait until tile is ready
-                long waitTime = pending.readyAtSystemMs() - System.currentTimeMillis();
-                if (waitTime > 0) {
-                    System.out.println("[ReCaptchaSolver] Waiting " + waitTime + "ms for tile " + pending.tileId());
-                    page.sleep(waitTime);
+                // Step 1: Find max transition duration among pending tiles
+                long maxDuration = 0;
+                List<Integer> fadingTileIds = new ArrayList<>();
+
+                for (int tileId : pendingTileIds) {
+                    String style = getTileStyle(page, challengeIframe, tileId);
+                    long duration = parseTransitionDuration(style);
+
+                    if (duration > 0) {
+                        fadingTileIds.add(tileId);
+                        maxDuration = Math.max(maxDuration, duration);
+                        System.out.println("[ReCaptchaSolver] Tile " + tileId + " fading with duration " + duration + "ms");
+                    }
                 }
 
-                System.out.println("[ReCaptchaSolver] Processing replacement tile " + pending.tileId() +
-                        " (iteration " + totalIterations + "/" + MAX_FADE_AWAY_ITERATIONS + ")");
+                if (fadingTileIds.isEmpty()) {
+                    System.out.println("[ReCaptchaSolver] No fading tiles detected, done");
+                    break;
+                }
 
-                // Fetch the replacement image
-                Page.ImageData imageData;
+                // Step 2: Wait for max duration + buffer
+                long waitTime = maxDuration + FADE_AWAY_BUFFER_MS;
+                System.out.println("[ReCaptchaSolver] Waiting " + waitTime + "ms for all tiles to complete...");
+                page.sleep(waitTime);
+
+                // Step 3: Fetch all replacement images
+                List<String> imagesBase64 = new ArrayList<>();
+                List<Integer> fetchedTileIds = new ArrayList<>();
+
+                for (int tileId : fadingTileIds) {
+                    try {
+                        Page.ImageData imageData = fetchReplacementTileImage(page, challengeIframe, tileId);
+
+                        // Validate it's a 100x100 replacement tile
+                        if (!imageData.hasExpectedSize(GridSize.ONE_BY_ONE.expectedImageSize())) {
+                            System.err.println("[ReCaptchaSolver] Unexpected image size for tile " + tileId +
+                                    ": " + imageData.dimensionsString() + " (expected 100x100)");
+                            continue;
+                        }
+
+                        imagesBase64.add(imageData.base64());
+                        fetchedTileIds.add(tileId);
+                        System.out.println("[ReCaptchaSolver] Fetched replacement image for tile " + tileId);
+
+                    } catch (TimeoutException e) {
+                        System.err.println("[ReCaptchaSolver] Failed to fetch image for tile " + tileId +
+                                ": " + e.getMessage());
+                    }
+                }
+
+                if (imagesBase64.isEmpty()) {
+                    System.err.println("[ReCaptchaSolver] No images fetched, stopping fade-away processing");
+                    break;
+                }
+
+                // Step 4: Send batch API request
+                String rawResponse;
                 try {
-                    imageData = fetchReplacementTileImage(page, challengeIframe, pending.tileId());
-                } catch (TimeoutException e) {
-                    System.err.println("[ReCaptchaSolver] Failed to fetch replacement image for tile " +
-                            pending.tileId() + ": " + e.getMessage());
-                    continue;
-                }
-
-                // Validate it's a 100x100 replacement tile
-                if (!imageData.hasExpectedSize(GridSize.ONE_BY_ONE.expectedImageSize())) {
-                    System.err.println("[ReCaptchaSolver] Unexpected replacement image size: " +
-                            imageData.dimensionsString() + " (expected 100x100)");
-                    continue;
-                }
-
-                // Send to AI service
-                AutoSolveAIResponse aiResponse;
-                try {
-                    aiResponse = aiService.solve(description, imageData.base64());
-                    System.out.println("[ReCaptchaSolver] AI response for tile " + pending.tileId() +
-                            ": " + aiResponse);
+                    rawResponse = aiService.solveBatch(description, imagesBase64);
+                    System.out.println("[ReCaptchaSolver] Batch API raw response: " + rawResponse);
                 } catch (AutoSolveAIException e) {
-                    System.err.println("[ReCaptchaSolver] AI error for tile " + pending.tileId() +
-                            ": " + e.getMessage());
-                    continue;
+                    System.err.println("[ReCaptchaSolver] Batch API error: " + e.getMessage());
+                    break;
                 }
 
-                // Check if we should click this tile
-                // For 1x1, the grid is boolean[1][1], so check squares[0][0]
-                boolean shouldClick = aiResponse.success() &&
-                        aiResponse.hasValidGrid() &&
-                        aiResponse.shouldSelectTile(0, 0);
+                // Step 5: Parse response and click tiles
+                // Response format TBD - for now try to parse as {"results": [true, false, ...]}
+                List<Integer> tilesToClick = parseBatchResponse(rawResponse, fetchedTileIds);
 
-                if (shouldClick) {
-                    System.out.println("[ReCaptchaSolver] Clicking replacement tile " + pending.tileId());
-                    String tileSelector = String.format(TILE_SELECTOR_PATTERN, escapeForCss(pending.tileId()));
+                // Step 6: Click indicated tiles and track new fades
+                pendingTileIds.clear();
+
+                for (int tileId : tilesToClick) {
+                    System.out.println("[ReCaptchaSolver] Clicking replacement tile " + tileId);
+                    String tileSelector = String.format(TILE_SELECTOR_PATTERN, escapeForCss(tileId));
 
                     try {
                         page.clickInFrame(challengeIframe, tileSelector);
+                        page.sleep(POST_REPLACEMENT_CLICK_DELAY_MS);
+
+                        // Check if this click triggered another fade
+                        String newStyle = getTileStyle(page, challengeIframe, tileId);
+                        long newDuration = parseTransitionDuration(newStyle);
+
+                        if (newDuration > 0) {
+                            pendingTileIds.add(tileId);
+                            System.out.println("[ReCaptchaSolver] Tile " + tileId + " fading again");
+                        }
+
                     } catch (TimeoutException e) {
-                        System.err.println("[ReCaptchaSolver] Failed to click tile " + pending.tileId() +
-                                ": " + e.getMessage());
-                        continue;
+                        System.err.println("[ReCaptchaSolver] Failed to click tile " + tileId + ": " + e.getMessage());
                     }
-
-                    // Wait briefly then check if this click triggered another fade
-                    page.sleep(POST_REPLACEMENT_CLICK_DELAY_MS);
-
-                    String newStyle = getTileStyle(page, challengeIframe, pending.tileId());
-                    long newDuration = parseTransitionDuration(newStyle);
-
-                    if (newDuration > 0) {
-                        long newReadyAt = System.currentTimeMillis() + newDuration + FADE_AWAY_BUFFER_MS;
-                        pendingQueue.add(new PendingTile(pending.tileId(), newReadyAt));
-                        System.out.println("[ReCaptchaSolver] Tile " + pending.tileId() +
-                                " fading again, ready in " + (newDuration + FADE_AWAY_BUFFER_MS) + "ms");
-                    }
-                } else {
-                    System.out.println("[ReCaptchaSolver] Skipping tile " + pending.tileId() + " (AI says no match)");
                 }
             }
 
@@ -701,13 +707,78 @@ public final class ReCaptchaSolver {
                         MAX_FADE_AWAY_ITERATIONS + ")");
             }
 
-            System.out.println("[ReCaptchaSolver] Fade-away processing complete after " + totalIterations + " iterations");
+            System.out.println("[ReCaptchaSolver] Fade-away processing complete after " + totalIterations + " round(s)");
             return true;
 
         } catch (TimeoutException e) {
             System.err.println("[ReCaptchaSolver] Timeout during fade-away processing: " + e.getMessage());
             return false;
         }
+    }
+
+    /**
+     * Parses the batch API response to determine which tiles to click.
+     *
+     * <p>Response format: {"success": true, "squares": [[false, false, true]], ...}
+     * The squares field is a 2D array where squares[0][i] indicates whether image i should be clicked.</p>
+     *
+     * @param rawResponse    the raw JSON response string
+     * @param fetchedTileIds the tile IDs corresponding to each image in the request
+     * @return list of tile IDs that should be clicked
+     */
+    private static List<Integer> parseBatchResponse(String rawResponse, List<Integer> fetchedTileIds) {
+        List<Integer> tilesToClick = new ArrayList<>();
+
+        if (rawResponse == null || rawResponse.isBlank()) {
+            System.err.println("[ReCaptchaSolver] Empty batch response");
+            return tilesToClick;
+        }
+
+        try {
+            com.google.gson.JsonObject json = com.google.gson.JsonParser.parseString(rawResponse).getAsJsonObject();
+
+            // Check success field
+            if (!json.has("success") || !json.get("success").getAsBoolean()) {
+                String message = json.has("message") ? json.get("message").getAsString() : "unknown error";
+                System.err.println("[ReCaptchaSolver] Batch API returned failure: " + message);
+                return tilesToClick;
+            }
+
+            // Parse squares[0] array - format is [[bool, bool, bool]]
+            if (!json.has("squares") || !json.get("squares").isJsonArray()) {
+                System.err.println("[ReCaptchaSolver] Batch response missing squares field");
+                return tilesToClick;
+            }
+
+            com.google.gson.JsonArray outerArray = json.getAsJsonArray("squares");
+            if (outerArray.isEmpty() || !outerArray.get(0).isJsonArray()) {
+                System.err.println("[ReCaptchaSolver] Batch response squares field has unexpected structure");
+                return tilesToClick;
+            }
+
+            com.google.gson.JsonArray resultsArray = outerArray.get(0).getAsJsonArray();
+
+            if (resultsArray.size() != fetchedTileIds.size()) {
+                System.err.println("[ReCaptchaSolver] Batch response size mismatch: got " + resultsArray.size() +
+                        " results for " + fetchedTileIds.size() + " images");
+                return tilesToClick;
+            }
+
+            for (int i = 0; i < resultsArray.size(); i++) {
+                boolean shouldClick = resultsArray.get(i).getAsBoolean();
+                if (shouldClick) {
+                    tilesToClick.add(fetchedTileIds.get(i));
+                }
+            }
+
+            System.out.println("[ReCaptchaSolver] Parsed batch response: " + tilesToClick.size() +
+                    " of " + fetchedTileIds.size() + " tiles to click");
+
+        } catch (Exception e) {
+            System.err.println("[ReCaptchaSolver] Failed to parse batch response: " + e.getMessage());
+        }
+
+        return tilesToClick;
     }
 
     /**
@@ -811,19 +882,6 @@ public final class ReCaptchaSolver {
             public SolveOptions build() {
                 return new SolveOptions(maxRounds, maxFullAttempts, elementTimeoutMs);
             }
-        }
-    }
-
-    /**
-     * Represents a tile that is fading away and will have a replacement image.
-     *
-     * @param tileId          the tile ID (0-15 for 4x4, 0-8 for 3x3)
-     * @param readyAtSystemMs system time when the replacement image should be ready
-     */
-    private record PendingTile(int tileId, long readyAtSystemMs) implements Comparable<PendingTile> {
-        @Override
-        public int compareTo(PendingTile other) {
-            return Long.compare(this.readyAtSystemMs, other.readyAtSystemMs);
         }
     }
 

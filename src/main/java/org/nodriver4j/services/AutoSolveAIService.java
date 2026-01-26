@@ -11,6 +11,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -121,6 +122,78 @@ public class AutoSolveAIService {
             Thread.currentThread().interrupt();
             throw new AutoSolveAIException("Solve request interrupted", e);
         }
+    }
+
+    /**
+     * Solves a batch of reCAPTCHA replacement tile images.
+     *
+     * <p>Used for fade-away captchas where multiple tiles need to be evaluated together.
+     * Sends all images in a single API request.</p>
+     *
+     * @param description  the challenge description (e.g., "Select all images with crosswalks")
+     * @param imagesBase64 list of base64-encoded images (no data URL prefix)
+     * @return the raw JSON response body for logging/parsing
+     * @throws AutoSolveAIException if the request fails
+     * @throws IllegalArgumentException if description is null/blank or imagesBase64 is null/empty
+     */
+    public String solveBatch(String description, List<String> imagesBase64) throws AutoSolveAIException {
+        if (description == null || description.isBlank()) {
+            throw new IllegalArgumentException("Description cannot be null or blank");
+        }
+        if (imagesBase64 == null || imagesBase64.isEmpty()) {
+            throw new IllegalArgumentException("Images list cannot be null or empty");
+        }
+
+        String taskId = UUID.randomUUID().toString();
+
+        System.out.println("[AutoSolveAI] Sending batch solve request for " + imagesBase64.size() +
+                " images: " + description);
+
+        try {
+            String requestBody = buildBatchRequestBody(taskId, description, imagesBase64);
+            HttpRequest request = buildHttpRequest(requestBody);
+
+            long startTime = System.currentTimeMillis();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            long duration = System.currentTimeMillis() - startTime;
+
+            System.out.println("[AutoSolveAI] Batch response received in " + duration + "ms, status: " +
+                    response.statusCode());
+
+            // Handle HTTP errors
+            int statusCode = response.statusCode();
+            if (statusCode == 401 || statusCode == 403) {
+                throw new AutoSolveAIException("Authentication failed: Invalid API key (HTTP " + statusCode + ")");
+            }
+            if (statusCode == 429) {
+                throw new AutoSolveAIException("Rate limited: Too many requests (HTTP 429)");
+            }
+            if (statusCode < 200 || statusCode >= 300) {
+                throw new AutoSolveAIException("API request failed with HTTP " + statusCode + ": " + response.body());
+            }
+
+            return response.body();
+
+        } catch (IOException e) {
+            throw new AutoSolveAIException("Network error during batch solve request: " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AutoSolveAIException("Batch solve request interrupted", e);
+        }
+    }
+
+    /**
+     * Builds the JSON request body for a batch solve API call.
+     */
+    private String buildBatchRequestBody(String taskId, String description, List<String> imagesBase64) {
+        JsonObject body = new JsonObject();
+        body.addProperty("taskId", taskId);
+        body.addProperty("version", RECAPTCHA_VERSION);
+        body.addProperty("description", description);
+        body.add("exampleImages", GSON.toJsonTree(new String[0]));
+        body.add("imageData", GSON.toJsonTree(imagesBase64));
+
+        return GSON.toJson(body);
     }
 
     /**

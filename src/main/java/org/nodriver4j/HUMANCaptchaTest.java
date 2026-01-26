@@ -17,7 +17,7 @@ public class HUMANCaptchaTest {
 
     private static final String URL = "https://recaptcha-demo.appspot.com/";
     private static final String HEADLESS_UA = "--user-agent=Mozilla/5.0 (Windows NT 6.0; Win64; x64; Xbox; Xbox One) AppleWebKit/606 (KHTML, like Gecko) HeadlessChrome/81.0.4015.0 Safari/606";
-    private static final String AUTOSOLVE_AI_KEY = System.getenv("AUTOSOLVE_AI_KEY");
+    private static final String AUTOSOLVE_AI_KEY = System.getenv("autosolve_ai_key");
 
     // Number of concurrent browser sessions
     private static final int SESSION_COUNT = 1;
