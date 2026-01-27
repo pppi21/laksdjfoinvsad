@@ -11,16 +11,13 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Scanner;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class UEA {
 
     // Number of concurrent browser sessions
-    private static final int SESSION_COUNT = 1;
+    private static final int SESSION_COUNT = 3;
 
     public static void main(String[] args) {
         String executablePath = System.getenv("chromepath");
@@ -41,7 +38,8 @@ public class UEA {
         BrowserConfig config = BrowserConfig.builder()
                 .executablePath(executablePath)
                 .fingerprintEnabled(true)
-                .headless(false)
+                .headless(true)
+                .headlessGpuAcceleration(true)
                 .build();
 
         BrowserManager.Builder managerBuilder = BrowserManager.builder()
@@ -151,6 +149,8 @@ public class UEA {
                         failureCount.incrementAndGet();
                         System.err.println("[Browser " + browserIndex + "] Script failed: " + e.getMessage());
                         return new ScriptResult(browserIndex, null, false, e.getMessage());
+                    } catch (TimeoutException e) {
+                        throw new RuntimeException(e);
                     }
                 }, scriptExecutor);
 

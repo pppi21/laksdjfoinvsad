@@ -42,6 +42,7 @@ public class HUMANCaptchaTest {
                 .fingerprintEnabled(true)
                 .argument(HEADLESS_UA)
                 .autoSolveAIKey(AUTOSOLVE_AI_KEY)
+                .headlessGpuAcceleration(true)
                 .build();
 
         BrowserManager manager = BrowserManager.builder()

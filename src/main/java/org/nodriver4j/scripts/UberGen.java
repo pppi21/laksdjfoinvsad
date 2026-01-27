@@ -10,6 +10,7 @@ import org.nodriver4j.services.UberOtpExtractor;
 
 import java.io.IOException;
 import java.security.SecureRandom;
+import java.util.Scanner;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -35,6 +36,7 @@ public class UberGen {
     private static final String EMAIL_OTP_TEXT = "#EMAIL_OTP_CODE-0";
     private static final String EMAIL_OTP_RESEND_BUTTON = "#alt-action-resend";
     private static final String EMAIL_OTP_RESEND_CONFIRM_BUTTON = "#alt-action-resend[aria-label='Resend']";
+    private static final String SKIP_PHONE_BUTTON = "#alt-action-skip";
     private static final String FIRST_NAME_TEXT = "#FIRST_NAME";
     private static final String LAST_NAME_TEXT = "#LAST_NAME";
     private static final String CONTINUE_NAME_BUTTON = "#forward-button";
@@ -42,6 +44,7 @@ public class UberGen {
     private static final String CONTINUE_TERMS_BUTTON = "#forward-button";
     private static final String SKIP_SECURITY_BUTTON = "button[data-testid='skip']";
     private static final String CONTINUE_SECURITY_BUTTON = "#guided-security-upgrade-ui > div[data-baseweb='block'] > button";
+    private static final String HOMEPAGE_SUCCESS_ID = "#main-content";
 
     // ==================== Password Generation ====================
 
@@ -87,7 +90,7 @@ public class UberGen {
      *
      * @throws RuntimeException if entry fails after all retries
      */
-    public void generate() {
+    public void generate() throws IOException, TimeoutException {
 
 
             try {
@@ -97,10 +100,35 @@ public class UberGen {
 
                 enterEmailOTP();
 
-                enterName();
-            } catch (UnexpectedNavigationException | GmailClient.GmailClientException e) {
+                if (page.exists(FIRST_NAME_TEXT)) {
+                    enterName();
+                } else if(page.exists(SKIP_PHONE_BUTTON)) {
+                    skipPhoneNumber();
+                    enterName();
+                }
+
+                acceptTerms();
+
+                page.sleep(1000);
+                if(page.exists(CONTINUE_SECURITY_BUTTON)) {
+                    skipSecurity();
+                }
+
+                page.waitForLoadEvent(15000);
+                page.sleep(3000);
+
+                if(page.exists(HOMEPAGE_SUCCESS_ID)) {
+                    writeCompletedProfile();
+                    System.out.println("[UberGen] ✓ Signup successful for: " + profile.emailAddress());
+                    return;
+                }
+
+            } catch (UnexpectedNavigationException | GmailClient.GmailClientException | TimeoutException e) {
                 System.out.println("[UberGen] ⚠ Attempt failed: " + e.getMessage());
+
             }
+            page.screenshot();
+            throw new RuntimeException("[UberGen] ⚠ Attempt failed unexpectedly");
     }
 
 
@@ -112,6 +140,8 @@ public class UberGen {
                 page.navigate("https://www.google.com/");
                 fillFormField(GOOGLE_SEARCH_TEXT, "uber eats", true);
                 page.pressKey("Enter", false,false,false);
+                page.sleep(1000);
+                page.waitForLoadEvent(20000);
                 if(!page.exists(UE_RESULT_BUTTON)) {
                     ReCaptchaSolver.solve(page);
                     page.waitForSelector(UE_RESULT_BUTTON,100000);
@@ -165,7 +195,7 @@ public class UberGen {
                 String otp = extractor.extractOtp(); // Polls for up to 60 seconds
                 System.out.println("[UberGen] " + attemptStr+ "Retrieved email OTP for " + profile.emailAddress() + ": " + otp);
                 fillFormField(EMAIL_OTP_TEXT, otp, false);
-                page.waitForSelector(FIRST_NAME_TEXT, 15000);
+                page.sleep(1500);
                 return;
 
             } catch (UberOtpExtractor.OtpExtractionException | InterruptedException | TimeoutException e) {
@@ -173,6 +203,19 @@ public class UberGen {
             }
         }
         throw new RuntimeException("Mail OTP failed: Maximum " + ATTEMPTS + " attempts reached");
+    }
+
+    private void skipPhoneNumber(){
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            String attemptStr = "Attempt " + attempt + "/" + ATTEMPTS + " - ";
+            try{
+                page.click(SKIP_PHONE_BUTTON);
+                return;
+            } catch (TimeoutException e) {
+                System.out.println("[UberGen] Phone number stage failed for " + profile.emailAddress() + ": " + e.getMessage());
+                page.sleep(1000);
+            }
+        }
     }
 
     private void enterName() {
@@ -187,6 +230,33 @@ public class UberGen {
                 System.out.println("[UberGen] Name stage failed for " + profile.emailAddress() + ": " + e.getMessage());
             }
         }
+    }
+
+    private void acceptTerms(){
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            String attemptStr = "Attempt " + attempt + "/" + ATTEMPTS + " - ";
+            try{
+                page.click(ACCEPT_TERMS_CHECKBOX);
+                page.click(CONTINUE_TERMS_BUTTON);
+                return;
+            } catch (TimeoutException e) {
+                System.out.println("[UberGen] Accept terms stage failed for " + profile.emailAddress() + ": " + e.getMessage());
+            }
+        }
+    }
+
+    private void skipSecurity() throws RuntimeException{
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            String attemptStr = "Attempt " + attempt + "/" + ATTEMPTS + " - ";
+            try{
+                page.waitForSelector(CONTINUE_SECURITY_BUTTON, 1000);
+                page.click(SKIP_SECURITY_BUTTON);
+                return;
+            } catch (TimeoutException e) {
+                System.out.println("[UberGen] Skip security stage failed for " + profile.emailAddress() + ": " + e.getMessage());
+            }
+        }
+        throw new RuntimeException("Skip security failed: session likely flagged");
     }
 
     private void fillFormField(String selector, String value, boolean validate) throws InterruptedException, TimeoutException {
