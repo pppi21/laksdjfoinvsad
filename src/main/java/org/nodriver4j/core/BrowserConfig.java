@@ -27,7 +27,7 @@ import java.util.List;
  * handles runtime allocations (ports, proxies). For standalone usage, you can pass
  * the config directly to {@link Browser#launch}.</p>
  *
- * @see Browser#launch(BrowserConfig, int, ProxyConfig, AutoSolveAIService, java.util.function.IntConsumer)
+ * @see Browser#launch(BrowserConfig, int, java.util.function.IntConsumer)
  * @see BrowserManager
  */
 public class BrowserConfig {

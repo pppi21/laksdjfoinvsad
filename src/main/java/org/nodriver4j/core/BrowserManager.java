@@ -1,17 +1,15 @@
 package org.nodriver4j.core;
 
 import org.nodriver4j.profiles.ProfilePool;
+import org.nodriver4j.services.AutoSolveAIService;
 
 import java.io.IOException;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
-import org.nodriver4j.services.AutoSolveAIService;
-
 
 /**
  * Manages browser instances with automatic resource allocation and thread pool execution.
@@ -28,96 +26,85 @@ import org.nodriver4j.services.AutoSolveAIService;
  *
  * <h2>Usage Examples</h2>
  *
- * <h3>Managed Execution (Recommended)</h3>
+ * <h3>Basic Setup</h3>
  * <pre>{@code
- * BrowserManager manager = BrowserManager.builder()
+ * BrowserConfig config = BrowserConfig.builder()
  *     .executablePath("/path/to/chrome")
+ *     .fingerprintEnabled(true)
  *     .build();
  *
- * // Submit tasks - returns Future for result handling
- * Future<String> future = manager.submit(browser -> {
- *     Page page = browser.getPage();
- *     page.navigate("https://example.com");
- *     return page.getTitle();
- * });
- *
- * String result = future.get(); // blocks until complete
- * manager.shutdown();
+ * BrowserManager manager = BrowserManager.builder()
+ *     .config(config)
+ *     .warmProfile(true)
+ *     .build();
  * }</pre>
  *
  * <h3>Manual Browser Control</h3>
  * <pre>{@code
- * BrowserManager manager = BrowserManager.builder()
- *     .executablePath("/path/to/chrome")
- *     .warmProfile(true)  // Enable auto-warming
- *     .build();
- *
- * // Single browser - auto-warms if enabled
  * try (Browser browser = manager.createSession()) {
- *     Page page = browser.getPage();
+ *     Page page = browser.page();
  *     page.navigate("https://example.com");
  *     page.click("//button[@id='login']");
  * }
+ * }</pre>
  *
- * // Multiple browsers - creates all, then warms all in parallel
+ * <h3>Multiple Browsers (Parallel Warming)</h3>
+ * <pre>{@code
  * List<Browser> browsers = manager.createSessions(6);
  * // All 6 browsers are now launched and warmed (if enabled)
+ *
+ * // Use the browsers...
+ *
+ * // Close when done
+ * browsers.forEach(Browser::close);
+ * }</pre>
+ *
+ * <h3>Managed Execution</h3>
+ * <pre>{@code
+ * Future<String> future = manager.submit(browser -> {
+ *     Page page = browser.page();
+ *     page.navigate("https://example.com");
+ *     return page.title();
+ * });
+ *
+ * String result = future.get();
+ * manager.shutdown();
  * }</pre>
  *
  * <h3>With Profile Management</h3>
  * <pre>{@code
  * BrowserManager manager = BrowserManager.builder()
- *     .executablePath("/path/to/chrome")
+ *     .config(config)
  *     .profileInputPath("input_profiles.csv")
  *     .profileOutputPath("completed_profiles.csv")
  *     .build();
  *
- * // Get the shared profile pool
  * ProfilePool pool = manager.profilePool();
  * Profile profile = pool.consumeFirst();
- *
- * // After script completes
- * Profile completed = profile.toBuilder()
- *     .accountLoginInfo(email + ":" + password)
- *     .build();
- * pool.writeCompleted(completed);
  * }</pre>
  *
- * <h3>Custom Interaction Options</h3>
- * <pre>{@code
- * InteractionOptions fastOptions = InteractionOptions.builder()
- *     .moveSpeed(80)
- *     .keystrokeDelayMin(30)
- *     .keystrokeDelayMax(80)
- *     .build();
- *
- * BrowserManager manager = BrowserManager.builder()
- *     .executablePath("/path/to/chrome")
- *     .interactionOptions(fastOptions)
- *     .build();
- * }</pre>
+ * @see BrowserConfig
+ * @see Browser
+ * @see ProfilePool
  */
 public class BrowserManager implements AutoCloseable {
 
     private static final int DEFAULT_PORT_RANGE_START = 9222;
     private static final int DEFAULT_PORT_RANGE_END = 9621;
 
+    // Thread pool and port management
     private final ExecutorService executor;
     private final BlockingQueue<Integer> availablePorts;
     private final Set<Browser> activeBrowsers;
     private final AtomicBoolean isShutdown;
     private final Thread shutdownHook;
 
-    // Configuration for browser creation
-    private final String executablePath;
-    private final boolean fingerprintEnabled;
+    // Template configuration for creating browsers
+    private final BrowserConfig templateConfig;
+
+    // Manager-level settings (not browser-specific)
     private final boolean warmProfile;
-    private final boolean headless;
-    private final String webrtcPolicy;
     private final boolean proxyEnabled;
-    private final InteractionOptions interactionOptions;
-    private final ArrayList<String> arguements;
-    private final boolean headlessGpuAcceleration;
 
     // Profile management
     private final String profileInputPath;
@@ -125,25 +112,21 @@ public class BrowserManager implements AutoCloseable {
     private volatile ProfilePool profilePool;
     private final Object profilePoolLock = new Object();
 
-    // AutoSolve AI integration
-    private final String autoSolveAIKey;
+    // AutoSolve AI (can be from config or created from key)
     private volatile AutoSolveAIService autoSolveAIService;
     private final Object autoSolveAIServiceLock = new Object();
 
     private BrowserManager(Builder builder) {
-        this.executablePath = builder.executablePath;
-        this.fingerprintEnabled = builder.fingerprintEnabled;
+        this.templateConfig = builder.config;
         this.warmProfile = builder.warmProfile;
-        this.headless = builder.headless;
-        this.webrtcPolicy = builder.webrtcPolicy;
         this.proxyEnabled = builder.proxyEnabled;
-        this.interactionOptions = builder.interactionOptions;
         this.profileInputPath = builder.profileInputPath;
         this.profileOutputPath = builder.profileOutputPath;
-        this.arguements = builder.arguements;
-        this.headlessGpuAcceleration = builder.headlessGpuAcceleration;
-        this.autoSolveAIKey = builder.autoSolveAIKey;
-        this.autoSolveAIService = builder.autoSolveAIService;
+
+        // Initialize AutoSolve AI from config if available
+        if (templateConfig.hasAutoSolveAI()) {
+            this.autoSolveAIService = templateConfig.autoSolveAIService();
+        }
 
         this.isShutdown = new AtomicBoolean(false);
         this.activeBrowsers = ConcurrentHashMap.newKeySet();
@@ -158,12 +141,12 @@ public class BrowserManager implements AutoCloseable {
         int threadCount = Math.min(Runtime.getRuntime().availableProcessors(), builder.threadCount);
 
         this.executor = new ThreadPoolExecutor(
-                threadCount,                      // core pool size
-                threadCount,                      // max pool size (same as core for fixed pool)
-                60L, TimeUnit.SECONDS,            // keep-alive time for idle threads
-                new LinkedBlockingQueue<>(),      // unbounded task queue
-                new BrowserThreadFactory(),       // custom thread factory for naming
-                new ThreadPoolExecutor.AbortPolicy()  // reject if shutdown
+                threadCount,
+                threadCount,
+                60L, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(),
+                new BrowserThreadFactory(),
+                new ThreadPoolExecutor.AbortPolicy()
         );
 
         // Register shutdown hook for emergency cleanup
@@ -194,16 +177,10 @@ public class BrowserManager implements AutoCloseable {
      * Gets the shared ProfilePool for this manager.
      *
      * <p>The ProfilePool is created lazily on first access and shared across
-     * all browsers managed by this instance. This allows thread-safe profile
-     * consumption across multiple concurrent browser tasks.</p>
-     *
-     * <p>If profile paths were not configured, this method attempts to create
-     * a ProfilePool using environment variables ({@code profiles_input} and
-     * {@code profiles_output}).</p>
+     * all browsers managed by this instance.</p>
      *
      * @return the shared ProfilePool instance
-     * @throws IllegalStateException if profile paths are not configured and
-     *                               environment variables are not set
+     * @throws IllegalStateException if profile paths are not configured
      */
     public ProfilePool profilePool() {
         if (profilePool == null) {
@@ -254,33 +231,19 @@ public class BrowserManager implements AutoCloseable {
     /**
      * Gets the shared AutoSolveAIService for this manager.
      *
-     * <p>The service is created lazily on first access. If no API key was
-     * configured via the builder, this method returns null.</p>
-     *
      * @return the shared AutoSolveAIService instance, or null if not configured
      */
     public AutoSolveAIService autoSolveAIService() {
-        if (autoSolveAIKey == null) {
-            return null;
-        }
-
-        if (autoSolveAIService == null) {
-            synchronized (autoSolveAIServiceLock) {
-                if (autoSolveAIService == null) {
-                    autoSolveAIService = new AutoSolveAIService(autoSolveAIKey);
-                }
-            }
-        }
         return autoSolveAIService;
     }
 
     /**
      * Checks if AutoSolve AI is configured.
      *
-     * @return true if an API key was provided
+     * @return true if an AutoSolve AI service is available
      */
     public boolean hasAutoSolveAI() {
-        return autoSolveAIKey != null && !autoSolveAIKey.isBlank();
+        return autoSolveAIService != null;
     }
 
     // ==================== Task Submission Methods ====================
@@ -288,23 +251,10 @@ public class BrowserManager implements AutoCloseable {
     /**
      * Submits an automation task for execution.
      *
-     * <p>The task will be queued and executed when a thread becomes available.
-     * A new browser is created for the task and automatically closed
-     * after the task completes (whether successfully or with an exception).</p>
+     * <p>A new browser is created for the task and automatically closed
+     * after the task completes.</p>
      *
-     * <p>If warming is enabled, the browser is warmed before the task runs.</p>
-     *
-     * <p>Example:</p>
-     * <pre>{@code
-     * manager.submit(browser -> {
-     *     Page page = browser.getPage();
-     *     page.navigate("https://example.com");
-     *     page.click("//button[@id='submit']");
-     *     return page.getText("//div[@class='result']");
-     * });
-     * }</pre>
-     *
-     * @param task the automation task to execute, receives a Browser and returns a result
+     * @param task the automation task to execute
      * @param <T>  the result type
      * @return a Future representing the pending result
      * @throws RejectedExecutionException if the manager has been shutdown
@@ -340,16 +290,7 @@ public class BrowserManager implements AutoCloseable {
     /**
      * Submits an automation task that works directly with a Page.
      *
-     * <p>Convenience method that automatically extracts the main page:</p>
-     * <pre>{@code
-     * manager.submitPage(page -> {
-     *     page.navigate("https://example.com");
-     *     page.click("//button[@id='login']");
-     *     return page.getTitle();
-     * });
-     * }</pre>
-     *
-     * @param task the automation task to execute, receives a Page and returns a result
+     * @param task the automation task to execute
      * @param <T>  the result type
      * @return a Future representing the pending result
      * @throws RejectedExecutionException if the manager has been shutdown
@@ -359,7 +300,7 @@ public class BrowserManager implements AutoCloseable {
 
         return executor.submit(() -> {
             try (Browser browser = createSession()) {
-                return task.apply(browser.getPage());
+                return task.apply(browser.page());
             }
         });
     }
@@ -376,7 +317,7 @@ public class BrowserManager implements AutoCloseable {
 
         return executor.submit(() -> {
             try (Browser browser = createSession()) {
-                task.accept(browser.getPage());
+                task.accept(browser.page());
                 return null;
             }
         });
@@ -387,30 +328,17 @@ public class BrowserManager implements AutoCloseable {
     /**
      * Creates a new browser instance.
      *
-     * <p>If warming is enabled in the manager configuration, the browser will
-     * be automatically warmed before this method returns.</p>
-     *
-     * <p>The caller is responsible for closing the browser when done.
-     * Use try-with-resources for automatic cleanup:</p>
-     *
-     * <pre>{@code
-     * try (Browser browser = manager.createSession()) {
-     *     Page page = browser.getPage();
-     *     page.navigate("https://example.com");
-     *     page.click("//button[@id='submit']");
-     * }
-     * }</pre>
+     * <p>If warming is enabled, the browser will be automatically warmed
+     * before this method returns.</p>
      *
      * @return a new Browser instance (warmed if warming is enabled)
-     * @throws IOException              if the browser fails to launch
-     * @throws IllegalStateException    if the manager has been shutdown
-     * @throws InterruptedException     if interrupted while waiting for a port
-     * @throws NoAvailablePortException if no ports are available (all in use)
+     * @throws IOException          if the browser fails to launch
+     * @throws IllegalStateException if the manager has been shutdown
+     * @throws InterruptedException if interrupted while waiting for a port
      */
     public Browser createSession() throws IOException, InterruptedException {
         Browser browser = createBrowserInternal();
 
-        // Auto-warm if enabled (blocks until complete)
         if (warmProfile) {
             browser.warm();
         }
@@ -423,30 +351,12 @@ public class BrowserManager implements AutoCloseable {
      *
      * <p>This method is optimized for creating multiple browsers:</p>
      * <ol>
-     *   <li>Phase 1: Creates all browsers as fast as possible (sequential but fast)</li>
-     *   <li>Phase 2: Warms all browsers in parallel using the thread pool (if warming enabled)</li>
+     *   <li>Phase 1: Creates all browsers sequentially (fast)</li>
+     *   <li>Phase 2: Warms all browsers in parallel (if warming enabled)</li>
      * </ol>
      *
-     * <p>If any browser fails to launch, the method continues with the remaining browsers
-     * and logs warnings for failures. Successfully created browsers are returned.</p>
-     *
-     * <p>Example:</p>
-     * <pre>{@code
-     * // Create 6 browsers - all warmed in parallel
-     * List<Browser> browsers = manager.createSessions(6);
-     *
-     * // Use the browsers
-     * for (Browser browser : browsers) {
-     *     // Each browser is ready to use
-     *     browser.getPage().navigate("https://example.com");
-     * }
-     *
-     * // Don't forget to close them when done
-     * browsers.forEach(Browser::close);
-     * }</pre>
-     *
      * @param count the number of browsers to create
-     * @return list of successfully created browsers (may be less than count if some failed)
+     * @return list of successfully created browsers
      * @throws IllegalStateException    if the manager has been shutdown
      * @throws IllegalArgumentException if count is less than 1
      */
@@ -468,7 +378,7 @@ public class BrowserManager implements AutoCloseable {
                 Browser browser = createBrowserInternal();
                 browsers.add(browser);
                 System.out.println("[BrowserManager] Browser " + (i + 1) + "/" + count +
-                        " launched (port " + browser.getPort() + ")");
+                        " launched (port " + browser.port() + ")");
             } catch (IOException e) {
                 String error = "Browser " + (i + 1) + ": " + e.getMessage();
                 errors.add(error);
@@ -476,7 +386,6 @@ public class BrowserManager implements AutoCloseable {
             }
         }
 
-        // Log warnings for failures
         if (!errors.isEmpty()) {
             System.err.println("[BrowserManager] Warning: " + errors.size() + " of " + count +
                     " browser(s) failed to launch");
@@ -494,15 +403,11 @@ public class BrowserManager implements AutoCloseable {
 
     /**
      * Creates a browser without warming (internal use only).
-     *
-     * @return a new Browser instance (not warmed)
-     * @throws IOException          if the browser fails to launch
-     * @throws InterruptedException if interrupted while waiting for a port
      */
     private Browser createBrowserInternal() throws IOException, InterruptedException {
         ensureNotShutdown();
 
-        // Allocate port (blocks if none available, but with timeout)
+        // Allocate port
         Integer port = availablePorts.poll(30, TimeUnit.SECONDS);
         if (port == null) {
             throw new NoAvailablePortException("No ports available after 30 seconds. " +
@@ -510,8 +415,8 @@ public class BrowserManager implements AutoCloseable {
         }
 
         try {
-            BrowserConfig config = buildConfig(port);
-            Browser browser = Browser.launch(config, this::releasePort, interactionOptions);
+            BrowserConfig config = buildConfigForLaunch();
+            Browser browser = Browser.launch(config, port, this::releasePort);
 
             // Track browser for shutdown cleanup
             activeBrowsers.add(browser);
@@ -519,16 +424,38 @@ public class BrowserManager implements AutoCloseable {
             return browser;
 
         } catch (IOException | RuntimeException e) {
-            // Release port if browser creation fails
             releasePort(port);
             throw e;
         }
     }
 
     /**
+     * Builds a BrowserConfig for launching, adding proxy if enabled.
+     */
+    private BrowserConfig buildConfigForLaunch() throws IOException {
+        if (!proxyEnabled) {
+            return templateConfig;
+        }
+
+        // Consume proxy from file and add to config
+        try {
+            ProxyConfig proxy = new ProxyConfig(); // Consumes from env file
+            return templateConfig.toBuilder()
+                    .proxy(proxy)
+                    .build();
+        } catch (IOException e) {
+            System.err.println("[BrowserManager] Warning: Failed to load proxy: " + e.getMessage());
+            System.err.println("[BrowserManager] Continuing without proxy.");
+            return templateConfig;
+        } catch (IllegalStateException e) {
+            System.err.println("[BrowserManager] Warning: " + e.getMessage());
+            System.err.println("[BrowserManager] Continuing without proxy.");
+            return templateConfig;
+        }
+    }
+
+    /**
      * Warms multiple browsers in parallel using the thread pool.
-     *
-     * @param browsers the browsers to warm
      */
     private void warmAllInternal(List<Browser> browsers) {
         if (browsers.isEmpty()) {
@@ -537,13 +464,11 @@ public class BrowserManager implements AutoCloseable {
 
         System.out.println("[BrowserManager] Warming " + browsers.size() + " browser(s) in parallel...");
 
-        // Submit warming tasks to thread pool
         List<Future<?>> futures = new ArrayList<>();
         for (Browser browser : browsers) {
             futures.add(executor.submit(browser::warm));
         }
 
-        // Wait for all to complete, log any failures
         int successCount = 0;
         int failureCount = 0;
 
@@ -566,41 +491,6 @@ public class BrowserManager implements AutoCloseable {
                 failureCount + " failed");
     }
 
-    // ==================== Configuration Helpers ====================
-
-    /**
-     * Builds a BrowserConfig with the allocated port and current settings.
-     */
-    private BrowserConfig buildConfig(int port) throws IOException {
-        BrowserConfig.Builder builder = BrowserConfig.builder()
-                .executablePath(executablePath)
-                .port(port)
-                .fingerprintEnabled(fingerprintEnabled)
-                .warmProfile(warmProfile)
-                .headless(headless)
-                .webrtcPolicy(webrtcPolicy)
-                .headlessGpuAcceleration(headlessGpuAcceleration)
-                .chromeArguements(arguements)
-                .autoSolveAIService(autoSolveAIService);
-
-        // Consume proxy from file if enabled
-        if (proxyEnabled) {
-            try {
-                ProxyConfig proxy = new ProxyConfig(); // Consumes from env file
-                builder.proxy(proxy);
-            } catch (IOException e) {
-                System.err.println("[BrowserManager] Warning: Failed to load proxy: " + e.getMessage());
-                System.err.println("[BrowserManager] Continuing without proxy.");
-            } catch (IllegalStateException e) {
-                // Environment variable not set - this is expected if proxyEnabled but no file
-                System.err.println("[BrowserManager] Warning: " + e.getMessage());
-                System.err.println("[BrowserManager] Continuing without proxy.");
-            }
-        }
-
-        return builder.build();
-    }
-
     /**
      * Releases a port back to the available pool.
      */
@@ -612,12 +502,21 @@ public class BrowserManager implements AutoCloseable {
     // ==================== Status Methods ====================
 
     /**
-     * Gets the interaction options configured for this manager.
+     * Gets the template configuration used for creating browsers.
+     *
+     * @return the BrowserConfig template
+     */
+    public BrowserConfig config() {
+        return templateConfig;
+    }
+
+    /**
+     * Gets the interaction options from the template configuration.
      *
      * @return the InteractionOptions
      */
     public InteractionOptions interactionOptions() {
-        return interactionOptions;
+        return templateConfig.interactionOptions();
     }
 
     /**
@@ -665,25 +564,29 @@ public class BrowserManager implements AutoCloseable {
         return warmProfile;
     }
 
+    /**
+     * Checks if proxy usage is enabled.
+     *
+     * @return true if proxy consumption is enabled
+     */
+    public boolean isProxyEnabled() {
+        return proxyEnabled;
+    }
+
     // ==================== Shutdown Methods ====================
 
     /**
      * Initiates an orderly shutdown.
-     *
-     * <p>Stops accepting new tasks and waits for currently executing tasks to complete.
-     * Does not forcibly close running browsers.</p>
      */
     public void shutdown() {
         if (!isShutdown.compareAndSet(false, true)) {
-            return; // Already shutdown
+            return;
         }
 
         System.out.println("[BrowserManager] Initiating shutdown...");
 
-        // Stop accepting new tasks
         executor.shutdown();
 
-        // Remove shutdown hook since we're shutting down normally
         try {
             Runtime.getRuntime().removeShutdownHook(shutdownHook);
         } catch (IllegalStateException e) {
@@ -706,25 +609,18 @@ public class BrowserManager implements AutoCloseable {
 
     /**
      * Attempts to stop all actively executing tasks and closes all browsers.
-     *
-     * <p>Use this for immediate cleanup when you don't want to wait for tasks to complete.</p>
      */
     public void shutdownNow() {
         if (!isShutdown.compareAndSet(false, true)) {
-            // Already shutdown, but still close browsers
             closeAllBrowsers();
             return;
         }
 
         System.out.println("[BrowserManager] Initiating immediate shutdown...");
 
-        // Stop accepting and interrupt running tasks
         executor.shutdownNow();
-
-        // Close all active browsers
         closeAllBrowsers();
 
-        // Remove shutdown hook
         try {
             Runtime.getRuntime().removeShutdownHook(shutdownHook);
         } catch (IllegalStateException e) {
@@ -763,7 +659,6 @@ public class BrowserManager implements AutoCloseable {
 
     /**
      * Emergency shutdown called by JVM shutdown hook.
-     * Closes all browsers without waiting for tasks.
      */
     private void emergencyShutdown() {
         System.out.println("[BrowserManager] Emergency shutdown triggered...");
@@ -774,8 +669,6 @@ public class BrowserManager implements AutoCloseable {
 
     /**
      * Ensures the manager hasn't been shutdown.
-     *
-     * @throws IllegalStateException if shutdown has been called
      */
     private void ensureNotShutdown() {
         if (isShutdown.get()) {
@@ -783,10 +676,6 @@ public class BrowserManager implements AutoCloseable {
         }
     }
 
-    /**
-     * Implements AutoCloseable for try-with-resources support.
-     * Equivalent to calling {@link #shutdown()}.
-     */
     @Override
     public void close() {
         shutdown();
@@ -820,7 +709,7 @@ public class BrowserManager implements AutoCloseable {
         @Override
         public synchronized Thread newThread(Runnable r) {
             Thread thread = new Thread(r, "BrowserWorker-" + threadNumber++);
-            thread.setDaemon(false); // Non-daemon so tasks complete before JVM exit
+            thread.setDaemon(false);
             return thread;
         }
     }
@@ -829,43 +718,55 @@ public class BrowserManager implements AutoCloseable {
 
     /**
      * Builder for configuring BrowserManager instances.
+     *
+     * <p>Required: {@link #config(BrowserConfig)}</p>
+     *
+     * <p>Example:</p>
+     * <pre>{@code
+     * BrowserConfig config = BrowserConfig.builder()
+     *     .executablePath("/path/to/chrome")
+     *     .fingerprintEnabled(true)
+     *     .build();
+     *
+     * BrowserManager manager = BrowserManager.builder()
+     *     .config(config)
+     *     .warmProfile(true)
+     *     .proxyEnabled(true)
+     *     .threadCount(4)
+     *     .build();
+     * }</pre>
      */
     public static class Builder {
 
-        private String executablePath;
-        private int threadCount = Runtime.getRuntime().availableProcessors(); // 0 means auto-detect
+        private BrowserConfig config;
+        private int threadCount = Runtime.getRuntime().availableProcessors();
         private int portRangeStart = DEFAULT_PORT_RANGE_START;
         private int portRangeEnd = DEFAULT_PORT_RANGE_END;
-        private boolean fingerprintEnabled = true;
         private boolean warmProfile = false;
-        private boolean headless = false;
-        private String webrtcPolicy = "disable_non_proxied_udp";
         private boolean proxyEnabled = true;
-        private InteractionOptions interactionOptions = InteractionOptions.defaults();
         private String profileInputPath;
         private String profileOutputPath;
-        private final ArrayList<String> arguements = new ArrayList<>();
-        private final boolean headlessGpuAcceleration = false;
-        private String autoSolveAIKey;
-        private AutoSolveAIService autoSolveAIService;
 
         private Builder() {}
 
         /**
-         * Sets the path to the Chrome executable. Required.
+         * Sets the template BrowserConfig. Required.
          *
-         * @param executablePath path to chrome or chrome-headless-shell
+         * <p>This configuration is used as the base for all browsers created
+         * by this manager. Proxy may be added dynamically if proxyEnabled is true.</p>
+         *
+         * @param config the browser configuration template
          * @return this builder
          */
-        public Builder executablePath(String executablePath) {
-            this.executablePath = executablePath;
+        public Builder config(BrowserConfig config) {
+            this.config = config;
             return this;
         }
 
         /**
          * Sets the number of worker threads.
          *
-         * <p>Default: auto-detected using {@code Runtime.getRuntime().availableProcessors()}</p>
+         * <p>Default: {@code Runtime.getRuntime().availableProcessors()}</p>
          *
          * @param threadCount the number of concurrent browser operations to support
          * @return this builder
@@ -900,27 +801,10 @@ public class BrowserManager implements AutoCloseable {
         }
 
         /**
-         * Enables or disables browser fingerprint spoofing.
-         *
-         * <p>Default: true</p>
-         *
-         * @param enabled true to enable fingerprinting
-         * @return this builder
-         */
-        public Builder fingerprintEnabled(boolean enabled) {
-            this.fingerprintEnabled = enabled;
-            return this;
-        }
-
-        /**
          * Enables or disables automatic profile warming.
          *
-         * <p>When enabled, browsers created via {@link #createSession()} or
-         * {@link #createSessions(int)} will automatically be warmed by visiting
-         * common websites to collect cookies and appear more natural.</p>
-         *
-         * <p>For {@link #createSessions(int)}, warming is performed in parallel
-         * for maximum efficiency.</p>
+         * <p>When enabled, browsers created via {@link BrowserManager#createSession()} or
+         * {@link BrowserManager#createSessions(int)} will automatically be warmed.</p>
          *
          * <p>Default: false</p>
          *
@@ -929,33 +813,6 @@ public class BrowserManager implements AutoCloseable {
          */
         public Builder warmProfile(boolean enabled) {
             this.warmProfile = enabled;
-            return this;
-        }
-
-        /**
-         * Enables or disables headless mode.
-         *
-         * <p>Default: false (visible browser window)</p>
-         *
-         * @param enabled true to run headless
-         * @return this builder
-         */
-        public Builder headless(boolean enabled) {
-            this.headless = enabled;
-            return this;
-        }
-
-        /**
-         * Sets the WebRTC IP handling policy.
-         *
-         * <p>Default: "disable_non_proxied_udp" (prevents WebRTC IP leaks)</p>
-         *
-         * @param policy one of: "default", "default_public_interface_only",
-         *               "default_public_and_private_interfaces", "disable_non_proxied_udp"
-         * @return this builder
-         */
-        public Builder webrtcPolicy(String policy) {
-            this.webrtcPolicy = policy;
             return this;
         }
 
@@ -976,64 +833,7 @@ public class BrowserManager implements AutoCloseable {
         }
 
         /**
-         * Sets the AutoSolve AI API key for captcha solving.
-         *
-         * <p>When set, the manager provides access to a shared {@link AutoSolveAIService}
-         * via {@link BrowserManager#autoSolveAIService()}.</p>
-         *
-         * <p>If not set, captcha solving features will not be available.</p>
-         *
-         * @param apiKey the AutoSolve AI API key
-         * @return this builder
-         */
-        public Builder autoSolveAIKey(String apiKey) {
-            this.autoSolveAIKey = apiKey;
-            this.autoSolveAIService = new AutoSolveAIService(apiKey);
-            return this;
-        }
-
-        /**
-         * Sets the interaction options for human-like behavior.
-         *
-         * <p>These options control timing and movement patterns for mouse clicks,
-         * typing, scrolling, and other interactions to appear more human-like.</p>
-         *
-         * <p>Default: {@link InteractionOptions#defaults()}</p>
-         *
-         * <p>Example:</p>
-         * <pre>{@code
-         * InteractionOptions options = InteractionOptions.builder()
-         *     .moveSpeed(60)
-         *     .keystrokeDelayMin(50)
-         *     .keystrokeDelayMax(150)
-         *     .overshootEnabled(true)
-         *     .build();
-         *
-         * BrowserManager manager = BrowserManager.builder()
-         *     .executablePath("/path/to/chrome")
-         *     .interactionOptions(options)
-         *     .build();
-         * }</pre>
-         *
-         * @param options the interaction options
-         * @return this builder
-         */
-        public Builder interactionOptions(InteractionOptions options) {
-            if (options == null) {
-                throw new IllegalArgumentException("InteractionOptions cannot be null");
-            }
-            this.interactionOptions = options;
-            return this;
-        }
-
-        /**
          * Sets the path to the input CSV file containing profiles.
-         *
-         * <p>When set along with {@link #profileOutputPath(String)}, enables
-         * profile management via {@link BrowserManager#profilePool()}.</p>
-         *
-         * <p>If not set, profile pool will fall back to environment variable
-         * {@code profiles_input}.</p>
          *
          * @param path the path to the input CSV file
          * @return this builder
@@ -1046,12 +846,6 @@ public class BrowserManager implements AutoCloseable {
         /**
          * Sets the path to the output CSV file for completed profiles.
          *
-         * <p>When set along with {@link #profileInputPath(String)}, enables
-         * profile management via {@link BrowserManager#profilePool()}.</p>
-         *
-         * <p>If not set, profile pool will fall back to environment variable
-         * {@code profiles_output}.</p>
-         *
          * @param path the path to the output CSV file
          * @return this builder
          */
@@ -1060,22 +854,15 @@ public class BrowserManager implements AutoCloseable {
             return this;
         }
 
-        public Builder chromeArguement(String arguement){
-            this.arguements.add(arguement);
-            return this;
-        }
-
-
-
         /**
          * Builds the BrowserManager with the configured settings.
          *
          * @return a new BrowserManager instance
-         * @throws IllegalStateException if executablePath is not set
+         * @throws IllegalStateException if config is not set
          */
         public BrowserManager build() {
-            if (executablePath == null || executablePath.isBlank()) {
-                throw new IllegalStateException("executablePath is required");
+            if (config == null) {
+                throw new IllegalStateException("BrowserConfig is required. Use .config(browserConfig) to set it.");
             }
             return new BrowserManager(this);
         }
