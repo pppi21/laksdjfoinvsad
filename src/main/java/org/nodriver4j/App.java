@@ -45,8 +45,8 @@ public class App {
         BrowserConfig config = BrowserConfig.builder()
                 .executablePath(executablePath)
                 .fingerprintEnabled(true)
-                .headless(true)
-                .headlessGpuAcceleration(true)
+                .headless(false)
+                //.headlessGpuAcceleration(true)
                 .build();
 
         BrowserManager.Builder managerBuilder = BrowserManager.builder()

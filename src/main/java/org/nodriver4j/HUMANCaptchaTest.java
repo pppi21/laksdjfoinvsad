@@ -42,12 +42,13 @@ public class HUMANCaptchaTest {
                 .fingerprintEnabled(true)
                 .argument(HEADLESS_UA)
                 .autoSolveAIKey(AUTOSOLVE_AI_KEY)
-                .headlessGpuAcceleration(true)
+                //.headlessGpuAcceleration(true)
+                .headless(false)
                 .build();
 
         BrowserManager manager = BrowserManager.builder()
                 .config(config)
-                .proxyEnabled(true)
+                .proxyEnabled(false)
                 .warmProfile(false)
                 .build();
 

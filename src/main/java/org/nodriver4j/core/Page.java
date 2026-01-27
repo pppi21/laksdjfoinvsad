@@ -32,7 +32,6 @@ import java.util.concurrent.TimeUnit;
  *   <li>Scrolling: {@link #scrollBy}, {@link #scrollTo}, {@link #scrollIntoView}</li>
  *   <li>Waiting: {@link #waitForSelector}, {@link #waitForNavigation}</li>
  *   <li>Queries: {@link #querySelector}, {@link #getText}, {@link #getAttribute}</li>
- *   <li>Captcha: {@link #solvePressHoldCaptcha} for PerimeterX-style challenges</li>
  * </ul>
  *
  * <p>All query methods support both XPath and CSS selectors. The selector type is
@@ -50,32 +49,6 @@ import java.util.concurrent.TimeUnit;
 public class Page {
 
     private static final int DEFAULT_NAVIGATION_TIMEOUT = 30000;
-
-    // ==================== Press-and-Hold Captcha ====================
-
-    /** Selector for PerimeterX captcha shadow host */
-    private static final String PX_CAPTCHA_SELECTOR = "#px-captcha";
-
-    /** Time to wait for animation style to apply after mousedown */
-    private static final int CAPTCHA_INITIAL_WAIT_MS = 150;
-
-    /** Buffer time after animation ends before releasing */
-    private static final int CAPTCHA_BUFFER_MS = 600;
-
-    /** Default hold duration if animation parsing fails */
-    private static final int CAPTCHA_DEFAULT_DURATION_MS = 10000;
-
-    /** Default timeout waiting for captcha to appear */
-    private static final int CAPTCHA_DEFAULT_WAIT_TIMEOUT_MS = 7000;
-
-    /** XPath to button element inside captcha iframe (constant structure) */
-    private static final String CAPTCHA_BUTTON_XPATH = "/html/body/div/div/div[2]/div[2]/p";
-
-    /**
-     * Holds information about the captcha iframe needed for solving.
-     */
-    private record CaptchaIframeInfo(String frameId, int backendNodeId) {}
-
 
     private final CDPClient cdp;
     private final String targetId;
@@ -143,50 +116,6 @@ public class Page {
             initCursor();
         })();
         """;
-
-    // ==================== Captcha Result Types ====================
-
-    /**
-     * Result of a press-and-hold captcha solve attempt.
-     */
-    public enum CaptchaAttemptResult {
-        /** No captcha was detected within the timeout period */
-        NOT_FOUND,
-
-        /** Captcha was found and press-and-hold was completed */
-        ATTEMPTED,
-
-        /** An error occurred during the solve attempt */
-        ERROR
-    }
-
-    /**
-     * Detailed result of a captcha solve attempt.
-     *
-     * @param result           the outcome of the attempt
-     * @param detectedDurationMs the animation duration detected (0 if not found/error)
-     * @param errorMessage     error description if result is ERROR, null otherwise
-     */
-    public record CaptchaSolveResult(
-            CaptchaAttemptResult result,
-            long detectedDurationMs,
-            String errorMessage
-    ) {
-        /** Creates a NOT_FOUND result. */
-        public static CaptchaSolveResult notFound() {
-            return new CaptchaSolveResult(CaptchaAttemptResult.NOT_FOUND, 0, null);
-        }
-
-        /** Creates an ATTEMPTED result with the detected duration. */
-        public static CaptchaSolveResult attempted(long durationMs) {
-            return new CaptchaSolveResult(CaptchaAttemptResult.ATTEMPTED, durationMs, null);
-        }
-
-        /** Creates an ERROR result with the error message. */
-        public static CaptchaSolveResult error(String message) {
-            return new CaptchaSolveResult(CaptchaAttemptResult.ERROR, 0, message);
-        }
-    }
 
     /**
      * Creates a new Page with default interaction options.
@@ -365,7 +294,7 @@ public class Page {
     /**
      * Triggers the click animation on the cursor overlay.
      */
-    private void triggerCursorClickAnimation() {
+    public void triggerCursorClickAnimation() {
         if (!options.isShowCursorOverlay()) {
             return;
         }
@@ -374,156 +303,6 @@ public class Page {
             evaluate("window.__nodriver4j_clickCursor()");
         } catch (TimeoutException e) {
             // Silently ignore - cursor overlay is non-critical
-        }
-    }
-
-    // ==================== Press-and-Hold Captcha ====================
-
-    /**
-     * Attempts to solve a press-and-hold captcha using human-like mouse movement.
-     *
-     * <p>Uses the default timeout of 7 seconds waiting for captcha to appear.</p>
-     *
-     * <p>This method uses CDP Input events for realistic mouse simulation:</p>
-     * <ul>
-     *   <li>Bezier curve mouse movement path</li>
-     *   <li>Overshoot and correction for distant targets</li>
-     *   <li>Micro-jitter to simulate hand tremor</li>
-     *   <li>Realistic timing patterns</li>
-     * </ul>
-     *
-     * @return the result of the captcha solve attempt
-     * @see #solvePressHoldCaptcha(int)
-     */
-    public CaptchaSolveResult solvePressHoldCaptcha() {
-        return solvePressHoldCaptcha(CAPTCHA_DEFAULT_WAIT_TIMEOUT_MS);
-    }
-
-    /**
-     * Attempts to solve a press-and-hold captcha using human-like mouse movement.
-     *
-     * <p>This method uses CDP's DOM domain to pierce the shadow DOM and locate
-     * the visible captcha iframe, then uses CDP Input events to simulate
-     * realistic mouse movement and press-and-hold interaction.</p>
-     *
-     * <p><strong>Note:</strong> Success/failure verification is the caller's responsibility.
-     * Check for page navigation, element disappearance, or other indicators after calling.</p>
-     *
-     * @param waitTimeoutMs maximum time to wait for captcha to appear (recommended: 3000)
-     * @return the result of the captcha solve attempt
-     */
-    public CaptchaSolveResult solvePressHoldCaptcha(int waitTimeoutMs) {
-        System.out.println("[Page] Checking for press-and-hold captcha (CDP Input mode)...");
-
-        try {
-            // Step 1: Wait for captcha shadow host to appear
-            long deadline = System.currentTimeMillis() + waitTimeoutMs;
-            boolean captchaFound = false;
-
-            while (System.currentTimeMillis() < deadline) {
-                if (exists(PX_CAPTCHA_SELECTOR)) {
-                    captchaFound = true;
-                    break;
-                }
-                sleep(options.getRetryInterval());
-            }
-
-            if (!captchaFound) {
-                System.out.println("[Page] No captcha detected within timeout");
-                return CaptchaSolveResult.notFound();
-            }
-
-            System.out.println("[Page] Captcha detected, locating visible iframe...");
-
-            // Step 2: Find the visible iframe (frameId + nodeId)
-            CaptchaIframeInfo iframeInfo = findCaptchaIframeInfo();
-            if (iframeInfo == null) {
-                return CaptchaSolveResult.error("Could not find visible captcha iframe");
-            }
-
-            System.out.println("[Page] Found iframe: frameId=" + iframeInfo.frameId() +
-                    ", backendNodeId=" + iframeInfo.backendNodeId());
-
-            // Step 3: Get iframe's bounding box and scroll into view if needed
-            BoundingBox iframeBox = getNodeBoundingBox(iframeInfo.backendNodeId());
-            if (iframeBox == null) {
-                return CaptchaSolveResult.error("Could not get iframe bounding box");
-            }
-
-            System.out.println("[Page] Iframe position: " + iframeBox);
-
-            // Scroll into view if needed
-            scrollNodeIntoViewIfNeeded(iframeBox);
-
-            // Re-get position after potential scroll
-            iframeBox = getNodeBoundingBox(iframeInfo.backendNodeId());
-            if (iframeBox == null) {
-                return CaptchaSolveResult.error("Could not get iframe bounding box after scroll");
-            }
-
-            // Step 4: Create execution context in iframe
-            int executionContextId = createIframeContext(iframeInfo.frameId());
-
-            System.out.println("[Page] Created execution context: " + executionContextId);
-
-            // Step 5: Get button position within iframe
-            BoundingBox buttonBoxInIframe = getButtonPositionInIframe(executionContextId);
-            if (buttonBoxInIframe == null) {
-                return CaptchaSolveResult.error("Could not find button in iframe");
-            }
-
-            // Step 6: Calculate absolute button position
-            BoundingBox absoluteButtonBox = new BoundingBox(
-                    iframeBox.getX() + buttonBoxInIframe.getX(),
-                    iframeBox.getY() + buttonBoxInIframe.getY(),
-                    buttonBoxInIframe.getWidth(),
-                    buttonBoxInIframe.getHeight()
-            );
-
-            System.out.println("[Page] Button absolute position: " + absoluteButtonBox);
-
-            // Step 7: Move mouse to button with human-like movement
-            Vector targetPoint = absoluteButtonBox.getRandomPoint(options.getPaddingPercentage());
-
-            System.out.println("[Page] Moving mouse to button at: " + targetPoint);
-            moveMouseTo(targetPoint);
-
-            // Step 8: Pre-click hesitation
-            int hesitation = HumanBehavior.hesitationDelay(
-                    options.getPreClickDelayMin(), options.getPreClickDelayMax());
-            sleep((long)hesitation);
-
-            // Step 9: Mouse down via CDP Input
-            System.out.println("[Page] Pressing button...");
-            triggerCursorClickAnimation();
-            dispatchMouseButton(targetPoint, "mousePressed", "left", 1);
-
-            // Step 10: Wait for animation style to apply
-            sleep(CAPTCHA_INITIAL_WAIT_MS);
-
-            // Step 11: Read animation duration from button
-            long animationDuration = getAnimationDurationFromButton(executionContextId);
-            System.out.println("[Page] Detected animation duration: " + animationDuration + "ms");
-
-            // Step 12: Hold for remaining time + buffer
-            long remainingHold = Math.max(0, animationDuration - CAPTCHA_INITIAL_WAIT_MS + CAPTCHA_BUFFER_MS);
-            System.out.println("[Page] Holding for " + remainingHold + "ms more...");
-            sleep((int) remainingHold);
-
-            // Step 13: Mouse up via CDP Input
-            System.out.println("[Page] Releasing button...");
-            dispatchMouseButton(targetPoint, "mouseReleased", "left", 1);
-
-            System.out.println("[Page] Captcha press-and-hold completed (held for " + animationDuration + "ms)");
-            return CaptchaSolveResult.attempted(animationDuration);
-
-        } catch (TimeoutException e) {
-            System.err.println("[Page] Captcha solve timeout: " + e.getMessage());
-            return CaptchaSolveResult.error("Timeout: " + e.getMessage());
-        } catch (Exception e) {
-            System.err.println("[Page] Captcha solve exception: " + e.getMessage());
-            e.printStackTrace();
-            return CaptchaSolveResult.error("Exception: " + e.getMessage());
         }
     }
 
@@ -965,6 +744,34 @@ public class Page {
     }
 
     /**
+     * Dispatches a mouse down event at the specified position.
+     *
+     * <p>This sends a low-level CDP Input.dispatchMouseEvent with type "mousePressed".
+     * Use this for press-and-hold interactions where you need separate control over
+     * mouse down and mouse up events.</p>
+     *
+     * @param position the position to press at
+     * @throws TimeoutException if the operation times out
+     */
+    public void mouseDown(Vector position) throws TimeoutException {
+        dispatchMouseButton(position, "mousePressed", "left", 1);
+    }
+
+    /**
+     * Dispatches a mouse up event at the specified position.
+     *
+     * <p>This sends a low-level CDP Input.dispatchMouseEvent with type "mouseReleased".
+     * Use this for press-and-hold interactions where you need separate control over
+     * mouse down and mouse up events.</p>
+     *
+     * @param position the position to release at
+     * @throws TimeoutException if the operation times out
+     */
+    public void mouseUp(Vector position) throws TimeoutException {
+        dispatchMouseButton(position, "mouseReleased", "left", 1);
+    }
+
+    /**
      * Takes a screenshot of a region within an iframe.
      *
      * @param iframeInfo the iframe information
@@ -1136,113 +943,6 @@ public class Page {
         return false;
     }
 
-    // ==================== Captcha Helper Methods ====================
-
-    /**
-     * Finds the visible captcha iframe's frameId and backendNodeId using CDP DOM inspection.
-     *
-     * @return CaptchaIframeInfo with frameId and backendNodeId, or null if not found
-     * @throws TimeoutException if CDP operations timeout
-     */
-    private CaptchaIframeInfo findCaptchaIframeInfo() throws TimeoutException {
-        // Get document root
-        JsonObject docParams = new JsonObject();
-        docParams.addProperty("pierce", true);
-        docParams.addProperty("depth", 0);
-
-        JsonObject docResult = cdp.send("DOM.getDocument", docParams);
-        int rootNodeId = docResult.getAsJsonObject("root").get("nodeId").getAsInt();
-
-        // Query for #px-captcha
-        JsonObject queryParams = new JsonObject();
-        queryParams.addProperty("nodeId", rootNodeId);
-        queryParams.addProperty("selector", PX_CAPTCHA_SELECTOR);
-
-        JsonObject queryResult = cdp.send("DOM.querySelector", queryParams);
-
-        if (!queryResult.has("nodeId") || queryResult.get("nodeId").getAsInt() == 0) {
-            System.err.println("[Page] #px-captcha element not found via DOM.querySelector");
-            return null;
-        }
-
-        int captchaNodeId = queryResult.get("nodeId").getAsInt();
-
-        // Describe the node with shadow piercing to get iframe children
-        JsonObject describeParams = new JsonObject();
-        describeParams.addProperty("nodeId", captchaNodeId);
-        describeParams.addProperty("pierce", true);
-        describeParams.addProperty("depth", 2);
-
-        JsonObject describeResult = cdp.send("DOM.describeNode", describeParams);
-
-        if (!describeResult.has("node")) {
-            System.err.println("[Page] DOM.describeNode returned no node");
-            return null;
-        }
-
-        JsonObject node = describeResult.getAsJsonObject("node");
-
-        // Navigate to shadow root
-        if (!node.has("shadowRoots")) {
-            System.err.println("[Page] #px-captcha has no shadowRoots");
-            return null;
-        }
-
-        JsonArray shadowRoots = node.getAsJsonArray("shadowRoots");
-        if (shadowRoots.isEmpty()) {
-            System.err.println("[Page] shadowRoots array is empty");
-            return null;
-        }
-
-        JsonObject shadowRoot = shadowRoots.get(0).getAsJsonObject();
-
-        if (!shadowRoot.has("children")) {
-            System.err.println("[Page] Shadow root has no children");
-            return null;
-        }
-
-        JsonArray children = shadowRoot.getAsJsonArray("children");
-
-        // Find the iframe with display: block
-        for (JsonElement child : children) {
-            JsonObject childNode = child.getAsJsonObject();
-
-            if (!"IFRAME".equals(childNode.get("nodeName").getAsString())) {
-                continue;
-            }
-
-            if (!childNode.has("frameId")) {
-                continue;
-            }
-
-            if (!childNode.has("attributes")) {
-                continue;
-            }
-
-            // Must have backendNodeId for DOM.getBoxModel
-            if (!childNode.has("backendNodeId")) {
-                System.err.println("[Page] Iframe missing backendNodeId");
-                continue;
-            }
-
-            JsonArray attributes = childNode.getAsJsonArray("attributes");
-            String styleValue = getCdpAttributeValue(attributes, "style");
-
-            if (styleValue != null && styleValue.contains("display: block")) {
-                String frameId = childNode.get("frameId").getAsString();
-                int backendNodeId = childNode.get("backendNodeId").getAsInt();
-
-                System.out.println("[Page] Found visible iframe with style: " +
-                        styleValue.substring(0, Math.min(50, styleValue.length())) + "...");
-
-                return new CaptchaIframeInfo(frameId, backendNodeId);
-            }
-        }
-
-        System.err.println("[Page] No iframe with 'display: block' found in shadow root");
-        return null;
-    }
-
     /**
      * Gets the bounding box of a DOM node via CDP using its backend node ID.
      *
@@ -1250,7 +950,7 @@ public class Page {
      * @return the bounding box, or null if unable to get
      * @throws TimeoutException if CDP operation times out
      */
-    private BoundingBox getNodeBoundingBox(int backendNodeId) throws TimeoutException {
+    public BoundingBox getNodeBoundingBox(int backendNodeId) throws TimeoutException {
         JsonObject params = new JsonObject();
         params.addProperty("backendNodeId", backendNodeId);
 
@@ -1285,12 +985,15 @@ public class Page {
     }
 
     /**
-     * Scrolls the page to bring a node into view if it's outside the viewport.
+     * Scrolls the page to bring a bounding box into view if it's outside the viewport.
      *
-     * @param box the bounding box of the element
+     * <p>This method calculates whether the element is visible within the current
+     * viewport (with a margin) and scrolls if necessary to center it.</p>
+     *
+     * @param box the bounding box of the element to scroll into view
      * @throws TimeoutException if operations time out
      */
-    private void scrollNodeIntoViewIfNeeded(BoundingBox box) throws TimeoutException {
+    public void scrollIntoViewIfNeeded(BoundingBox box) throws TimeoutException {
         ensureRuntimeEnabled();
 
         String viewportHeightStr = evaluate("window.innerHeight");
@@ -1327,128 +1030,9 @@ public class Page {
 
             if (deltaX != 0 || deltaY != 0) {
                 scrollBy(deltaX, deltaY);
-                sleep((long)500); // Allow scroll to settle
+                sleep(500); // Allow scroll to settle
             }
         }
-    }
-
-    /**
-     * Gets the button's bounding box within the captcha iframe.
-     *
-     * @param executionContextId the execution context ID for the iframe
-     * @return the button's bounding box (iframe-relative), or null if not found
-     * @throws TimeoutException if CDP operation times out
-     */
-    private BoundingBox getButtonPositionInIframe(int executionContextId) throws TimeoutException {
-        String script = String.format("""
-            (function() {
-                const button = document.evaluate(
-                    '%s', document, null,
-                    XPathResult.FIRST_ORDERED_NODE_TYPE, null
-                ).singleNodeValue;
-                if (!button) return null;
-                const rect = button.getBoundingClientRect();
-                return JSON.stringify({x: rect.x, y: rect.y, width: rect.width, height: rect.height});
-            })();
-            """, CAPTCHA_BUTTON_XPATH);
-
-        JsonObject evalParams = new JsonObject();
-        evalParams.addProperty("contextId", executionContextId);
-        evalParams.addProperty("expression", script);
-        evalParams.addProperty("returnByValue", true);
-
-        JsonObject evalResult = cdp.send("Runtime.evaluate", evalParams);
-
-        if (!evalResult.has("result")) {
-            return null;
-        }
-
-        JsonObject resultObj = evalResult.getAsJsonObject("result");
-        if (!resultObj.has("value") || resultObj.get("value").isJsonNull()) {
-            return null;
-        }
-
-        String json = resultObj.get("value").getAsString();
-        JsonObject rect = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
-
-        return new BoundingBox(
-                rect.get("x").getAsDouble(),
-                rect.get("y").getAsDouble(),
-                rect.get("width").getAsDouble(),
-                rect.get("height").getAsDouble()
-        );
-    }
-
-    /**
-     * Reads the animation duration from the captcha button's style attribute.
-     *
-     * @param executionContextId the execution context ID for the iframe
-     * @return the animation duration in milliseconds, or default if not found
-     * @throws TimeoutException if CDP operation times out
-     */
-    private long getAnimationDurationFromButton(int executionContextId) throws TimeoutException {
-        String script = String.format("""
-            (function() {
-                const button = document.evaluate(
-                    '%s', document, null,
-                    XPathResult.FIRST_ORDERED_NODE_TYPE, null
-                ).singleNodeValue;
-                if (!button) return null;
-                return button.getAttribute('style') || '';
-            })();
-            """, CAPTCHA_BUTTON_XPATH);
-
-        JsonObject evalParams = new JsonObject();
-        evalParams.addProperty("contextId", executionContextId);
-        evalParams.addProperty("expression", script);
-        evalParams.addProperty("returnByValue", true);
-
-        JsonObject evalResult = cdp.send("Runtime.evaluate", evalParams);
-
-        if (!evalResult.has("result")) {
-            return CAPTCHA_DEFAULT_DURATION_MS;
-        }
-
-        JsonObject resultObj = evalResult.getAsJsonObject("result");
-        if (!resultObj.has("value") || resultObj.get("value").isJsonNull()) {
-            return CAPTCHA_DEFAULT_DURATION_MS;
-        }
-
-        String style = resultObj.get("value").getAsString();
-
-        // Parse animation duration: "animation: 1027ms ease 0s 1 normal none running textColorInvert"
-        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
-                "animation:\\s*([\\d.]+)(ms|s)",
-                java.util.regex.Pattern.CASE_INSENSITIVE
-        );
-        java.util.regex.Matcher matcher = pattern.matcher(style);
-
-        if (matcher.find()) {
-            double value = Double.parseDouble(matcher.group(1));
-            String unit = matcher.group(2).toLowerCase();
-            return (long) (unit.equals("s") ? value * 1000 : value);
-        }
-
-        return CAPTCHA_DEFAULT_DURATION_MS;
-    }
-
-    /**
-     * Extracts an attribute value from a CDP attributes array.
-     *
-     * <p>CDP returns attributes as a flat array: ["name1", "value1", "name2", "value2", ...]</p>
-     *
-     * @param attributes the attributes JsonArray from CDP
-     * @param name       the attribute name to find
-     * @return the attribute value, or null if not found
-     */
-    private String getCdpAttributeValue(JsonArray attributes, String name) {
-        for (int i = 0; i < attributes.size() - 1; i += 2) {
-            String attrName = attributes.get(i).getAsString();
-            if (name.equals(attrName)) {
-                return attributes.get(i + 1).getAsString();
-            }
-        }
-        return null;
     }
 
     // ==================== Navigation ====================
@@ -2354,7 +1938,7 @@ public class Page {
      * @param target the target position
      * @throws TimeoutException if the operation times out
      */
-    private void moveMouseTo(Vector target) throws TimeoutException {
+    public void moveMouseTo(Vector target) throws TimeoutException {
         // Ensure cursor overlay is injected on first mouse movement
         ensureCursorOverlayInjected();
 
@@ -2862,13 +2446,6 @@ public class Page {
         }
     }
 
-    /**
-     * Scrolls to an absolute position.
-     *
-     * @param x target x scroll position
-     * @param y target y scroll position
-     * @throws TimeoutException if the operation times out
-     */
     public void scrollTo(int x, int y) throws TimeoutException {
         ensureRuntimeEnabled();
 
@@ -2876,8 +2453,8 @@ public class Page {
         String currentX = evaluate("window.scrollX");
         String currentY = evaluate("window.scrollY");
 
-        int deltaX = x - Integer.parseInt(currentX);
-        int deltaY = y - Integer.parseInt(currentY);
+        int deltaX = x - (int) Double.parseDouble(currentX);
+        int deltaY = y - (int) Double.parseDouble(currentY);
 
         scrollBy(deltaX, deltaY);
     }
