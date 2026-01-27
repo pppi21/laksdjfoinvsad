@@ -2,90 +2,152 @@ package org.nodriver4j.core;
 
 import org.nodriver4j.services.AutoSolveAIService;
 
-import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.UUID;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * Configuration for launching a browser instance.
  *
- * <p>This class holds all settings needed to launch a Chrome browser with CDP support.
- * Instances are created via the {@link Builder} pattern.</p>
+ * <p>This class is the single source of truth for all browser-specific settings.
+ * It holds everything needed to configure how a browser should behave, but does NOT
+ * hold runtime allocations like port numbers or user data directories.</p>
  *
- * <p>When using {@link BrowserManager}, configuration is handled automatically.
- * Direct use of BrowserConfig is for advanced cases where manual browser
- * management is needed.</p>
+ * <p>Instances are immutable and created via the {@link Builder} pattern:</p>
+ * <pre>{@code
+ * BrowserConfig config = BrowserConfig.builder()
+ *     .executablePath("/path/to/chrome")
+ *     .headless(true)
+ *     .fingerprintEnabled(true)
+ *     .interactionOptions(InteractionOptions.fast())
+ *     .build();
+ * }</pre>
+ *
+ * <p>When using {@link BrowserManager}, a default config is provided and the manager
+ * handles runtime allocations (ports, proxies). For standalone usage, you can pass
+ * the config directly to {@link Browser#launch}.</p>
+ *
+ * @see Browser#launch(BrowserConfig, int, ProxyConfig, AutoSolveAIService, java.util.function.IntConsumer)
+ * @see BrowserManager
  */
 public class BrowserConfig {
 
     private static final String DEFAULT_WEBRTC_POLICY = "disable_non_proxied_udp";
 
+    // Required
     private final String executablePath;
-    private final int port;
+
+    // Launch settings
     private final boolean headless;
-    private final Path userDataDir;
-    private final boolean warmProfile;
-    private final boolean fingerprintEnabled;
-    private final String webrtcPolicy;
-    private final ProxyConfig proxyConfig;
-    private final ArrayList<String> arguements;
     private final boolean headlessGpuAcceleration;
+    private final String webrtcPolicy;
+    private final List<String> arguments;
+
+    // Features
+    private final boolean fingerprintEnabled;
+    private final InteractionOptions interactionOptions;
+
+    // Optional services/resources (can be set per-browser or shared)
+    private final ProxyConfig proxyConfig;
     private final AutoSolveAIService autoSolveAIService;
 
     private BrowserConfig(Builder builder) {
         this.executablePath = builder.executablePath;
-        this.port = builder.port;
         this.headless = builder.headless;
-        this.userDataDir = builder.userDataDir;
-        this.warmProfile = builder.warmProfile;
-        this.fingerprintEnabled = builder.fingerprintEnabled;
-        this.webrtcPolicy = builder.webrtcPolicy;
-        this.proxyConfig = builder.proxyConfig;
-        this.arguements = builder.arguements;
         this.headlessGpuAcceleration = builder.headlessGpuAcceleration;
+        this.webrtcPolicy = builder.webrtcPolicy;
+        this.arguments = Collections.unmodifiableList(new ArrayList<>(builder.arguments));
+        this.fingerprintEnabled = builder.fingerprintEnabled;
+        this.interactionOptions = builder.interactionOptions;
+        this.proxyConfig = builder.proxyConfig;
         this.autoSolveAIService = builder.autoSolveAIService;
     }
 
-    public String getExecutablePath() {
+    // ==================== Getters ====================
+
+    /**
+     * Gets the path to the Chrome executable.
+     *
+     * @return the executable path
+     */
+    public String executablePath() {
         return executablePath;
     }
 
-    public int getPort() {
-        return port;
-    }
-
-    public boolean isHeadless() {
+    /**
+     * Checks if headless mode is enabled.
+     *
+     * @return true if running without GUI
+     */
+    public boolean headless() {
         return headless;
     }
 
-    public Path getUserDataDir() {
-        return userDataDir;
+    /**
+     * Checks if GPU acceleration is enabled in headless mode.
+     *
+     * @return true if GPU acceleration is enabled
+     */
+    public boolean headlessGpuAcceleration() {
+        return headlessGpuAcceleration;
     }
 
-    public boolean isWarmProfile() {
-        return warmProfile;
-    }
-
-    public boolean isFingerprintEnabled() {
-        return fingerprintEnabled;
-    }
-
-    public String getWebrtcPolicy() {
+    /**
+     * Gets the WebRTC IP handling policy.
+     *
+     * @return the WebRTC policy string
+     */
+    public String webrtcPolicy() {
         return webrtcPolicy;
     }
 
-    public ProxyConfig getProxyConfig() {
+    /**
+     * Gets additional Chrome command-line arguments.
+     *
+     * @return unmodifiable list of arguments
+     */
+    public List<String> arguments() {
+        return arguments;
+    }
+
+    /**
+     * Checks if fingerprint spoofing is enabled.
+     *
+     * @return true if fingerprinting is enabled
+     */
+    public boolean fingerprintEnabled() {
+        return fingerprintEnabled;
+    }
+
+    /**
+     * Gets the interaction options for human-like behavior.
+     *
+     * @return the interaction options (never null)
+     */
+    public InteractionOptions interactionOptions() {
+        return interactionOptions;
+    }
+
+    /**
+     * Gets the proxy configuration, if set.
+     *
+     * @return the proxy config, or null if no proxy
+     */
+    public ProxyConfig proxyConfig() {
         return proxyConfig;
     }
 
-    public ArrayList<String> getArguements() { return arguements; }
-
-    public boolean isHeadlessGpuAcceleration() { return headlessGpuAcceleration; }
-
-    public AutoSolveAIService getAutoSolveAIService() { return autoSolveAIService; }
+    /**
+     * Gets the AutoSolve AI service, if configured.
+     *
+     * @return the AutoSolve AI service, or null if not configured
+     */
+    public AutoSolveAIService autoSolveAIService() {
+        return autoSolveAIService;
+    }
 
     /**
-     * Checks if a proxy is configured for this browser.
+     * Checks if a proxy is configured.
      *
      * @return true if proxy configuration is present
      */
@@ -93,37 +155,84 @@ public class BrowserConfig {
         return proxyConfig != null;
     }
 
+    /**
+     * Checks if AutoSolve AI is configured.
+     *
+     * @return true if AutoSolve AI service is present
+     */
+    public boolean hasAutoSolveAI() {
+        return autoSolveAIService != null;
+    }
+
+    /**
+     * Creates a new builder initialized with this config's values.
+     * Useful for creating modified copies.
+     *
+     * @return a Builder with current values
+     */
+    public Builder toBuilder() {
+        Builder builder = new Builder();
+        builder.executablePath = this.executablePath;
+        builder.headless = this.headless;
+        builder.headlessGpuAcceleration = this.headlessGpuAcceleration;
+        builder.webrtcPolicy = this.webrtcPolicy;
+        builder.arguments = new ArrayList<>(this.arguments);
+        builder.fingerprintEnabled = this.fingerprintEnabled;
+        builder.interactionOptions = this.interactionOptions;
+        builder.proxyConfig = this.proxyConfig;
+        builder.autoSolveAIService = this.autoSolveAIService;
+        return builder;
+    }
+
+    /**
+     * Creates a new builder for BrowserConfig.
+     *
+     * @return a new Builder instance
+     */
     public static Builder builder() {
         return new Builder();
     }
 
-    private static Path generateTempUserDataDir() {
-        String tempDir = System.getProperty("java.io.tmpdir");
-        String uniqueId = UUID.randomUUID().toString().substring(0, 8);
-        return Path.of(tempDir, "nodriver4j-" + uniqueId);
+    @Override
+    public String toString() {
+        return String.format(
+                "BrowserConfig{executable=%s, headless=%s, fingerprint=%s, proxy=%s, autoSolve=%s}",
+                executablePath,
+                headless,
+                fingerprintEnabled ? "enabled" : "disabled",
+                proxyConfig != null ? proxyConfig.host() : "none",
+                autoSolveAIService != null ? "configured" : "none"
+        );
     }
+
+    // ==================== Builder ====================
 
     /**
      * Builder for creating BrowserConfig instances.
      *
-     * <p>Required fields:</p>
-     * <ul>
-     *   <li>{@link #executablePath(String)} - path to Chrome executable</li>
-     *   <li>{@link #port(int)} - CDP debugging port</li>
-     * </ul>
+     * <p>Required: {@link #executablePath(String)}</p>
+     *
+     * <p>Example:</p>
+     * <pre>{@code
+     * BrowserConfig config = BrowserConfig.builder()
+     *     .executablePath("/path/to/chrome")
+     *     .headless(false)
+     *     .fingerprintEnabled(true)
+     *     .webrtcPolicy("disable_non_proxied_udp")
+     *     .interactionOptions(InteractionOptions.defaults())
+     *     .build();
+     * }</pre>
      */
     public static class Builder {
 
         private String executablePath;
-        private int port = -1; // -1 indicates not set
         private boolean headless = false;
-        private Path userDataDir;
-        private boolean warmProfile = false;
-        private boolean fingerprintEnabled = false;
-        private String webrtcPolicy = DEFAULT_WEBRTC_POLICY;
-        private ProxyConfig proxyConfig;
-        private ArrayList<String> arguements;
         private boolean headlessGpuAcceleration = false;
+        private String webrtcPolicy = DEFAULT_WEBRTC_POLICY;
+        private List<String> arguments = new ArrayList<>();
+        private boolean fingerprintEnabled = true;
+        private InteractionOptions interactionOptions = InteractionOptions.defaults();
+        private ProxyConfig proxyConfig;
         private AutoSolveAIService autoSolveAIService;
 
         private Builder() {}
@@ -136,20 +245,6 @@ public class BrowserConfig {
          */
         public Builder executablePath(String executablePath) {
             this.executablePath = executablePath;
-            return this;
-        }
-
-        /**
-         * Sets the CDP debugging port. Required.
-         *
-         * <p>When using {@link BrowserManager}, the port is allocated automatically.
-         * Only set this manually when managing browsers directly.</p>
-         *
-         * @param port the debugging port (1-65535)
-         * @return this builder
-         */
-        public Builder port(int port) {
-            this.port = port;
             return this;
         }
 
@@ -167,34 +262,18 @@ public class BrowserConfig {
         }
 
         /**
-         * Enables or disables profile warming.
+         * Enables GPU acceleration in headless mode.
          *
-         * <p>When enabled, the browser visits common websites after launch
-         * to collect cookies and make the profile appear more natural.</p>
-         *
-         * <p>Default: false</p>
-         *
-         * @param warmProfile true to enable profile warming
-         * @return this builder
-         */
-        public Builder warmProfile(boolean warmProfile) {
-            this.warmProfile = warmProfile;
-            return this;
-        }
-
-        /**
-         * Enables or disables fingerprint spoofing.
-         *
-         * <p>When enabled, a random browser fingerprint is loaded and applied
-         * to make the browser appear as a different device.</p>
+         * <p>When enabled, Chrome uses actual GPU hardware for rendering instead of
+         * software rendering (SwiftShader). Only applies when headless mode is enabled.</p>
          *
          * <p>Default: false</p>
          *
-         * @param fingerprintEnabled true to enable fingerprinting
+         * @param enabled true to enable GPU acceleration in headless mode
          * @return this builder
          */
-        public Builder fingerprintEnabled(boolean fingerprintEnabled) {
-            this.fingerprintEnabled = fingerprintEnabled;
+        public Builder headlessGpuAcceleration(boolean enabled) {
+            this.headlessGpuAcceleration = enabled;
             return this;
         }
 
@@ -213,9 +292,69 @@ public class BrowserConfig {
         }
 
         /**
+         * Adds a Chrome command-line argument.
+         *
+         * @param argument the argument to add (e.g., "--disable-extensions")
+         * @return this builder
+         */
+        public Builder argument(String argument) {
+            if (argument != null && !argument.isBlank()) {
+                this.arguments.add(argument);
+            }
+            return this;
+        }
+
+        /**
+         * Sets all Chrome command-line arguments, replacing any previously added.
+         *
+         * @param arguments the arguments to set
+         * @return this builder
+         */
+        public Builder arguments(List<String> arguments) {
+            this.arguments = arguments != null ? new ArrayList<>(arguments) : new ArrayList<>();
+            return this;
+        }
+
+        /**
+         * Enables or disables fingerprint spoofing.
+         *
+         * <p>When enabled, a random browser fingerprint is loaded and applied
+         * to make the browser appear as a different device.</p>
+         *
+         * <p>Default: true</p>
+         *
+         * @param enabled true to enable fingerprinting
+         * @return this builder
+         */
+        public Builder fingerprintEnabled(boolean enabled) {
+            this.fingerprintEnabled = enabled;
+            return this;
+        }
+
+        /**
+         * Sets the interaction options for human-like behavior.
+         *
+         * <p>These options control timing and movement patterns for mouse clicks,
+         * typing, scrolling, and other interactions.</p>
+         *
+         * <p>Default: {@link InteractionOptions#defaults()}</p>
+         *
+         * @param options the interaction options
+         * @return this builder
+         * @throws IllegalArgumentException if options is null
+         */
+        public Builder interactionOptions(InteractionOptions options) {
+            if (options == null) {
+                throw new IllegalArgumentException("InteractionOptions cannot be null");
+            }
+            this.interactionOptions = options;
+            return this;
+        }
+
+        /**
          * Sets the proxy configuration.
          *
-         * @param proxyConfig the proxy configuration
+         * @param proxyConfig the proxy configuration (null to disable proxy)
          * @return this builder
          */
         public Builder proxy(ProxyConfig proxyConfig) {
@@ -237,47 +376,42 @@ public class BrowserConfig {
             return this;
         }
 
-        public Builder chromeArguements(ArrayList<String> arguements) {
-            this.arguements = arguements;
+        /**
+         * Sets the AutoSolve AI service for captcha solving.
+         *
+         * @param service the AutoSolve AI service (null to disable)
+         * @return this builder
+         */
+        public Builder autoSolveAIService(AutoSolveAIService service) {
+            this.autoSolveAIService = service;
             return this;
         }
 
         /**
-         * Enables GPU acceleration in headless mode.
+         * Sets the AutoSolve AI service by API key.
          *
-         * <p>When enabled, Chrome uses actual GPU hardware for rendering instead of
-         * software rendering (SwiftShader). This can improve performance on machines
-         * with available GPUs.</p>
+         * <p>Creates a new AutoSolveAIService with the provided key.</p>
          *
-         * <p>Only applies when headless mode is also enabled. Default: false</p>
-         *
-         * @param headlessGpuAcceleration true to enable GPU acceleration in headless mode
+         * @param apiKey the AutoSolve AI API key
          * @return this builder
          */
-        public Builder headlessGpuAcceleration(boolean headlessGpuAcceleration) {
-            this.headlessGpuAcceleration = headlessGpuAcceleration;
-            return this;
-        }
-
-        public Builder autoSolveAIService(AutoSolveAIService autoSolveAIService) {
-            this.autoSolveAIService = autoSolveAIService;
+        public Builder autoSolveAIKey(String apiKey) {
+            if (apiKey != null && !apiKey.isBlank()) {
+                this.autoSolveAIService = new AutoSolveAIService(apiKey);
+            }
             return this;
         }
 
         /**
          * Builds the BrowserConfig with the configured settings.
          *
-         * @return a new BrowserConfig instance
-         * @throws IllegalStateException if required fields are not set
+         * @return a new immutable BrowserConfig instance
+         * @throws IllegalStateException if executablePath is not set
          */
         public BrowserConfig build() {
             if (executablePath == null || executablePath.isBlank()) {
                 throw new IllegalStateException("executablePath is required");
             }
-            if (port < 1 || port > 65535) {
-                throw new IllegalStateException("port is required and must be between 1 and 65535");
-            }
-            this.userDataDir = generateTempUserDataDir();
             return new BrowserConfig(this);
         }
     }

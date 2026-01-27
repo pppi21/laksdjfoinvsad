@@ -263,6 +263,46 @@ public class ProxyConfig {
         }
     }
 
+    // ==================== Getters ====================
+
+    /**
+     * Gets the proxy hostname.
+     *
+     * @return the proxy host
+     */
+    public String host() {
+        return host;
+    }
+
+    /**
+     * Gets the proxy port.
+     *
+     * @return the proxy port (1-65535)
+     */
+    public int port() {
+        return port;
+    }
+
+    /**
+     * Gets the authentication username.
+     *
+     * @return the username
+     */
+    public String username() {
+        return username;
+    }
+
+    /**
+     * Gets the authentication password.
+     *
+     * @return the password
+     */
+    public String password() {
+        return password;
+    }
+
+    // ==================== Utility Methods ====================
+
     /**
      * Returns the proxy server address in Chrome's expected format.
      * Example: "http://res-us.lightningproxies.net:9999"
@@ -281,22 +321,6 @@ public class ProxyConfig {
      */
     public boolean requiresAuth() {
         return true;
-    }
-
-    public String getHost() {
-        return host;
-    }
-
-    public int getPort() {
-        return port;
-    }
-
-    public String getUsername() {
-        return username;
-    }
-
-    public String getPassword() {
-        return password;
     }
 
     @Override

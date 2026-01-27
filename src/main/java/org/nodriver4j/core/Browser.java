@@ -15,7 +15,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.IntConsumer;
-import java.util.Random;
 
 /**
  * Manages a Chrome browser instance with automatic resource cleanup.
@@ -32,19 +31,37 @@ import java.util.Random;
  *   <li>Cleanup on close (terminate process, delete user data directory)</li>
  * </ul>
  *
- * <p>Typical usage with try-with-resources:</p>
+ * <h2>Usage with BrowserManager (Recommended)</h2>
  * <pre>{@code
+ * BrowserManager manager = BrowserManager.builder()
+ *     .defaultConfig(BrowserConfig.builder()
+ *         .executablePath("/path/to/chrome")
+ *         .fingerprintEnabled(true)
+ *         .build())
+ *     .build();
+ *
  * try (Browser browser = manager.createSession()) {
- *     Page page = browser.getPage();
+ *     Page page = browser.page();
  *     page.navigate("https://example.com");
- *     page.click("//button[@id='submit']");
- * } // automatically closes browser and releases port
+ * }
  * }</pre>
  *
- * <p>For most use cases, prefer using {@link BrowserManager} which handles
- * resource allocation (ports, proxies) and warming automatically.</p>
+ * <h2>Standalone Usage</h2>
+ * <pre>{@code
+ * BrowserConfig config = BrowserConfig.builder()
+ *     .executablePath("/path/to/chrome")
+ *     .fingerprintEnabled(true)
+ *     .proxy("host:port:user:pass")
+ *     .build();
+ *
+ * try (Browser browser = Browser.launch(config, 9222, port -> {})) {
+ *     Page page = browser.page();
+ *     page.navigate("https://example.com");
+ * }
+ * }</pre>
  *
  * @see BrowserManager
+ * @see BrowserConfig
  * @see Page
  */
 public class Browser implements AutoCloseable {
@@ -61,9 +78,9 @@ public class Browser implements AutoCloseable {
     private final CDPClient cdpClient;           // Page-level connection (Emulation, Page, DOM, etc.)
     private final CDPClient browserCdpClient;    // Browser-level connection (Target, Fetch for proxy auth)
     private final Fingerprint fingerprint;
-    private final InteractionOptions interactionOptions;
+    private final Path userDataDir;
 
-    // Resource management (previously in BrowserSession)
+    // Resource management
     private final int port;
     private final IntConsumer portReleaser;
     private final AtomicBoolean closed = new AtomicBoolean(false);
@@ -74,17 +91,19 @@ public class Browser implements AutoCloseable {
     private volatile String mainPageTargetId;
 
     private Browser(BrowserConfig config, Process process, CDPClient cdpClient,
-                    CDPClient browserCdpClient, Fingerprint fingerprint,
-                    InteractionOptions interactionOptions, int port, IntConsumer portReleaser) {
+                    CDPClient browserCdpClient, Fingerprint fingerprint, Path userDataDir,
+                    int port, IntConsumer portReleaser) {
         this.config = config;
         this.process = process;
         this.cdpClient = cdpClient;
         this.browserCdpClient = browserCdpClient;
         this.fingerprint = fingerprint;
-        this.interactionOptions = interactionOptions;
+        this.userDataDir = userDataDir;
         this.port = port;
         this.portReleaser = portReleaser;
     }
+
+    // ==================== Launch Methods ====================
 
     /**
      * Launches a new browser instance with the given configuration.
@@ -92,60 +111,65 @@ public class Browser implements AutoCloseable {
      * <p>This method blocks until the browser is initialized and ready for use,
      * including CDP connections, proxy authentication setup, and fingerprint application.</p>
      *
-     * <p>Note: Profile warming is NOT performed during launch. Warming is handled
-     * automatically by {@link BrowserManager#createSession()} if enabled, or can be
-     * triggered manually via {@link #warm()} for advanced use cases.</p>
+     * <p>For standalone usage without a BrowserManager:</p>
+     * <pre>{@code
+     * BrowserConfig config = BrowserConfig.builder()
+     *     .executablePath("/path/to/chrome")
+     *     .build();
+     *
+     * Browser browser = Browser.launch(config, 9222, port -> {});
+     * }</pre>
      *
      * @param config       the browser configuration
-     * @param portReleaser callback to release the port back to the pool on close
+     * @param port         the CDP debugging port to use
+     * @param portReleaser callback to release the port back to pool on close (can be no-op)
      * @return a running Browser instance
      * @throws IOException if the browser process fails to start or CDP connection fails
      */
-    public static Browser launch(BrowserConfig config, IntConsumer portReleaser) throws IOException {
-        return launch(config, portReleaser, InteractionOptions.defaults());
-    }
+    public static Browser launch(BrowserConfig config, int port, IntConsumer portReleaser) throws IOException {
+        if (config == null) {
+            throw new IllegalArgumentException("BrowserConfig cannot be null");
+        }
+        if (port < 1 || port > 65535) {
+            throw new IllegalArgumentException("Port must be between 1 and 65535, got: " + port);
+        }
+        if (portReleaser == null) {
+            portReleaser = p -> {}; // No-op if not provided
+        }
 
-    /**
-     * Launches a new browser instance with the given configuration and interaction options.
-     *
-     * @param config             the browser configuration
-     * @param portReleaser       callback to release the port back to the pool on close
-     * @param interactionOptions options for human-like interactions
-     * @return a running Browser instance
-     * @throws IOException if the browser process fails to start or CDP connection fails
-     */
-    public static Browser launch(BrowserConfig config, IntConsumer portReleaser,
-                                 InteractionOptions interactionOptions) throws IOException {
-        int port = config.getPort();
+        // Generate temporary user data directory
+        Path userDataDir = generateUserDataDir();
 
         // Load fingerprint if enabled
         Fingerprint fingerprint = null;
-        if (config.isFingerprintEnabled()) {
+        if (config.fingerprintEnabled()) {
             System.out.println("[Browser] Fingerprint mode enabled, loading profile...");
             fingerprint = new Fingerprint();
             System.out.println("[Browser] Loaded fingerprint: " + fingerprint);
         }
 
-        List<String> arguments = buildArguments(config, fingerprint);
+        // Build Chrome arguments
+        List<String> arguments = buildArguments(config, port, userDataDir, fingerprint);
 
         System.out.println("[Browser] Launching on port " + port + "...");
 
+        // Start Chrome process
         ProcessBuilder processBuilder = new ProcessBuilder(arguments);
         Process process = processBuilder.start();
 
-        // Always connect to browser target for target discovery
+        // Connect to browser target for target discovery and proxy auth
         System.out.println("[Browser] Connecting to browser target...");
         CDPClient browserCdpClient = connectToBrowserWithRetry(port);
 
-        // Connect to page target
+        // Connect to page target for page operations
         System.out.println("[Browser] Connecting to page target...");
         CDPClient cdpClient = connectWithRetry(port);
 
         Browser browser = new Browser(config, process, cdpClient, browserCdpClient,
-                fingerprint, interactionOptions, port, portReleaser);
+                fingerprint, userDataDir, port, portReleaser);
 
         // Setup proxy authentication handler FIRST (before any requests are made)
-        if (config.hasProxy() && config.getProxyConfig().requiresAuth()) {
+        if (config.hasProxy() && config.proxyConfig().requiresAuth()) {
             browser.setupProxyAuthentication();
         }
 
@@ -167,6 +191,17 @@ public class Browser implements AutoCloseable {
         System.out.println("[Browser] Ready on port " + port);
 
         return browser;
+    }
+
+    /**
+     * Generates a unique temporary user data directory.
+     *
+     * @return path to the new directory
+     */
+    private static Path generateUserDataDir() {
+        String tempDir = System.getProperty("java.io.tmpdir");
+        String uniqueId = UUID.randomUUID().toString().substring(0, 8);
+        return Path.of(tempDir, "nodriver4j-" + uniqueId);
     }
 
     // ==================== Warming ====================
@@ -200,7 +235,7 @@ public class Browser implements AutoCloseable {
 
         System.out.println("[Browser] Starting profile warming (port " + port + ")...");
 
-        SessionWarmer warmer = new SessionWarmer(getPage());
+        SessionWarmer warmer = new SessionWarmer(page());
         SessionWarmer.WarmingResult result = warmer.warm();
 
         if (result.hasWarnings()) {
@@ -211,18 +246,6 @@ public class Browser implements AutoCloseable {
         }
 
         return result;
-    }
-
-    /**
-     * Checks if profile warming is enabled for this browser.
-     *
-     * <p>This reflects the configuration setting, not whether warming has been performed.
-     * Use {@link #isWarmed()} to check if warming has already been done.</p>
-     *
-     * @return true if warming is enabled in the configuration
-     */
-    public boolean isWarmProfileEnabled() {
-        return config.isWarmProfile();
     }
 
     /**
@@ -249,7 +272,6 @@ public class Browser implements AutoCloseable {
             browserCdpClient.addEventListener("Target.attachedToTarget", params -> {
                 System.out.println("[DEBUG] Target attached: " + params);
             });
-
 
             // Enable target discovery
             JsonObject params = new JsonObject();
@@ -310,8 +332,6 @@ public class Browser implements AutoCloseable {
         JsonObject targetInfo = params.getAsJsonObject("targetInfo");
         String targetId = targetInfo.get("targetId").getAsString();
 
-        // We could update page metadata here if needed
-        // For now, just log significant changes
         if (targetInfo.has("url")) {
             String url = targetInfo.get("url").getAsString();
             Page page = pages.get(targetId);
@@ -330,29 +350,22 @@ public class Browser implements AutoCloseable {
         }
 
         try {
-            // For the main page, we use the existing cdpClient
-            // For additional pages, we need to create a new CDP connection
             Page page;
             if (mainPageTargetId == null) {
                 // First page - use the existing page-level CDP client
                 mainPageTargetId = targetId;
-                page = new Page(cdpClient, targetId, this, interactionOptions);
+                page = new Page(cdpClient, targetId, this, config.interactionOptions());
                 pages.put(targetId, page);
 
                 String url = targetInfo.has("url") ? targetInfo.get("url").getAsString() : "about:blank";
                 System.out.println("[Browser] Main page registered: " + targetId + " (" + url + ")");
             } else {
-                // Additional pages - we track them but note they need separate CDP connection
-                // For full support, CDPClient would need a connectToUrl(wsUrl) method
-                // For now, log that this page exists but may have limited functionality
+                // Additional pages - track with limited functionality note
                 String url = targetInfo.has("url") ? targetInfo.get("url").getAsString() : "about:blank";
                 System.out.println("[Browser] Additional page detected: " + targetId + " (" + url + ")");
                 System.out.println("[Browser] Note: Additional pages have limited automation support in current version");
 
-                // Still create a Page with the main cdpClient - some operations may work
-                // but page-specific operations may affect the wrong page
-                // This is a known limitation until CDPClient supports direct URL connection
-                page = new Page(cdpClient, targetId, this, interactionOptions);
+                page = new Page(cdpClient, targetId, this, config.interactionOptions());
                 pages.put(targetId, page);
             }
 
@@ -365,24 +378,22 @@ public class Browser implements AutoCloseable {
 
     /**
      * Sets up CDP-based proxy authentication handler on the browser-level connection.
-     * This handler remains active for the entire browser session and responds
-     * to authentication challenges from the proxy server for ALL tabs/pages.
      */
     private void setupProxyAuthentication() {
-        ProxyConfig proxy = config.getProxyConfig();
+        ProxyConfig proxy = config.proxyConfig();
         System.out.println("[Browser] Setting up proxy authentication for " +
-                proxy.getHost() + ":" + proxy.getPort());
+                proxy.host() + ":" + proxy.port());
 
         try {
-            // Enable Fetch domain with auth interception on BROWSER-level connection
+            // Enable Fetch domain with auth interception
             JsonObject enableParams = new JsonObject();
             enableParams.addProperty("handleAuthRequests", true);
             browserCdpClient.send("Fetch.enable", enableParams);
 
-            // Handle regular paused requests - continue them immediately
+            // Handle regular paused requests
             browserCdpClient.addEventListener("Fetch.requestPaused", this::handleRequestPaused);
 
-            // Handle auth challenges - provide credentials
+            // Handle auth challenges
             browserCdpClient.addEventListener("Fetch.authRequired", this::handleProxyAuthRequired);
 
             System.out.println("[Browser] Proxy authentication handler registered (browser-wide)");
@@ -394,12 +405,10 @@ public class Browser implements AutoCloseable {
 
     /**
      * Handles paused requests from CDP.
-     * Continues the request immediately without modification.
      */
     private void handleRequestPaused(JsonObject event) {
         String requestId = event.get("requestId").getAsString();
 
-        // Continue the request without modification
         JsonObject continueParams = new JsonObject();
         continueParams.addProperty("requestId", requestId);
 
@@ -408,14 +417,11 @@ public class Browser implements AutoCloseable {
 
     /**
      * Handles proxy authentication challenges from CDP.
-     * Called each time the proxy requires authentication (initial connection,
-     * reconnection after timeout, new parallel connections, etc.)
      */
     private void handleProxyAuthRequired(JsonObject event) {
-        ProxyConfig proxy = config.getProxyConfig();
+        ProxyConfig proxy = config.proxyConfig();
         String requestId = event.get("requestId").getAsString();
 
-        // Log auth challenge details for debugging
         if (event.has("authChallenge")) {
             JsonObject challenge = event.getAsJsonObject("authChallenge");
             String source = challenge.has("source") ? challenge.get("source").getAsString() : "unknown";
@@ -423,60 +429,18 @@ public class Browser implements AutoCloseable {
             System.out.println("[Browser] Proxy auth required - source: " + source + ", origin: " + origin);
         }
 
-        // Build auth response
         JsonObject authResponse = new JsonObject();
         authResponse.addProperty("requestId", requestId);
 
         JsonObject authChallengeResponse = new JsonObject();
         authChallengeResponse.addProperty("response", "ProvideCredentials");
-        authChallengeResponse.addProperty("username", proxy.getUsername());
-        authChallengeResponse.addProperty("password", proxy.getPassword());
+        authChallengeResponse.addProperty("username", proxy.username());
+        authChallengeResponse.addProperty("password", proxy.password());
         authResponse.add("authChallengeResponse", authChallengeResponse);
 
-        // Send credentials asynchronously (no need to wait for response)
         browserCdpClient.sendAsync("Fetch.continueWithAuth", authResponse);
 
         System.out.println("[Browser] Proxy credentials provided for request: " + requestId);
-    }
-
-    // ==================== Fingerprint Application ====================
-
-    /**
-     * Applies fingerprint settings that require CDP calls (screen dimensions, etc.)
-     * Uses the page-level CDP connection.
-     */
-    private void applyFingerprintViaCDP() {
-        if (fingerprint == null) {
-            return;
-        }
-
-        try {
-            System.out.println("[Browser] Applying screen emulation via CDP...");
-
-            // Enable necessary domains
-            cdpClient.send("Emulation.clearDeviceMetricsOverride", null);
-
-            // Set device metrics to match fingerprint
-            JsonObject params = new JsonObject();
-            params.addProperty("width", fingerprint.getScreenWidth());
-            params.addProperty("height", fingerprint.getScreenHeight());
-            params.addProperty("deviceScaleFactor", 1);
-            params.addProperty("mobile", false);
-
-            // Screen orientation
-            JsonObject screenOrientation = new JsonObject();
-            screenOrientation.addProperty("type", "landscapePrimary");
-            screenOrientation.addProperty("angle", 0);
-            params.add("screenOrientation", screenOrientation);
-
-            cdpClient.send("Emulation.setDeviceMetricsOverride", params);
-
-            System.out.println("[Browser] Screen emulation applied: " +
-                    fingerprint.getScreenWidth() + "x" + fingerprint.getScreenHeight());
-
-        } catch (TimeoutException e) {
-            System.err.println("[Browser] WARNING: Failed to apply screen emulation: " + e.getMessage());
-        }
     }
 
     // ==================== CDP Connection Helpers ====================
@@ -529,7 +493,7 @@ public class Browser implements AutoCloseable {
      * @return the main Page instance
      * @throws IllegalStateException if no pages are available or browser is closed
      */
-    public Page getPage() {
+    public Page page() {
         ensureOpen();
 
         if (mainPageTargetId != null) {
@@ -553,7 +517,7 @@ public class Browser implements AutoCloseable {
      * @return unmodifiable list of all Page instances
      * @throws IllegalStateException if browser is closed
      */
-    public List<Page> getPages() {
+    public List<Page> pages() {
         ensureOpen();
         return Collections.unmodifiableList(new ArrayList<>(pages.values()));
     }
@@ -565,7 +529,7 @@ public class Browser implements AutoCloseable {
      * @return the Page instance, or null if not found
      * @throws IllegalStateException if browser is closed
      */
-    public Page getPageByTargetId(String targetId) {
+    public Page pageByTargetId(String targetId) {
         ensureOpen();
         return pages.get(targetId);
     }
@@ -575,7 +539,7 @@ public class Browser implements AutoCloseable {
      *
      * @return the page count
      */
-    public int getPageCount() {
+    public int pageCount() {
         return pages.size();
     }
 
@@ -636,21 +600,39 @@ public class Browser implements AutoCloseable {
         ensureOpen();
 
         JsonObject params = new JsonObject();
-        params.addProperty("targetId", page.getTargetId());
+        params.addProperty("targetId", page.targetId());
 
         browserCdpClient.send("Target.closeTarget", params);
-        pages.remove(page.getTargetId());
+        pages.remove(page.targetId());
     }
 
     // ==================== State and Resource Access ====================
+
+    /**
+     * Gets the configuration used by this browser.
+     *
+     * @return the BrowserConfig
+     */
+    public BrowserConfig config() {
+        return config;
+    }
 
     /**
      * Gets the debugging port allocated to this browser.
      *
      * @return the CDP debugging port number
      */
-    public int getPort() {
+    public int port() {
         return port;
+    }
+
+    /**
+     * Gets the user data directory for this browser session.
+     *
+     * @return the path to the user data directory
+     */
+    public Path userDataDir() {
+        return userDataDir;
     }
 
     /**
@@ -674,13 +656,10 @@ public class Browser implements AutoCloseable {
     /**
      * Gets the page-level CDP client for direct protocol access.
      *
-     * <p>Use this for page-specific commands like Page, DOM, Emulation,
-     * Network (monitoring), Runtime, etc.</p>
-     *
      * @return the page-level CDPClient instance
      * @throws IllegalStateException if browser is closed
      */
-    public CDPClient getCdpClient() {
+    public CDPClient cdpClient() {
         ensureOpen();
         return cdpClient;
     }
@@ -688,13 +667,10 @@ public class Browser implements AutoCloseable {
     /**
      * Gets the browser-level CDP client.
      *
-     * <p>Use this for browser-wide commands that should apply to all tabs,
-     * such as Target management and Fetch (proxy auth).</p>
-     *
      * @return the browser-level CDPClient instance
      * @throws IllegalStateException if browser is closed
      */
-    public CDPClient getBrowserCdpClient() {
+    public CDPClient browserCdpClient() {
         ensureOpen();
         return browserCdpClient;
     }
@@ -704,7 +680,7 @@ public class Browser implements AutoCloseable {
      *
      * @return the Fingerprint, or null if fingerprinting is disabled
      */
-    public Fingerprint getFingerprint() {
+    public Fingerprint fingerprint() {
         return fingerprint;
     }
 
@@ -713,8 +689,8 @@ public class Browser implements AutoCloseable {
      *
      * @return the ProxyConfig, or null if no proxy is configured
      */
-    public ProxyConfig getProxyConfig() {
-        return config.getProxyConfig();
+    public ProxyConfig proxyConfig() {
+        return config.proxyConfig();
     }
 
     /**
@@ -722,18 +698,105 @@ public class Browser implements AutoCloseable {
      *
      * @return the InteractionOptions
      */
-    public InteractionOptions getInteractionOptions() {
-        return interactionOptions;
+    public InteractionOptions interactionOptions() {
+        return config.interactionOptions();
     }
 
+    /**
+     * Gets the AutoSolve AI service for this browser, if configured.
+     *
+     * @return the AutoSolveAIService, or null if not configured
+     */
     public AutoSolveAIService autoSolveAIService() {
-        return config.getAutoSolveAIService();
+        return config.autoSolveAIService();
+    }
+
+    // ==================== Deprecated Methods (for backward compatibility) ====================
+
+    /**
+     * @deprecated Use {@link #page()} instead
+     */
+    @Deprecated
+    public Page getPage() {
+        return page();
+    }
+
+    /**
+     * @deprecated Use {@link #pages()} instead
+     */
+    @Deprecated
+    public List<Page> getPages() {
+        return pages();
+    }
+
+    /**
+     * @deprecated Use {@link #pageByTargetId(String)} instead
+     */
+    @Deprecated
+    public Page getPageByTargetId(String targetId) {
+        return pageByTargetId(targetId);
+    }
+
+    /**
+     * @deprecated Use {@link #pageCount()} instead
+     */
+    @Deprecated
+    public int getPageCount() {
+        return pageCount();
+    }
+
+    /**
+     * @deprecated Use {@link #port()} instead
+     */
+    @Deprecated
+    public int getPort() {
+        return port();
+    }
+
+    /**
+     * @deprecated Use {@link #cdpClient()} instead
+     */
+    @Deprecated
+    public CDPClient getCdpClient() {
+        return cdpClient();
+    }
+
+    /**
+     * @deprecated Use {@link #browserCdpClient()} instead
+     */
+    @Deprecated
+    public CDPClient getBrowserCdpClient() {
+        return browserCdpClient();
+    }
+
+    /**
+     * @deprecated Use {@link #fingerprint()} instead
+     */
+    @Deprecated
+    public Fingerprint getFingerprint() {
+        return fingerprint();
+    }
+
+    /**
+     * @deprecated Use {@link #proxyConfig()} instead
+     */
+    @Deprecated
+    public ProxyConfig getProxyConfig() {
+        return proxyConfig();
+    }
+
+    /**
+     * @deprecated Use {@link #interactionOptions()} instead
+     */
+    @Deprecated
+    public InteractionOptions getInteractionOptions() {
+        return interactionOptions();
     }
 
     // ==================== Lifecycle Management ====================
 
     /**
-     * Ensures this browser is still open, throwing if it has been closed.
+     * Ensures this browser is still open.
      *
      * @throws IllegalStateException if the browser has been closed
      */
@@ -746,27 +809,22 @@ public class Browser implements AutoCloseable {
     /**
      * Closes the browser and releases all resources.
      *
-     * <p>This method is idempotent - calling it multiple times has no additional effect.
-     * It will:</p>
+     * <p>This method is idempotent. It will:</p>
      * <ul>
      *   <li>Close CDP WebSocket connections</li>
      *   <li>Terminate the Chrome process</li>
      *   <li>Delete the temporary user data directory</li>
      *   <li>Release the allocated port back to the pool</li>
      * </ul>
-     *
-     * <p>This method does not throw exceptions. Any errors during cleanup are logged
-     * but suppressed to ensure the port is always released.</p>
      */
     @Override
     public void close() {
         if (!closed.compareAndSet(false, true)) {
-            // Already closed
-            return;
+            return; // Already closed
         }
 
         try {
-            // Remove event listeners
+            // Remove event listeners and close CDP
             if (browserCdpClient != null) {
                 browserCdpClient.removeAllEventListeners();
                 browserCdpClient.close();
@@ -793,7 +851,6 @@ public class Browser implements AutoCloseable {
             deleteUserDataDir();
 
         } catch (Exception e) {
-            // Log but don't rethrow - we must release the port
             System.err.println("[Browser] Error during cleanup: " + e.getMessage());
         } finally {
             // Always release the port
@@ -816,11 +873,8 @@ public class Browser implements AutoCloseable {
 
     /**
      * Deletes the temporary user data directory with retry logic.
-     * Retries deletion to handle files locked by Chrome processes that are still closing.
-     * Called during close() to clean up disk space.
      */
     private void deleteUserDataDir() {
-        Path userDataDir = config.getUserDataDir();
         if (userDataDir == null || !Files.exists(userDataDir)) {
             return;
         }
@@ -830,7 +884,7 @@ public class Browser implements AutoCloseable {
 
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             if (tryDeleteDirectory(userDataDir)) {
-                return; // Success
+                return;
             }
 
             if (attempt < maxRetries) {
@@ -843,16 +897,12 @@ public class Browser implements AutoCloseable {
             }
         }
 
-        // Only log if all retries failed
         System.err.println("[Browser] Failed to delete user data directory after " + maxRetries +
                 " attempts: " + userDataDir);
     }
 
     /**
      * Attempts to delete a directory and all its contents.
-     *
-     * @param directory the directory to delete
-     * @return true if deletion was successful, false if any file could not be deleted
      */
     private boolean tryDeleteDirectory(Path directory) {
         if (!Files.exists(directory)) {
@@ -880,13 +930,23 @@ public class Browser implements AutoCloseable {
 
     // ==================== Command Line Arguments ====================
 
-    private static List<String> buildArguments(BrowserConfig config, Fingerprint fingerprint) {
+    /**
+     * Builds Chrome command-line arguments from configuration.
+     *
+     * @param config      the browser configuration
+     * @param port        the CDP debugging port
+     * @param userDataDir the user data directory path
+     * @param fingerprint the fingerprint to apply (can be null)
+     * @return list of command-line arguments
+     */
+    private static List<String> buildArguments(BrowserConfig config, int port,
+                                               Path userDataDir, Fingerprint fingerprint) {
         List<String> args = new ArrayList<>();
-        args.add(config.getExecutablePath());
+        args.add(config.executablePath());
 
         // Core browser arguments
-        args.add("--remote-debugging-port=" + config.getPort());
-        args.add("--user-data-dir=" + config.getUserDataDir().toAbsolutePath());
+        args.add("--remote-debugging-port=" + port);
+        args.add("--user-data-dir=" + userDataDir.toAbsolutePath());
         args.add("--no-first-run");
         args.add("--no-default-browser-check");
         args.add("--disable-breakpad");
@@ -904,21 +964,21 @@ public class Browser implements AutoCloseable {
 
         // Proxy configuration
         if (config.hasProxy()) {
-            ProxyConfig proxy = config.getProxyConfig();
+            ProxyConfig proxy = config.proxyConfig();
             args.add("--proxy-server=" + proxy.toProxyServerArg());
             System.out.println("[Browser] Proxy configured: " + proxy);
         }
 
         // Headless mode
-        if (config.isHeadless()) {
+        if (config.headless()) {
             args.add("--headless=new");
 
-            // Random screen dimensions (50/50 between 1080p and 1440p)
+            // Random screen dimensions
             int[] resolution = HEADLESS_RESOLUTIONS[new Random().nextInt(HEADLESS_RESOLUTIONS.length)];
             args.add("--window-size=" + resolution[0] + "," + resolution[1]);
 
             // GPU acceleration (opt-in)
-            if (config.isHeadlessGpuAcceleration()) {
+            if (config.headlessGpuAcceleration()) {
                 args.add("--enable-gpu");
                 args.add("--enable-webgl");
                 args.add("--use-gl=desktop");
@@ -926,40 +986,34 @@ public class Browser implements AutoCloseable {
         }
 
         // WebRTC policy
-        String webrtcPolicy = config.getWebrtcPolicy();
+        String webrtcPolicy = config.webrtcPolicy();
         if (webrtcPolicy != null && !webrtcPolicy.isBlank()) {
             args.add("--webrtc-ip-handling-policy=" + webrtcPolicy);
         }
 
-        if (config.getArguements() != null && !config.getArguements().isEmpty()) {
-            System.out.println("####################################################################");
-            args.addAll(config.getArguements());
+        // Custom arguments from config
+        List<String> customArgs = config.arguments();
+        if (customArgs != null && !customArgs.isEmpty()) {
+            args.addAll(customArgs);
         }
 
         // Fingerprint arguments
         if (fingerprint != null) {
-            // Core fingerprint seed - enables all fingerprinting features
             args.add("--fingerprint=" + fingerprint.getSeed());
-
-            // Platform spoofing
             args.add("--fingerprint-platform=" + fingerprint.getPlatform());
+
             if (fingerprint.getPlatformVersion() != null) {
                 args.add("--fingerprint-platform-version=" + fingerprint.getPlatformVersion());
             }
 
-            // Hardware concurrency
             args.add("--fingerprint-hardware-concurrency=" + fingerprint.getHardwareConcurrency());
 
-            // GPU/WebGL spoofing
             if (fingerprint.getGpuVendor() != null) {
                 args.add("--fingerprint-gpu-vendor=" + fingerprint.getGpuVendor());
             }
             if (fingerprint.getGpuRenderer() != null) {
                 args.add("\"--fingerprint-gpu-renderer=" + fingerprint.getGpuRenderer() + "\"");
             }
-
-            // Timezone
-            // args.add("--timezone=" + fingerprint.getTimezone());
         }
 
         return args;
@@ -973,6 +1027,6 @@ public class Browser implements AutoCloseable {
                 warmed.get(),
                 pages.size(),
                 fingerprint != null ? "enabled" : "disabled",
-                config.getProxyConfig() != null ? config.getProxyConfig().getHost() : "none");
+                config.proxyConfig() != null ? config.proxyConfig().host() : "none");
     }
 }
