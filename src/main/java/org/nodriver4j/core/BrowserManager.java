@@ -143,6 +143,7 @@ public class BrowserManager implements AutoCloseable {
         this.arguements = builder.arguements;
         this.headlessGpuAcceleration = builder.headlessGpuAcceleration;
         this.autoSolveAIKey = builder.autoSolveAIKey;
+        this.autoSolveAIService = builder.autoSolveAIService;
 
         this.isShutdown = new AtomicBoolean(false);
         this.activeBrowsers = ConcurrentHashMap.newKeySet();
@@ -579,7 +580,8 @@ public class BrowserManager implements AutoCloseable {
                 .headless(headless)
                 .webrtcPolicy(webrtcPolicy)
                 .headlessGpuAcceleration(headlessGpuAcceleration)
-                .chromeArguements(arguements);
+                .chromeArguements(arguements)
+                .autoSolveAIService(autoSolveAIService);
 
         // Consume proxy from file if enabled
         if (proxyEnabled) {
@@ -845,6 +847,7 @@ public class BrowserManager implements AutoCloseable {
         private final ArrayList<String> arguements = new ArrayList<>();
         private final boolean headlessGpuAcceleration = false;
         private String autoSolveAIKey;
+        private AutoSolveAIService autoSolveAIService;
 
         private Builder() {}
 
@@ -985,6 +988,7 @@ public class BrowserManager implements AutoCloseable {
          */
         public Builder autoSolveAIKey(String apiKey) {
             this.autoSolveAIKey = apiKey;
+            this.autoSolveAIService = new AutoSolveAIService(apiKey);
             return this;
         }
 

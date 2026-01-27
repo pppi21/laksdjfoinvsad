@@ -1,5 +1,7 @@
 package org.nodriver4j.core;
 
+import org.nodriver4j.services.AutoSolveAIService;
+
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.UUID;
@@ -28,6 +30,7 @@ public class BrowserConfig {
     private final ProxyConfig proxyConfig;
     private final ArrayList<String> arguements;
     private final boolean headlessGpuAcceleration;
+    private final AutoSolveAIService autoSolveAIService;
 
     private BrowserConfig(Builder builder) {
         this.executablePath = builder.executablePath;
@@ -40,6 +43,7 @@ public class BrowserConfig {
         this.proxyConfig = builder.proxyConfig;
         this.arguements = builder.arguements;
         this.headlessGpuAcceleration = builder.headlessGpuAcceleration;
+        this.autoSolveAIService = builder.autoSolveAIService;
     }
 
     public String getExecutablePath() {
@@ -77,6 +81,8 @@ public class BrowserConfig {
     public ArrayList<String> getArguements() { return arguements; }
 
     public boolean isHeadlessGpuAcceleration() { return headlessGpuAcceleration; }
+
+    public AutoSolveAIService getAutoSolveAIService() { return autoSolveAIService; }
 
     /**
      * Checks if a proxy is configured for this browser.
@@ -118,6 +124,7 @@ public class BrowserConfig {
         private ProxyConfig proxyConfig;
         private ArrayList<String> arguements;
         private boolean headlessGpuAcceleration = false;
+        private AutoSolveAIService autoSolveAIService;
 
         private Builder() {}
 
@@ -249,6 +256,11 @@ public class BrowserConfig {
          */
         public Builder headlessGpuAcceleration(boolean headlessGpuAcceleration) {
             this.headlessGpuAcceleration = headlessGpuAcceleration;
+            return this;
+        }
+
+        public Builder autoSolveAIService(AutoSolveAIService autoSolveAIService) {
+            this.autoSolveAIService = autoSolveAIService;
             return this;
         }
 

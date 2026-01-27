@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.nodriver4j.cdp.CDPClient;
 import org.nodriver4j.scripts.SessionWarmer;
+import org.nodriver4j.services.AutoSolveAIService;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -335,7 +336,7 @@ public class Browser implements AutoCloseable {
             if (mainPageTargetId == null) {
                 // First page - use the existing page-level CDP client
                 mainPageTargetId = targetId;
-                page = new Page(cdpClient, targetId, interactionOptions);
+                page = new Page(cdpClient, targetId, this, interactionOptions);
                 pages.put(targetId, page);
 
                 String url = targetInfo.has("url") ? targetInfo.get("url").getAsString() : "about:blank";
@@ -351,7 +352,7 @@ public class Browser implements AutoCloseable {
                 // Still create a Page with the main cdpClient - some operations may work
                 // but page-specific operations may affect the wrong page
                 // This is a known limitation until CDPClient supports direct URL connection
-                page = new Page(cdpClient, targetId, interactionOptions);
+                page = new Page(cdpClient, targetId, this, interactionOptions);
                 pages.put(targetId, page);
             }
 
@@ -723,6 +724,10 @@ public class Browser implements AutoCloseable {
      */
     public InteractionOptions getInteractionOptions() {
         return interactionOptions;
+    }
+
+    public AutoSolveAIService autoSolveAIService() {
+        return config.getAutoSolveAIService();
     }
 
     // ==================== Lifecycle Management ====================

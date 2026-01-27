@@ -1,8 +1,10 @@
 package org.nodriver4j.scripts;
 
+import org.nodriver4j.captcha.ReCaptchaSolver;
 import org.nodriver4j.core.Page;
 import org.nodriver4j.profiles.Profile;
 import org.nodriver4j.profiles.ProfilePool;
+import org.nodriver4j.services.AutoSolveAIService;
 import org.nodriver4j.services.GmailClient;
 import org.nodriver4j.services.UberOtpExtractor;
 
@@ -111,6 +113,7 @@ public class UberGen {
                 fillFormField(GOOGLE_SEARCH_TEXT, "uber eats", true);
                 page.pressKey("Enter", false,false,false);
                 if(!page.exists(UE_RESULT_BUTTON)) {
+                    ReCaptchaSolver.solve(page);
                     page.waitForSelector(UE_RESULT_BUTTON,100000);
                 }
                 page.sleep(1500);

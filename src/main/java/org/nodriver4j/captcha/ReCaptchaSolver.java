@@ -65,9 +65,6 @@ public final class ReCaptchaSolver {
     /** Checkbox element inside checkbox iframe */
     private static final String CHECKBOX_SELECTOR = "#recaptcha-anchor";
 
-    /** Image challenge container (what to screenshot) */
-    private static final String CHALLENGE_IMAGE_SELECTOR = ".rc-imageselect-challenge";
-
     /** Challenge description text */
     private static final String DESCRIPTION_SELECTOR = "div.rc-imageselect-desc-wrapper > div > strong";
 
@@ -143,33 +140,30 @@ public final class ReCaptchaSolver {
      * </ul>
      *
      * @param page      the Page containing the reCAPTCHA
-     * @param aiService the AutoSolve AI service for solving challenges
      * @return the solve result indicating success or failure
      * @throws IllegalArgumentException if page or aiService is null
      */
-    public static SolveResult solve(Page page, AutoSolveAIService aiService) {
-        return solve(page, aiService, SolveOptions.defaults());
+    public static SolveResult solve(Page page) {
+        return solve(page, SolveOptions.defaults());
     }
 
     /**
      * Attempts to solve a reCAPTCHA v2 challenge with custom options.
      *
      * @param page      the Page containing the reCAPTCHA
-     * @param aiService the AutoSolve AI service for solving challenges
      * @param options   custom solve options
      * @return the solve result indicating success or failure
      * @throws IllegalArgumentException if any parameter is null
      */
-    public static SolveResult solve(Page page, AutoSolveAIService aiService, SolveOptions options) {
+    public static SolveResult solve(Page page, SolveOptions options) {
         if (page == null) {
             throw new IllegalArgumentException("Page cannot be null");
-        }
-        if (aiService == null) {
-            throw new IllegalArgumentException("AutoSolveAIService cannot be null");
         }
         if (options == null) {
             throw new IllegalArgumentException("SolveOptions cannot be null");
         }
+
+        AutoSolveAIService aiService = page.browser().autoSolveAIService();
 
         System.out.println("[ReCaptchaSolver] Starting reCAPTCHA solve attempt...");
 

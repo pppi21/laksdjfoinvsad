@@ -80,6 +80,7 @@ public class Page {
     private final CDPClient cdp;
     private final String targetId;
     private final InteractionOptions options;
+    private final Browser browser;
     private final ConcurrentHashMap<String, String> oopifSessions = new ConcurrentHashMap<>();
 
     // Current mouse position (tracked for realistic movement)
@@ -193,8 +194,8 @@ public class Page {
      * @param cdp      the CDP client connected to this page's target
      * @param targetId the target ID for this page
      */
-    public Page(CDPClient cdp, String targetId) {
-        this(cdp, targetId, InteractionOptions.defaults());
+    public Page(CDPClient cdp, String targetId, Browser browser) {
+        this(cdp, targetId, browser, InteractionOptions.defaults());
     }
 
     /**
@@ -204,9 +205,10 @@ public class Page {
      * @param targetId the target ID for this page
      * @param options  the interaction options
      */
-    public Page(CDPClient cdp, String targetId, InteractionOptions options) {
+    public Page(CDPClient cdp, String targetId, Browser browser, InteractionOptions options) {
         this.cdp = cdp;
         this.targetId = targetId;
+        this.browser = browser;
         this.options = options;
         this.mousePosition = Vector.ORIGIN;
     }
@@ -3393,6 +3395,10 @@ public class Page {
         params.addProperty("domain", domain);
 
         cdp.send("Network.deleteCookies", params);
+    }
+
+    public Browser browser(){
+        return browser;
     }
 
     // ==================== Utility Methods ====================

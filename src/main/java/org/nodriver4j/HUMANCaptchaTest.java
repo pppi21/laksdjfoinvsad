@@ -77,7 +77,6 @@ public class HUMANCaptchaTest {
                     try {
 
                         Page page = browser.getPage();
-                        AutoSolveAIService aiService = manager.autoSolveAIService();
 
                         page.navigate(URL);
 
@@ -85,7 +84,7 @@ public class HUMANCaptchaTest {
 
                         scanner.nextLine();
 
-                        ReCaptchaSolver.solve(page, aiService);
+                        ReCaptchaSolver.solve(page);
 
                         Scanner scanner2 = new Scanner(System.in);
 
