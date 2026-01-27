@@ -1,6 +1,7 @@
 package org.nodriver4j;
 
 import org.nodriver4j.core.Browser;
+import org.nodriver4j.core.BrowserConfig;
 import org.nodriver4j.core.BrowserManager;
 import org.nodriver4j.core.Page;
 import org.nodriver4j.captcha.ReCaptchaSolver;
@@ -36,15 +37,17 @@ public class HUMANCaptchaTest {
         System.out.println("==========================================");
         System.out.println();
 
-        BrowserManager manager = BrowserManager.builder()
+        BrowserConfig config = BrowserConfig.builder()
                 .executablePath(executablePath)
                 .fingerprintEnabled(true)
-                //.webrtcPolicy("default")
+                .argument(HEADLESS_UA)
+                .autoSolveAIKey(AUTOSOLVE_AI_KEY)
+                .build();
+
+        BrowserManager manager = BrowserManager.builder()
+                .config(config)
                 .proxyEnabled(true)
                 .warmProfile(false)
-                .chromeArguement(HEADLESS_UA)
-                .autoSolveAIKey(AUTOSOLVE_AI_KEY)
-                //.headless(true)
                 .build();
 
         List<Browser> browsers = null;
@@ -76,7 +79,7 @@ public class HUMANCaptchaTest {
                 CompletableFuture<ScriptResult> future = CompletableFuture.supplyAsync(() -> {
                     try {
 
-                        Page page = browser.getPage();
+                        Page page = browser.page();
 
                         page.navigate(URL);
 

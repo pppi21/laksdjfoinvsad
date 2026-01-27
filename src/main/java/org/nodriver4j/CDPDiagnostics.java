@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import org.nodriver4j.cdp.CDPClient;
 import org.nodriver4j.core.Browser;
+import org.nodriver4j.core.BrowserConfig;
 import org.nodriver4j.core.BrowserManager;
 import org.nodriver4j.core.Page;
 
@@ -29,17 +30,21 @@ public class CDPDiagnostics {
             return;
         }
 
-        BrowserManager manager = BrowserManager.builder()
+        BrowserConfig config = BrowserConfig.builder()
                 .executablePath(executablePath)
                 .fingerprintEnabled(false)
+                .argument(HEADLESS_UA)
+                .build();
+
+        BrowserManager manager = BrowserManager.builder()
+                .config(config)
                 .proxyEnabled(false)
                 .warmProfile(false)
-                .chromeArguement(HEADLESS_UA)
                 .build();
 
         try (Browser browser = manager.createSession()) {
-            Page page = browser.getPage();
-            CDPClient cdp = page.getCdpClient();
+            Page page = browser.page();
+            CDPClient cdp = page.cdpClient();
 
             // Navigate to a page with the captcha
             String testUrl = "https://www.wayfair.com/";
@@ -51,7 +56,7 @@ public class CDPDiagnostics {
             page.sleep(5000);
 
             // Check if captcha exists first
-            boolean captchaExists = page.existsCss("#px-captcha");
+            boolean captchaExists = page.exists("#px-captcha");
             System.out.println("\n========================================");
             System.out.println("  Captcha element exists: " + captchaExists);
             System.out.println("========================================\n");

@@ -1,6 +1,7 @@
 package org.nodriver4j;
 
 import org.nodriver4j.core.Browser;
+import org.nodriver4j.core.BrowserConfig;
 import org.nodriver4j.core.BrowserManager;
 import org.nodriver4j.core.Page;
 import org.nodriver4j.profiles.Profile;
@@ -17,7 +18,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class ManualBrowser {
 
 
-    private static String URL = "https://recaptcha-demo.appspot.com/";
+    private static final String URL = "https://browserscan.net/";
 
 
     // Number of concurrent browser sessions
@@ -37,13 +38,16 @@ public class ManualBrowser {
         System.out.println("==========================================");
         System.out.println();
 
-        // Build manager with optional explicit profile paths
-        BrowserManager.Builder managerBuilder = BrowserManager.builder()
+        BrowserConfig config = BrowserConfig.builder()
                 .executablePath(executablePath)
                 .fingerprintEnabled(true)
-                //.webrtcPolicy("default")
+                .headless(true)
+                .headlessGpuAcceleration(true)
+                .build();
+
+        BrowserManager.Builder managerBuilder = BrowserManager.builder()
+                .config(config)
                 .proxyEnabled(true)
-                .headless(false)
                 .warmProfile(false);
 
 
@@ -68,25 +72,25 @@ public class ManualBrowser {
                 System.out.println();
                 System.out.println("--- Browser " + (i + 1) + " ---");
 
-                if (browser.getFingerprint() != null) {
-                    System.out.println("  Fingerprint: " + browser.getFingerprint());
+                if (browser.fingerprint() != null) {
+                    System.out.println("  Fingerprint: " + browser.fingerprint());
                 } else {
                     System.out.println("  Fingerprint: disabled");
                 }
 
-                if (browser.getProxyConfig() != null) {
-                    System.out.println("  Proxy:       " + browser.getProxyConfig());
+                if (browser.proxyConfig() != null) {
+                    System.out.println("  Proxy:       " + browser.proxyConfig());
                 } else {
                     System.out.println("  Proxy:       disabled");
                 }
 
                 Page page  = browser.getPage();
 
-//                page.sleep(2000);
-//                page.navigate(URL);
-//                page.waitForSelector("p._1fr98s7[class*='1fr98s7']");
-//                page.scrollIntoView("p._1fr98s7[class*='1fr98s7']");
-//                page.screenshot();
+                page.sleep(2000);
+                page.navigate(URL);
+                page.waitForSelector("p._1fr98s7[class*='1fr98s7']");
+                page.scrollIntoView("p._1fr98s7[class*='1fr98s7']");
+                page.screenshot();
 
             }
 
@@ -105,6 +109,10 @@ public class ManualBrowser {
         } catch (RuntimeException e) {
             System.err.println("Unexpected error: " + e.getMessage());
             e.printStackTrace();
+        } catch (TimeoutException e) {
+            throw new RuntimeException(e);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
         } finally {
             // Close all browsers
             System.out.println();

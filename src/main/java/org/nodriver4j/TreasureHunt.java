@@ -1,6 +1,7 @@
 package org.nodriver4j;
 
 import org.nodriver4j.core.Browser;
+import org.nodriver4j.core.BrowserConfig;
 import org.nodriver4j.core.BrowserManager;
 import org.nodriver4j.profiles.Profile;
 import org.nodriver4j.profiles.ProfilePool;
@@ -36,13 +37,15 @@ public class TreasureHunt {
         System.out.println("==========================================");
         System.out.println();
 
-        // Build manager with optional explicit profile paths
-        BrowserManager.Builder managerBuilder = BrowserManager.builder()
+        BrowserConfig config = BrowserConfig.builder()
                 .executablePath(executablePath)
                 .fingerprintEnabled(true)
-                //.webrtcPolicy("default")
-                .proxyEnabled(true)
                 .headless(true)
+                .build();
+
+        BrowserManager.Builder managerBuilder = BrowserManager.builder()
+                .config(config)
+                .proxyEnabled(true)
                 .warmProfile(false);
 
 
@@ -91,14 +94,14 @@ public class TreasureHunt {
                 System.out.println();
                 System.out.println("--- Browser " + (i + 1) + " ---");
 
-                if (browser.getFingerprint() != null) {
-                    System.out.println("  Fingerprint: " + browser.getFingerprint());
+                if (browser.fingerprint() != null) {
+                    System.out.println("  Fingerprint: " + browser.fingerprint());
                 } else {
                     System.out.println("  Fingerprint: disabled");
                 }
 
-                if (browser.getProxyConfig() != null) {
-                    System.out.println("  Proxy:       " + browser.getProxyConfig());
+                if (browser.proxyConfig() != null) {
+                    System.out.println("  Proxy:       " + browser.proxyConfig());
                 } else {
                     System.out.println("  Proxy:       disabled");
                 }
@@ -129,7 +132,7 @@ public class TreasureHunt {
 
                         // Run the script
                         MattelDraw script = new MattelDraw(
-                                browser.getPage(),
+                                browser.page(),
                                 profile,
                                 pool
                         );
