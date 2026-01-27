@@ -24,7 +24,7 @@ public class App {
     //private static final String REFERRER_URL = "https://ikes.myguestaccount.com/guest/enroll";
 
     // Number of concurrent browser sessions
-    private static final int SESSION_COUNT = 2;
+    private static final int SESSION_COUNT = 1;
 
     public static void main(String[] args) {
         String executablePath = System.getenv("chromepath");
@@ -52,7 +52,7 @@ public class App {
         BrowserManager.Builder managerBuilder = BrowserManager.builder()
                 .config(config)
                 .proxyEnabled(true)
-                .warmProfile(true);
+                .warmProfile(false);
 
 
         if (profileInputPath != null && profileOutputPath != null) {

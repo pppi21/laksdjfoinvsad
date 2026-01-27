@@ -17,7 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class UEA {
 
     // Number of concurrent browser sessions
-    private static final int SESSION_COUNT = 3;
+    private static final int SESSION_COUNT = 1;
 
     public static void main(String[] args) {
         String executablePath = System.getenv("chromepath");
@@ -31,15 +31,15 @@ public class UEA {
         }
 
         System.out.println("==========================================");
-        System.out.println("  NoDriver4j - Browser Automation Demo");
+        System.out.println("  NoDriver4j - Uber Eats Account Generator");
         System.out.println("==========================================");
         System.out.println();
 
         BrowserConfig config = BrowserConfig.builder()
                 .executablePath(executablePath)
                 .fingerprintEnabled(true)
-                .headless(true)
-                .headlessGpuAcceleration(true)
+                .headless(false)
+                //.headlessGpuAcceleration(true)
                 .build();
 
         BrowserManager.Builder managerBuilder = BrowserManager.builder()
