@@ -19,6 +19,7 @@ import java.util.List;
  *     .executablePath("/path/to/chrome")
  *     .headless(true)
  *     .fingerprintEnabled(true)
+ *     .resourceBlocking(true)
  *     .interactionOptions(InteractionOptions.fast())
  *     .build();
  * }</pre>
@@ -45,6 +46,7 @@ public class BrowserConfig {
 
     // Features
     private final boolean fingerprintEnabled;
+    private final boolean resourceBlocking;
     private final InteractionOptions interactionOptions;
 
     // Optional services/resources (can be set per-browser or shared)
@@ -58,6 +60,7 @@ public class BrowserConfig {
         this.webrtcPolicy = builder.webrtcPolicy;
         this.arguments = Collections.unmodifiableList(new ArrayList<>(builder.arguments));
         this.fingerprintEnabled = builder.fingerprintEnabled;
+        this.resourceBlocking = builder.resourceBlocking;
         this.interactionOptions = builder.interactionOptions;
         this.proxyConfig = builder.proxyConfig;
         this.autoSolveAIService = builder.autoSolveAIService;
@@ -120,6 +123,25 @@ public class BrowserConfig {
     }
 
     /**
+     * Checks if resource blocking is enabled.
+     *
+     * <p>When enabled, unnecessary resources (fonts, media, tracking scripts)
+     * are blocked to improve page load performance. Images and stylesheets
+     * are preserved for CAPTCHA compatibility and accurate element positioning.</p>
+     *
+     * <p>Blocked resource types: Media, Font, Prefetch, Ping, Manifest,
+     * CSPViolationReport, SignedExchange, TextTrack</p>
+     *
+     * <p>Blocked URL patterns: Analytics and tracking services (Google Analytics,
+     * Facebook, Hotjar, Mixpanel, Sentry, etc.)</p>
+     *
+     * @return true if resource blocking is enabled
+     */
+    public boolean resourceBlocking() {
+        return resourceBlocking;
+    }
+
+    /**
      * Gets the interaction options for human-like behavior.
      *
      * @return the interaction options (never null)
@@ -178,6 +200,7 @@ public class BrowserConfig {
         builder.webrtcPolicy = this.webrtcPolicy;
         builder.arguments = new ArrayList<>(this.arguments);
         builder.fingerprintEnabled = this.fingerprintEnabled;
+        builder.resourceBlocking = this.resourceBlocking;
         builder.interactionOptions = this.interactionOptions;
         builder.proxyConfig = this.proxyConfig;
         builder.autoSolveAIService = this.autoSolveAIService;
@@ -196,10 +219,11 @@ public class BrowserConfig {
     @Override
     public String toString() {
         return String.format(
-                "BrowserConfig{executable=%s, headless=%s, fingerprint=%s, proxy=%s, autoSolve=%s}",
+                "BrowserConfig{executable=%s, headless=%s, fingerprint=%s, resourceBlocking=%s, proxy=%s, autoSolve=%s}",
                 executablePath,
                 headless,
                 fingerprintEnabled ? "enabled" : "disabled",
+                resourceBlocking ? "enabled" : "disabled",
                 proxyConfig != null ? proxyConfig.host() : "none",
                 autoSolveAIService != null ? "configured" : "none"
         );
@@ -218,6 +242,7 @@ public class BrowserConfig {
      *     .executablePath("/path/to/chrome")
      *     .headless(false)
      *     .fingerprintEnabled(true)
+     *     .resourceBlocking(true)
      *     .webrtcPolicy("disable_non_proxied_udp")
      *     .interactionOptions(InteractionOptions.defaults())
      *     .build();
@@ -231,6 +256,7 @@ public class BrowserConfig {
         private String webrtcPolicy = DEFAULT_WEBRTC_POLICY;
         private List<String> arguments = new ArrayList<>();
         private boolean fingerprintEnabled = true;
+        private boolean resourceBlocking = false;
         private InteractionOptions interactionOptions = InteractionOptions.defaults();
         private ProxyConfig proxyConfig;
         private AutoSolveAIService autoSolveAIService;
@@ -328,6 +354,29 @@ public class BrowserConfig {
          */
         public Builder fingerprintEnabled(boolean enabled) {
             this.fingerprintEnabled = enabled;
+            return this;
+        }
+
+        /**
+         * Enables or disables resource blocking for improved performance.
+         *
+         * <p>When enabled, unnecessary resources are blocked via CDP Fetch interception:</p>
+         * <ul>
+         *   <li><strong>Blocked types:</strong> Media, Font, Prefetch, Ping, Manifest,
+         *       CSPViolationReport, SignedExchange, TextTrack</li>
+         *   <li><strong>Blocked URLs:</strong> Analytics/tracking (Google Analytics, Facebook,
+         *       Hotjar, Mixpanel, Sentry, etc.)</li>
+         *   <li><strong>Preserved:</strong> Document, Stylesheet, Image, Script, XHR, Fetch,
+         *       WebSocket (required for CAPTCHAs and accurate automation)</li>
+         * </ul>
+         *
+         * <p>Default: false</p>
+         *
+         * @param enabled true to enable resource blocking
+         * @return this builder
+         */
+        public Builder resourceBlocking(boolean enabled) {
+            this.resourceBlocking = enabled;
             return this;
         }
 

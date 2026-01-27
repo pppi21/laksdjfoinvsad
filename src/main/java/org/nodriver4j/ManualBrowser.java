@@ -44,6 +44,7 @@ public class ManualBrowser {
                 .headless(false)
                 .webrtcPolicy("default")
                 .headlessGpuAcceleration(true)
+                .resourceBlocking(true)
                 .build();
 
         BrowserManager.Builder managerBuilder = BrowserManager.builder()
@@ -87,11 +88,11 @@ public class ManualBrowser {
 
                 Page page  = browser.getPage();
 
-                page.sleep(2000);
-                page.navigate(URL);
-                page.waitForSelector("p._1fr98s7[class*='1fr98s7']");
-                page.scrollIntoView("p._1fr98s7[class*='1fr98s7']");
-                page.screenshot();
+//                page.sleep(2000);
+//                page.navigate(URL);
+//                page.waitForSelector("p._1fr98s7[class*='1fr98s7']");
+//                page.scrollIntoView("p._1fr98s7[class*='1fr98s7']");
+//                page.screenshot();
 
             }
 
@@ -110,10 +111,6 @@ public class ManualBrowser {
         } catch (RuntimeException e) {
             System.err.println("Unexpected error: " + e.getMessage());
             e.printStackTrace();
-        } catch (TimeoutException e) {
-            throw new RuntimeException(e);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
         } finally {
             // Close all browsers
             System.out.println();
