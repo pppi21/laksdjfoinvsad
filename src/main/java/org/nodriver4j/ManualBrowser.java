@@ -41,13 +41,14 @@ public class ManualBrowser {
         BrowserConfig config = BrowserConfig.builder()
                 .executablePath(executablePath)
                 .fingerprintEnabled(true)
-                .headless(true)
+                .headless(false)
+                .webrtcPolicy("default")
                 .headlessGpuAcceleration(true)
                 .build();
 
         BrowserManager.Builder managerBuilder = BrowserManager.builder()
                 .config(config)
-                .proxyEnabled(true)
+                .proxyEnabled(false)
                 .warmProfile(false);
 
 

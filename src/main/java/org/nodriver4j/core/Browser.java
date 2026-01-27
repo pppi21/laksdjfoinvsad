@@ -961,6 +961,12 @@ public class Browser implements AutoCloseable {
         args.add("--disable-client-side-phishing-detection");
         args.add("--disable-background-networking");
         args.add("--disable-features=BlockThirdPartyCookies");
+        args.add("--disable-hang-monitor");
+        args.add("--disable-domain-reliability");
+        args.add("--metrics-recording-only");
+        args.add("--mute-audio");
+        args.add("--disable-sync");
+
 
         // Proxy configuration
         if (config.hasProxy()) {
@@ -982,6 +988,7 @@ public class Browser implements AutoCloseable {
                 args.add("--enable-gpu");
                 args.add("--enable-webgl");
                 args.add("--use-gl=desktop");
+                args.add("--disable-software-rasterizer");
             }
         }
 
