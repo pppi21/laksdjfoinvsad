@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.layout.FlowPane?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Priority?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.VBox?>
+
+<!--
+    Task Manager page layout.
+    Displays task groups as cards in a grid.
+    Controller: TaskManagerController
+-->
+<VBox xmlns="http://javafx.com/javafx/21"
+      xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="org.nodriver4j.ui.controllers.TaskManagerController"
+      styleClass="content-area"
+      spacing="0">
+
+    <!-- ==================== Page Header ==================== -->
+    <HBox alignment="CENTER_LEFT" styleClass="page-header">
+
+        <!-- Title and subtitle -->
+        <VBox>
+            <Label text="Task Manager" styleClass="page-title"/>
+            <Label text="Create and manage your automation task groups" styleClass="page-subtitle"/>
+        </VBox>
+
+        <!-- Spacer -->
+        <Region HBox.hgrow="ALWAYS"/>
+
+        <!-- Add Task Group Button -->
+        <Button fx:id="addButton"
+                styleClass="add-button"
+                onAction="#onAddTaskGroupClicked">
+            <graphic>
+                <Label text="+" style="-fx-text-fill: #e5e5e5; -fx-font-size: 20px; -fx-font-weight: bold;"/>
+            </graphic>
+        </Button>
+
+    </HBox>
+
+    <!-- ==================== Content Area ==================== -->
+    <StackPane VBox.vgrow="ALWAYS">
+
+        <!-- Empty State (shown when no task groups) -->
+        <VBox fx:id="emptyState"
+              styleClass="empty-state"
+              alignment="CENTER"
+              visible="true"
+              managed="true">
+
+            <Label text="📋" styleClass="empty-state-icon"/>
+            <Label text="No Task Groups" styleClass="empty-state-title"/>
+            <Label text="Click the + button to create your first task group"
+                   styleClass="empty-state-description"/>
+
+        </VBox>
+
+        <!-- Task Groups Grid (shown when task groups exist) -->
+        <ScrollPane fx:id="scrollPane"
+                    fitToWidth="true"
+                    fitToHeight="true"
+                    hbarPolicy="NEVER"
+                    vbarPolicy="AS_NEEDED"
+                    visible="false"
+                    managed="false"
+                    style="-fx-background-color: transparent;">
+
+            <FlowPane fx:id="taskGroupGrid"
+                      styleClass="task-group-grid"
+                      hgap="16"
+                      vgap="16"
+                      alignment="TOP_LEFT">
+                <padding>
+                    <Insets top="0" right="0" bottom="16" left="0"/>
+                </padding>
+
+                <!-- Task group cards are added here dynamically -->
+
+            </FlowPane>
+
+        </ScrollPane>
+
+    </StackPane>
+
+</VBox>
