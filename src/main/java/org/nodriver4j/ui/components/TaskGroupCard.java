@@ -8,6 +8,9 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
+import org.kordamp.ikonli.fontawesome5.FontAwesomeSolid;
+import org.kordamp.ikonli.javafx.FontIcon;
 
 /**
  * A card component that displays task group information.
@@ -154,7 +157,9 @@ public class TaskGroupCard extends VBox {
         button.getStyleClass().add("delete-button");
 
         // Trash icon (outline style)
-        Label trashIcon = new Label("🗑");
+        FontIcon trashIcon = new FontIcon(FontAwesomeSolid.TRASH_ALT);
+        trashIcon.setIconSize(16);
+        trashIcon.setIconColor(Color.web("#d15252"));
         button.setGraphic(trashIcon);
 
         button.setOnAction(event -> {

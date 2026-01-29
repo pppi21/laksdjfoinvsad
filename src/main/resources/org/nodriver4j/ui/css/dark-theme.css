@@ -53,13 +53,22 @@
 }
 
 .sidebar-header {
-    -fx-padding: 0 16px 24px 16px;
+    -fx-padding: 8px 16px 24px 16px;
 }
 
 .sidebar-title {
     -fx-font-size: 18px;
     -fx-font-weight: bold;
     -fx-text-fill: -fx-text-primary;
+}
+
+/* Placeholder for future logo image */
+.logo-placeholder {
+    -fx-background-color: #4a4a4a;
+    -fx-background-radius: 8px;
+    -fx-border-color: #5a5a5a;
+    -fx-border-width: 1px;
+    -fx-border-radius: 8px;
 }
 
 .sidebar-nav {
@@ -269,10 +278,13 @@
     -fx-border-radius: 12px;
     -fx-background-radius: 12px;
     -fx-padding: 0;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.5), 20, 0, 0, 5);
 }
 
+/* Ensure content area doesn't overflow rounded corners */
 .dialog-pane > .content {
     -fx-padding: 24px;
+    -fx-background-color: transparent;
 }
 
 .dialog-pane > .button-bar {
@@ -521,8 +533,9 @@
 
 /* Confirm/Cancel button container */
 .delete-confirm-buttons {
-    -fx-spacing: 6px;
+    -fx-spacing: 4px;
     -fx-alignment: CENTER_RIGHT;
+    -fx-padding: 30px 0 0 0;
 }
 
 .confirm-delete-button {

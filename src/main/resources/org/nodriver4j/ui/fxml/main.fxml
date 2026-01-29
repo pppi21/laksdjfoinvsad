@@ -5,6 +5,7 @@
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.layout.HBox?>
 <?import javafx.scene.layout.Priority?>
+<?import javafx.scene.layout.Region?>
 <?import javafx.scene.layout.StackPane?>
 <?import javafx.scene.layout.VBox?>
 
@@ -20,9 +21,9 @@
     <!-- ==================== Sidebar ==================== -->
     <VBox styleClass="sidebar">
 
-        <!-- App Title / Logo -->
-        <VBox styleClass="sidebar-header">
-            <Label text="NoDriver4j" styleClass="sidebar-title"/>
+        <!-- App Logo Placeholder -->
+        <VBox styleClass="sidebar-header" alignment="CENTER">
+            <Region styleClass="logo-placeholder" prefWidth="48" prefHeight="48" maxWidth="48" maxHeight="48"/>
         </VBox>
 
         <!-- Navigation Items -->

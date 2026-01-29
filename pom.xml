@@ -44,6 +44,11 @@
       <artifactId>ikonli-javafx</artifactId>
       <version>12.3.1</version>
     </dependency>
+    <dependency>
+      <groupId>org.kordamp.ikonli</groupId>
+      <artifactId>ikonli-fontawesome5-pack</artifactId>
+      <version>12.3.1</version>
+    </dependency>
 
     <dependency>
       <groupId>junit</groupId>
@@ -69,7 +74,6 @@
         <version>0.0.8</version>
         <configuration>
           <mainClass>org.nodriver4j.ui.NoDriverApp</mainClass>
-          <executable>C:\Users\leofo\.jdks\corretto-23.0.2\bin\java.exe</executable>
         </configuration>
       </plugin>
     </plugins>

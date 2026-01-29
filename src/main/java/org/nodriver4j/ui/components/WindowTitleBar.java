@@ -51,6 +51,9 @@ public class WindowTitleBar extends HBox {
     private static final String RESTORE_ICON = "❐";
     private static final String CLOSE_ICON = "✕";
 
+    // Resize border detection (must match WindowResizeHelper)
+    private static final int RESIZE_BORDER = 6;
+
     // ==================== UI Components ====================
 
     private final Label titleLabel;
@@ -159,6 +162,11 @@ public class WindowTitleBar extends HBox {
 
     private void onMousePressed(MouseEvent event) {
         if (event.getButton() == MouseButton.PRIMARY) {
+            // Don't start drag if in resize zone
+            if (isInResizeZone(event)) {
+                return;
+            }
+
             if (stage.isMaximized()) {
                 // Store relative position for restore-on-drag
                 dragOffsetX = event.getScreenX() / stage.getWidth();
@@ -172,6 +180,11 @@ public class WindowTitleBar extends HBox {
 
     private void onMouseDragged(MouseEvent event) {
         if (event.getButton() == MouseButton.PRIMARY) {
+            // Don't drag if we started in resize zone
+            if (isInResizeZone(event) && dragOffsetX == 0 && dragOffsetY == 0) {
+                return;
+            }
+
             if (stage.isMaximized()) {
                 // Restore window and position under cursor
                 double relativeX = dragOffsetX;
@@ -193,8 +206,34 @@ public class WindowTitleBar extends HBox {
 
     private void onMouseClicked(MouseEvent event) {
         if (event.getButton() == MouseButton.PRIMARY && event.getClickCount() == 2) {
-            toggleMaximize();
+            // Don't toggle maximize if in resize zone
+            if (!isInResizeZone(event)) {
+                toggleMaximize();
+            }
         }
+    }
+
+    /**
+     * Checks if the mouse event is in the window resize zone.
+     * This prevents drag operations from conflicting with resize operations.
+     */
+    private boolean isInResizeZone(MouseEvent event) {
+        if (stage.getScene() == null) {
+            return false;
+        }
+
+        double sceneX = event.getSceneX();
+        double sceneY = event.getSceneY();
+        double sceneWidth = stage.getScene().getWidth();
+
+        // Check top edge (within title bar area)
+        boolean nearTop = sceneY < RESIZE_BORDER;
+        // Check left edge
+        boolean nearLeft = sceneX < RESIZE_BORDER;
+        // Check right edge
+        boolean nearRight = sceneX > sceneWidth - RESIZE_BORDER;
+
+        return nearTop || nearLeft || nearRight;
     }
 
     // ==================== Maximize/Restore ====================
