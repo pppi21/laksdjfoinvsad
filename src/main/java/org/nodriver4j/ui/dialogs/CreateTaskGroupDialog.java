@@ -4,6 +4,7 @@ import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.control.*;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
 import javafx.stage.Modality;
 import javafx.stage.StageStyle;
 import javafx.stage.Window;
@@ -76,7 +77,8 @@ public class CreateTaskGroupDialog extends Dialog<CreateTaskGroupDialog.TaskGrou
 
         // Configure dialog
         setTitle("Create Task Group");
-        initStyle(StageStyle.UNDECORATED);
+        initStyle(StageStyle.TRANSPARENT);
+
 
         // Create UI components
         nameField = createNameField();
@@ -127,6 +129,11 @@ public class CreateTaskGroupDialog extends Dialog<CreateTaskGroupDialog.TaskGrou
                 );
             }
             return null;
+        });
+
+        // Add this near the end of the constructor, after configuring the DialogPane
+        setOnShown(event -> {
+            getDialogPane().getScene().setFill(Color.TRANSPARENT);
         });
 
         // Focus name field when dialog opens
