@@ -8,7 +8,10 @@ import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
+import javafx.scene.paint.Color;
 import javafx.stage.Stage;
+import org.kordamp.ikonli.fontawesome5.FontAwesomeSolid;
+import org.kordamp.ikonli.javafx.FontIcon;
 
 /**
  * Custom window title bar component for undecorated stages.
@@ -30,7 +33,7 @@ import javafx.stage.Stage;
  *
  * <h2>NOT Responsible For</h2>
  * <ul>
- *   <li>Window resizing (handled by WindowResizeHelper)</li>
+ *   <li>Window resizing (handled by WindowResizeHelper which consumes resize events)</li>
  *   <li>Application logic</li>
  * </ul>
  *
@@ -45,14 +48,10 @@ public class WindowTitleBar extends HBox {
 
     // ==================== Constants ====================
 
-    // Bold, clear icons for window controls
-    private static final String MINIMIZE_ICON = "─";
-    private static final String MAXIMIZE_ICON = "□";
-    private static final String RESTORE_ICON = "❐";
-    private static final String CLOSE_ICON = "✕";
-
-    // Resize border detection (must match WindowResizeHelper)
-    private static final int RESIZE_BORDER = 6;
+    private static final int ICON_SIZE = 12;
+    private static final Color ICON_COLOR_DEFAULT = Color.web("#a3a3a3");
+    private static final Color ICON_COLOR_HOVER = Color.web("#e5e5e5");
+    private static final Color ICON_COLOR_CLOSE_HOVER = Color.WHITE;
 
     // ==================== UI Components ====================
 
@@ -60,7 +59,11 @@ public class WindowTitleBar extends HBox {
     private final Button minimizeButton;
     private final Button maximizeButton;
     private final Button closeButton;
-    private final Label maximizeIcon;
+
+    // FontIcon references for dynamic updates
+    private final FontIcon minimizeIcon;
+    private final FontIcon maximizeIcon;
+    private final FontIcon closeIcon;
 
     // ==================== State ====================
 
@@ -89,12 +92,16 @@ public class WindowTitleBar extends HBox {
         getStyleClass().add("title-bar");
         setAlignment(Pos.CENTER_LEFT);
 
+        // Create icons
+        minimizeIcon = createIcon(FontAwesomeSolid.WINDOW_MINIMIZE);
+        maximizeIcon = createIcon(FontAwesomeSolid.WINDOW_MAXIMIZE);
+        closeIcon = createIcon(FontAwesomeSolid.WINDOW_CLOSE);
+
         // Create components
         titleLabel = createTitleLabel(title);
-        maximizeIcon = new Label(MAXIMIZE_ICON);
-        minimizeButton = createControlButton(MINIMIZE_ICON, false);
+        minimizeButton = createMinimizeButton();
         maximizeButton = createMaximizeButton();
-        closeButton = createControlButton(CLOSE_ICON, true);
+        closeButton = createCloseButton();
 
         // Spacer to push buttons to the right
         Region spacer = new Region();
@@ -117,6 +124,21 @@ public class WindowTitleBar extends HBox {
         });
     }
 
+    // ==================== Icon Factory ====================
+
+    /**
+     * Creates a FontIcon with default styling.
+     *
+     * @param iconType the FontAwesome icon type
+     * @return configured FontIcon
+     */
+    private FontIcon createIcon(FontAwesomeSolid iconType) {
+        FontIcon icon = new FontIcon(iconType);
+        icon.setIconSize(ICON_SIZE);
+        icon.setIconColor(ICON_COLOR_DEFAULT);
+        return icon;
+    }
+
     // ==================== UI Building ====================
 
     private Label createTitleLabel(String title) {
@@ -125,19 +147,15 @@ public class WindowTitleBar extends HBox {
         return label;
     }
 
-    private Button createControlButton(String iconText, boolean isCloseButton) {
+    private Button createMinimizeButton() {
         Button button = new Button();
         button.getStyleClass().add("window-control-button");
+        button.setGraphic(minimizeIcon);
+        button.setOnAction(e -> stage.setIconified(true));
 
-        if (isCloseButton) {
-            button.getStyleClass().add("close-button");
-            button.setOnAction(e -> stage.close());
-        } else {
-            button.setOnAction(e -> stage.setIconified(true));
-        }
-
-        Label icon = new Label(iconText);
-        button.setGraphic(icon);
+        // Hover color handling
+        button.setOnMouseEntered(e -> minimizeIcon.setIconColor(ICON_COLOR_HOVER));
+        button.setOnMouseExited(e -> minimizeIcon.setIconColor(ICON_COLOR_DEFAULT));
 
         return button;
     }
@@ -145,15 +163,38 @@ public class WindowTitleBar extends HBox {
     private Button createMaximizeButton() {
         Button button = new Button();
         button.getStyleClass().add("window-control-button");
-
         button.setGraphic(maximizeIcon);
         button.setOnAction(e -> toggleMaximize());
+
+        // Hover color handling
+        button.setOnMouseEntered(e -> maximizeIcon.setIconColor(ICON_COLOR_HOVER));
+        button.setOnMouseExited(e -> maximizeIcon.setIconColor(ICON_COLOR_DEFAULT));
+
+        return button;
+    }
+
+    private Button createCloseButton() {
+        Button button = new Button();
+        button.getStyleClass().addAll("window-control-button", "close-button");
+        button.setGraphic(closeIcon);
+        button.setOnAction(e -> stage.close());
+
+        // Hover color handling (white on red background)
+        button.setOnMouseEntered(e -> closeIcon.setIconColor(ICON_COLOR_CLOSE_HOVER));
+        button.setOnMouseExited(e -> closeIcon.setIconColor(ICON_COLOR_DEFAULT));
 
         return button;
     }
 
     // ==================== Drag Handling ====================
 
+    /**
+     * Sets up drag handlers for window movement.
+     *
+     * <p>Note: WindowResizeHelper uses event FILTERS which fire before these handlers.
+     * When a resize operation is in progress, WindowResizeHelper consumes the events
+     * so these handlers won't receive them.</p>
+     */
     private void setupDragHandlers() {
         setOnMousePressed(this::onMousePressed);
         setOnMouseDragged(this::onMouseDragged);
@@ -162,11 +203,6 @@ public class WindowTitleBar extends HBox {
 
     private void onMousePressed(MouseEvent event) {
         if (event.getButton() == MouseButton.PRIMARY) {
-            // Don't start drag if in resize zone
-            if (isInResizeZone(event)) {
-                return;
-            }
-
             if (stage.isMaximized()) {
                 // Store relative position for restore-on-drag
                 dragOffsetX = event.getScreenX() / stage.getWidth();
@@ -180,11 +216,6 @@ public class WindowTitleBar extends HBox {
 
     private void onMouseDragged(MouseEvent event) {
         if (event.getButton() == MouseButton.PRIMARY) {
-            // Don't drag if we started in resize zone
-            if (isInResizeZone(event) && dragOffsetX == 0 && dragOffsetY == 0) {
-                return;
-            }
-
             if (stage.isMaximized()) {
                 // Restore window and position under cursor
                 double relativeX = dragOffsetX;
@@ -206,34 +237,8 @@ public class WindowTitleBar extends HBox {
 
     private void onMouseClicked(MouseEvent event) {
         if (event.getButton() == MouseButton.PRIMARY && event.getClickCount() == 2) {
-            // Don't toggle maximize if in resize zone
-            if (!isInResizeZone(event)) {
-                toggleMaximize();
-            }
+            toggleMaximize();
         }
-    }
-
-    /**
-     * Checks if the mouse event is in the window resize zone.
-     * This prevents drag operations from conflicting with resize operations.
-     */
-    private boolean isInResizeZone(MouseEvent event) {
-        if (stage.getScene() == null) {
-            return false;
-        }
-
-        double sceneX = event.getSceneX();
-        double sceneY = event.getSceneY();
-        double sceneWidth = stage.getScene().getWidth();
-
-        // Check top edge (within title bar area)
-        boolean nearTop = sceneY < RESIZE_BORDER;
-        // Check left edge
-        boolean nearLeft = sceneX < RESIZE_BORDER;
-        // Check right edge
-        boolean nearRight = sceneX > sceneWidth - RESIZE_BORDER;
-
-        return nearTop || nearLeft || nearRight;
     }
 
     // ==================== Maximize/Restore ====================
@@ -253,7 +258,15 @@ public class WindowTitleBar extends HBox {
     }
 
     private void updateMaximizeIcon(boolean isMaximized) {
-        maximizeIcon.setText(isMaximized ? RESTORE_ICON : MAXIMIZE_ICON);
+        FontIcon newIcon = isMaximized
+                ? createIcon(FontAwesomeSolid.WINDOW_RESTORE)
+                : createIcon(FontAwesomeSolid.WINDOW_MAXIMIZE);
+
+        maximizeButton.setGraphic(newIcon);
+
+        // Re-attach hover handlers to new icon
+        maximizeButton.setOnMouseEntered(e -> newIcon.setIconColor(ICON_COLOR_HOVER));
+        maximizeButton.setOnMouseExited(e -> newIcon.setIconColor(ICON_COLOR_DEFAULT));
     }
 
     // ==================== Public API ====================
