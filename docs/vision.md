@@ -40,6 +40,10 @@ made for this page.
     and restart it later, picking up with the same cookies as before. This shouldn't be
     too complicated. It's as simple as keeping track of the userdata folder and starting
     chrome with that folder when the user clicks to start a task.
+    I also just remembered that there needs to be an extra button for manually opening a
+    headed browser session with all the same characteristics of the scripted task, just
+    without the automation script running (proxy should still be present, should use the
+    same fingerprint, etc.).
 
 # Proxy Manager
 This page allow the user to create proxy groups. The page will be formatted
@@ -92,3 +96,10 @@ details in order to create a group:
 This is where users can enter their AutoSolve AI API key. Eventually update checks
 will be handled here too and any other global variable like paths to resources can
 be configured. For now, we'll leave this page blank.
+
+
+
+NOTES:
+Certain buttons will have to be unclickable depending on the state of a task. For
+example you can't edit a task while it's running. We'll discuss this kind of
+thing right before the implementation of relevant components.
