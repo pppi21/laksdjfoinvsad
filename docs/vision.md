@@ -19,17 +19,27 @@ made for this page.
     3. The user can check a box to indicate whether or not to warm the
         session with activiy. Off by default.
     The create button will be at the bottom of the popup.
+    This page also will contain a Start All and Stop All button for tasks, which can
+    start or stop all tasks in the group. It will also have a change proxies button
+    which allows the user to select a new group of proxies to use for the tasks.
+    If a user selects a new proxy group with 10 proxies but there are 20 tasks, only
+    the first 10 tasks will receive new proxies and the last 10 will remain unchanged.
 ### Task Container
     This represents a single task in the Task Group page. They will appear
     in rows (1 per row) and span the entire width of the available space in the UI.
     They will display the task name, status(custom per script), and real time logs 
     on the left and have a start, clone, and edit and delete button on the right 
-    (in that order from left to right). The start button will transform to a close 
+    (in that order from left to right). The start button will transform to a stop 
     button when a task is running. The clone button makes an identical copy of 
     the task and appends it to the task list. The edit button will trigger a popup
     that looks similar to the task creation prompt that I described about, but it
     will instead only allow a single profile to be selected and will allow the
     user to enter a new proxy as a string. The can also set a custom status string.
+    One key feature that we need to adjust our backend to support is preserving the
+    browser userdata until a task is deleted. The user should be able to stop a browser
+    and restart it later, picking up with the same cookies as before. This shouldn't be
+    too complicated. It's as simple as keeping track of the userdata folder and starting
+    chrome with that folder when the user clicks to start a task.
 
 # Proxy Manager
 This page allow the user to create proxy groups. The page will be formatted
