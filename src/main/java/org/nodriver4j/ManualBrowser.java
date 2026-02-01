@@ -50,7 +50,7 @@ public class ManualBrowser {
         BrowserManager.Builder managerBuilder = BrowserManager.builder()
                 .config(config)
                 .proxyEnabled(true)
-                .warmProfile(true);
+                .warmProfile(false);
 
 
         BrowserManager manager = managerBuilder.build();
