@@ -24,9 +24,14 @@ import org.kordamp.ikonli.javafx.FontIcon;
  *   <li>Delete button with confirmation flow (bottom-right)</li>
  * </ul>
  *
+ * <p>Each card holds a {@code groupId} that maps back to the persisted
+ * {@code TaskGroupEntity} in the database. The controller uses this ID
+ * for deletion, navigation, and task count queries.</p>
+ *
  * <h2>Responsibilities</h2>
  * <ul>
  *   <li>Display task group data visually</li>
+ *   <li>Hold the database ID for controller lookups</li>
  *   <li>Handle click events (delegates to callback)</li>
  *   <li>Handle delete with inline confirmation</li>
  *   <li>Update displayed stats when data changes</li>
@@ -35,13 +40,14 @@ import org.kordamp.ikonli.javafx.FontIcon;
  * <h2>NOT Responsible For</h2>
  * <ul>
  *   <li>Managing task group data (just displays it)</li>
+ *   <li>Database operations (controller handles persistence)</li>
  *   <li>Running tasks (handled by service layer)</li>
  *   <li>Persistence (handled by service layer)</li>
  * </ul>
  *
  * <h2>Usage</h2>
  * <pre>{@code
- * TaskGroupCard card = new TaskGroupCard("Uber Gen", "UberGen", 12, 8);
+ * TaskGroupCard card = new TaskGroupCard(1L, "Uber Gen", "UberGen", 12, 8);
  * card.setOnClick(() -> System.out.println("Card clicked!"));
  * card.setOnDelete(() -> System.out.println("Delete confirmed!"));
  * flowPane.getChildren().add(card);
@@ -63,6 +69,7 @@ public class TaskGroupCard extends VBox {
 
     // ==================== Data ====================
 
+    private final long groupId;
     private String groupName;
     private String scriptName;
     private int taskCount;
@@ -82,12 +89,14 @@ public class TaskGroupCard extends VBox {
     /**
      * Creates a new TaskGroupCard.
      *
+     * @param groupId      the database ID of the task group
      * @param groupName    the name of the task group
      * @param scriptName   the name of the script this group runs
      * @param taskCount    the total number of tasks in this group
      * @param runningCount the number of currently running tasks
      */
-    public TaskGroupCard(String groupName, String scriptName, int taskCount, int runningCount) {
+    public TaskGroupCard(long groupId, String groupName, String scriptName, int taskCount, int runningCount) {
+        this.groupId = groupId;
         this.groupName = groupName;
         this.scriptName = scriptName;
         this.taskCount = taskCount;
@@ -327,6 +336,15 @@ public class TaskGroupCard extends VBox {
     }
 
     // ==================== Getters ====================
+
+    /**
+     * Gets the database ID of the task group.
+     *
+     * @return the group ID
+     */
+    public long groupId() {
+        return groupId;
+    }
 
     /**
      * Gets the group name.

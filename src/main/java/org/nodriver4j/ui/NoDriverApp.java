@@ -7,6 +7,7 @@ import javafx.scene.Scene;
 import javafx.scene.layout.BorderPane;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
+import org.nodriver4j.persistence.Database;
 import org.nodriver4j.ui.components.WindowTitleBar;
 import org.nodriver4j.ui.util.WindowResizeHelper;
 
@@ -23,6 +24,10 @@ import java.net.URL;
  *   <li>Full window resize functionality (drag edges and corners)</li>
  *   <li>Dark theme styling</li>
  * </ul>
+ *
+ * <p>On startup, the SQLite database is initialized before loading
+ * any UI components so that controllers can safely query persistence
+ * during their {@code initialize()} phase.</p>
  *
  * <h2>Usage</h2>
  * <pre>{@code
@@ -50,6 +55,10 @@ public class NoDriverApp extends Application {
 
     @Override
     public void start(Stage primaryStage) throws IOException {
+        // Initialize database before loading any UI
+        // Controllers may query persistence during their initialize() phase
+        Database.initialize();
+
         // Load the main layout (sidebar + content area)
         Parent content = loadFXML("fxml/main.fxml");
 
@@ -88,6 +97,10 @@ public class NoDriverApp extends Application {
     public void stop() throws Exception {
         super.stop();
         System.out.println("[NoDriverApp] Application shutting down...");
+
+        // Shut down database cleanly
+        Database.shutdown();
+
         // Future: Clean up resources, save state, etc.
     }
 
