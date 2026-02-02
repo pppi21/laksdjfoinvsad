@@ -26,6 +26,8 @@ import java.util.ResourceBundle;
  *   <li>Load and cache page FXML files</li>
  *   <li>Switch between pages in the content area</li>
  *   <li>Manage active state styling on nav items</li>
+ *   <li>Wire cross-page navigation callbacks</li>
+ *   <li>Handle parameterized page navigation (e.g., task group detail)</li>
  * </ul>
  */
 public class MainController implements Initializable {
@@ -57,6 +59,7 @@ public class MainController implements Initializable {
      */
     public enum Page {
         TASK_MANAGER("fxml/task-manager.fxml"),
+        TASK_GROUP_DETAIL("fxml/task-group-detail.fxml"),
         PROFILE_MANAGER("fxml/profile-manager.fxml"),
         PROXY_MANAGER("fxml/proxy-manager.fxml"),
         SETTINGS("fxml/settings.fxml");
@@ -103,6 +106,12 @@ public class MainController implements Initializable {
 
         // Load the default page (Task Manager)
         navigateTo(Page.TASK_MANAGER);
+
+        // Wire navigation callback so TaskManagerController can open group details
+        TaskManagerController tmc = taskManagerController();
+        if (tmc != null) {
+            tmc.setOnNavigateToGroup(this::showTaskGroupDetail);
+        }
 
         System.out.println("[MainController] Initialized successfully");
     }
@@ -245,6 +254,15 @@ public class MainController implements Initializable {
     }
 
     /**
+     * Gets the TaskGroupDetailController.
+     *
+     * @return the TaskGroupDetailController, or null if not loaded
+     */
+    public TaskGroupDetailController taskGroupDetailController() {
+        return getPageController(Page.TASK_GROUP_DETAIL);
+    }
+
+    /**
      * Gets the currently active page.
      *
      * @return the current page
@@ -258,5 +276,34 @@ public class MainController implements Initializable {
      */
     public void showTaskManager() {
         navigateTo(Page.TASK_MANAGER, navTasks);
+    }
+
+    /**
+     * Navigates to the Task Group Detail page for a specific group.
+     *
+     * <p>The FXML is loaded and cached on first call. On every call,
+     * {@link TaskGroupDetailController#loadGroup(long)} is invoked to
+     * refresh the page with the specified group's data. The back callback
+     * is wired to return to the Task Manager.</p>
+     *
+     * <p>The Tasks nav item remains active since the detail page is
+     * a sub-page of the Task Manager.</p>
+     *
+     * @param groupId the database ID of the task group to display
+     */
+    public void showTaskGroupDetail(long groupId) {
+        System.out.println("[MainController] Showing task group detail for group " + groupId);
+
+        // Navigate to the detail page if not already there
+        if (currentPage != Page.TASK_GROUP_DETAIL) {
+            navigateTo(Page.TASK_GROUP_DETAIL);
+        }
+
+        // Load the group data (always called, even if already on the page)
+        TaskGroupDetailController controller = taskGroupDetailController();
+        if (controller != null) {
+            controller.setOnBack(this::showTaskManager);
+            controller.loadGroup(groupId);
+        }
     }
 }

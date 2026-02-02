@@ -77,6 +77,15 @@ public class TaskManagerController implements Initializable {
      */
     private final List<TaskGroupCard> taskGroupCards = new ArrayList<>();
 
+    // ==================== Callbacks ====================
+
+    /**
+     * Callback invoked when a task group card is clicked.
+     * Set by {@link MainController} to navigate to the group detail page.
+     * Accepts the group ID as a parameter.
+     */
+    private java.util.function.LongConsumer onNavigateToGroup;
+
     // ==================== Initialization ====================
 
     @Override
@@ -185,7 +194,7 @@ public class TaskManagerController implements Initializable {
 
     /**
      * Handles a task group card being clicked.
-     * Future: Navigate to group detail page.
+     * Navigates to the group detail page via the callback set by MainController.
      *
      * @param card the clicked card
      */
@@ -193,7 +202,9 @@ public class TaskManagerController implements Initializable {
         System.out.println("[TaskManagerController] Task group clicked: "
                 + card.groupName() + " (ID: " + card.groupId() + ")");
 
-        // Future: Navigate to group detail page
+        if (onNavigateToGroup != null) {
+            onNavigateToGroup.accept(card.groupId());
+        }
     }
 
     /**
@@ -341,5 +352,17 @@ public class TaskManagerController implements Initializable {
         updateViewState();
 
         System.out.println("[TaskManagerController] All task groups cleared");
+    }
+
+    /**
+     * Sets the callback for navigating to a task group detail page.
+     *
+     * <p>Called by {@link MainController} after loading this controller
+     * to wire navigation without tight coupling.</p>
+     *
+     * @param onNavigateToGroup callback that accepts the group ID
+     */
+    public void setOnNavigateToGroup(java.util.function.LongConsumer onNavigateToGroup) {
+        this.onNavigateToGroup = onNavigateToGroup;
     }
 }

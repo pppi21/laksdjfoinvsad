@@ -681,3 +681,94 @@
 .cancel-delete-button:pressed {
     -fx-background-color: #3a3a3a;
 }
+
+/* ==================== Back Button ==================== */
+.back-button {
+    -fx-background-color: -fx-primary-light;
+    -fx-background-radius: 8px;
+    -fx-border-radius: 8px;
+    -fx-border-color: -fx-border;
+    -fx-border-width: 1px;
+    -fx-min-width: 40px;
+    -fx-min-height: 40px;
+    -fx-max-width: 40px;
+    -fx-max-height: 40px;
+    -fx-padding: 0;
+    -fx-cursor: hand;
+}
+
+.back-button:hover {
+    -fx-background-color: -fx-hover;
+    -fx-border-color: -fx-accent;
+}
+
+.back-button:pressed {
+    -fx-background-color: -fx-primary-dark;
+}
+
+.back-button .label {
+    -fx-text-fill: -fx-text-primary;
+    -fx-font-size: 18px;
+    -fx-font-weight: bold;
+}
+
+/* ==================== Task List ==================== */
+.task-list-container {
+    -fx-padding: 0;
+    -fx-spacing: 8px;
+}
+
+/* ==================== Task Row ==================== */
+.task-row {
+    -fx-background-color: -fx-card-bg;
+    -fx-background-radius: 10px;
+    -fx-border-color: -fx-border;
+    -fx-border-radius: 10px;
+    -fx-border-width: 1px;
+    -fx-padding: 14px 18px;
+    -fx-min-height: 72px;
+}
+
+.task-row:hover {
+    -fx-background-color: -fx-hover;
+    -fx-border-color: -fx-accent;
+}
+
+.task-row-name {
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -fx-text-primary;
+}
+
+.task-row-status {
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -fx-text-muted;
+}
+
+.task-row-log {
+    -fx-font-size: 12px;
+    -fx-text-fill: -fx-text-secondary;
+    -fx-padding: 2px 0 0 0;
+}
+
+/* ==================== Task Row Status Colors ==================== */
+.status-idle {
+    -fx-text-fill: -fx-text-muted;
+}
+
+.status-running {
+    -fx-text-fill: -fx-success;
+}
+
+.status-completed {
+    -fx-text-fill: -fx-success;
+}
+
+.status-failed {
+    -fx-text-fill: -fx-error;
+}
+
+.status-stopped {
+    -fx-text-fill: -fx-warning;
+}
