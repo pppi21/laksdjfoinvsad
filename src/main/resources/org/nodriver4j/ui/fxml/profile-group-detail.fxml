@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.layout.FlowPane?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Priority?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.VBox?>
+
+<!--
+    Profile Group Detail page layout.
+    Displays individual profiles belonging to a profile group as card tiles.
+    Navigated to by clicking a profile group card in the Profile Manager.
+    No add button — profiles are only added during group creation via CSV import.
+    Controller: ProfileGroupDetailController
+-->
+<VBox xmlns="http://javafx.com/javafx/21"
+      xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="org.nodriver4j.ui.controllers.ProfileGroupDetailController"
+      styleClass="content-area"
+      spacing="0">
+
+    <!-- ==================== Page Header ==================== -->
+    <HBox alignment="CENTER_LEFT" styleClass="page-header" spacing="12">
+
+        <!-- Back Button -->
+        <Button fx:id="backButton"
+                styleClass="back-button"
+                onAction="#onBackClicked">
+            <graphic>
+                <Label text="←"
+                       style="-fx-text-fill: #e5e5e5; -fx-font-size: 18px; -fx-font-weight: bold;"/>
+            </graphic>
+        </Button>
+
+        <!-- Title (populated dynamically by controller) -->
+        <VBox>
+            <Label fx:id="groupNameLabel" text="Profile Group" styleClass="page-title"/>
+            <Label fx:id="profileCountLabel" text="0 profiles" styleClass="page-subtitle"/>
+        </VBox>
+
+        <!-- Spacer -->
+        <Region HBox.hgrow="ALWAYS"/>
+
+    </HBox>
+
+    <!-- ==================== Content Area ==================== -->
+    <StackPane VBox.vgrow="ALWAYS">
+
+        <!-- Empty State (shown when no profiles) -->
+        <VBox fx:id="emptyState"
+              styleClass="empty-state"
+              alignment="CENTER"
+              visible="true"
+              managed="true">
+
+            <Label text="👤" styleClass="empty-state-icon"/>
+            <Label text="No Profiles" styleClass="empty-state-title"/>
+            <Label text="This group does not contain any profiles"
+                   styleClass="empty-state-description"/>
+
+        </VBox>
+
+        <!-- Profile Card Grid (shown when profiles exist) -->
+        <ScrollPane fx:id="scrollPane"
+                    fitToWidth="true"
+                    fitToHeight="true"
+                    hbarPolicy="NEVER"
+                    vbarPolicy="AS_NEEDED"
+                    visible="false"
+                    managed="false"
+                    style="-fx-background-color: transparent;">
+
+            <FlowPane fx:id="cardGrid"
+                      styleClass="profile-card-grid"
+                      hgap="16"
+                      vgap="16"
+                      alignment="TOP_LEFT">
+                <padding>
+                    <Insets top="0" right="0" bottom="16" left="0"/>
+                </padding>
+
+                <!-- ProfileCard components are added here dynamically -->
+
+            </FlowPane>
+
+        </ScrollPane>
+
+    </StackPane>
+
+</VBox>
