@@ -13,6 +13,7 @@ import java.net.URL;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.ResourceBundle;
+import java.util.function.Supplier;
 
 /**
  * Controller for the main application layout.
@@ -56,22 +57,41 @@ public class MainController implements Initializable {
 
     /**
      * Available pages in the application.
+     *
+     * <p>Pages that use a shared FXML layout (e.g., {@code group-manager.fxml})
+     * provide a {@code controllerFactory} so the controller can be assigned
+     * programmatically before FXML loading. Pages with an {@code fx:controller}
+     * attribute in their FXML use {@code null} (the default).</p>
      */
     public enum Page {
-        TASK_MANAGER("fxml/task-manager.fxml"),
+        TASK_MANAGER("fxml/group-manager.fxml", TaskManagerController::new),
         TASK_GROUP_DETAIL("fxml/task-group-detail.fxml"),
         PROFILE_MANAGER("fxml/profile-manager.fxml"),
         PROXY_MANAGER("fxml/proxy-manager.fxml"),
         SETTINGS("fxml/settings.fxml");
 
         private final String fxmlPath;
+        private final Supplier<Object> controllerFactory;
 
         Page(String fxmlPath) {
+            this(fxmlPath, null);
+        }
+
+        Page(String fxmlPath, Supplier<Object> controllerFactory) {
             this.fxmlPath = fxmlPath;
+            this.controllerFactory = controllerFactory;
         }
 
         public String fxmlPath() {
             return fxmlPath;
+        }
+
+        public Supplier<Object> controllerFactory() {
+            return controllerFactory;
+        }
+
+        public boolean hasControllerFactory() {
+            return controllerFactory != null;
         }
     }
 
@@ -188,6 +208,12 @@ public class MainController implements Initializable {
     /**
      * Gets a cached page or loads it from FXML.
      *
+     * <p>If the {@link Page} provides a controller factory, the controller
+     * is created and assigned via {@link FXMLLoader#setController(Object)}
+     * before loading. This supports shared FXML layouts (like
+     * {@code group-manager.fxml}) that omit the {@code fx:controller}
+     * attribute.</p>
+     *
      * @param page the page to get
      * @return the page node, or null if loading failed
      */
@@ -200,6 +226,12 @@ public class MainController implements Initializable {
         // Load from FXML
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("../" + page.fxmlPath()));
+
+            // Set controller programmatically for shared FXML layouts
+            if (page.hasControllerFactory()) {
+                loader.setController(page.controllerFactory().get());
+            }
+
             Node pageNode = loader.load();
 
             // Cache the page and its controller

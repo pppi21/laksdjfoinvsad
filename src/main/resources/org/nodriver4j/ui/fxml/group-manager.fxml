@@ -12,34 +12,42 @@
 <?import javafx.scene.layout.VBox?>
 
 <!--
-    Task Manager page layout.
-    Displays task groups as cards in a grid.
-    Controller: TaskManagerController
+    Shared group manager page layout.
+    Used for Task Manager, Profile Manager, and Proxy Manager pages.
+    Displays group cards in a grid with an empty state fallback.
+
+    NOTE: No fx:controller attribute. The controller is set programmatically
+    by MainController via loader.setController(...) before loading.
+
+    All text labels have fx:id references so the controller can populate
+    them with page-specific content at initialization time.
+
+    Controller base class: GroupManagerController
 -->
 <VBox xmlns="http://javafx.com/javafx/21"
       xmlns:fx="http://javafx.com/fxml/1"
-      fx:controller="org.nodriver4j.ui.controllers.TaskManagerController"
       styleClass="content-area"
       spacing="0">
 
     <!-- ==================== Page Header ==================== -->
     <HBox alignment="CENTER_LEFT" styleClass="page-header">
 
-        <!-- Title and subtitle -->
+        <!-- Title and subtitle (populated by controller) -->
         <VBox>
-            <Label text="Task Manager" styleClass="page-title"/>
-            <Label text="Create and manage your automation task groups" styleClass="page-subtitle"/>
+            <Label fx:id="pageTitleLabel" styleClass="page-title"/>
+            <Label fx:id="pageSubtitleLabel" styleClass="page-subtitle"/>
         </VBox>
 
         <!-- Spacer -->
         <Region HBox.hgrow="ALWAYS"/>
 
-        <!-- Add Task Group Button -->
+        <!-- Add Button -->
         <Button fx:id="addButton"
                 styleClass="add-button"
-                onAction="#onAddTaskGroupClicked">
+                onAction="#onAddClicked">
             <graphic>
-                <Label text="+" style="-fx-text-fill: #e5e5e5; -fx-font-size: 20px; -fx-font-weight: bold;"/>
+                <Label text="+"
+                       style="-fx-text-fill: #e5e5e5; -fx-font-size: 20px; -fx-font-weight: bold;"/>
             </graphic>
         </Button>
 
@@ -48,21 +56,20 @@
     <!-- ==================== Content Area ==================== -->
     <StackPane VBox.vgrow="ALWAYS">
 
-        <!-- Empty State (shown when no task groups) -->
+        <!-- Empty State (shown when no groups exist) -->
         <VBox fx:id="emptyState"
               styleClass="empty-state"
               alignment="CENTER"
               visible="true"
               managed="true">
 
-            <Label text="📋" styleClass="empty-state-icon"/>
-            <Label text="No Task Groups" styleClass="empty-state-title"/>
-            <Label text="Click the + button to create your first task group"
-                   styleClass="empty-state-description"/>
+            <Label fx:id="emptyStateIconLabel" styleClass="empty-state-icon"/>
+            <Label fx:id="emptyStateTitleLabel" styleClass="empty-state-title"/>
+            <Label fx:id="emptyStateDescLabel" styleClass="empty-state-description"/>
 
         </VBox>
 
-        <!-- Task Groups Grid (shown when task groups exist) -->
+        <!-- Card Grid (shown when groups exist) -->
         <ScrollPane fx:id="scrollPane"
                     fitToWidth="true"
                     fitToHeight="true"
@@ -72,8 +79,8 @@
                     managed="false"
                     style="-fx-background-color: transparent;">
 
-            <FlowPane fx:id="taskGroupGrid"
-                      styleClass="task-group-grid"
+            <FlowPane fx:id="cardGrid"
+                      styleClass="group-card-grid"
                       hgap="16"
                       vgap="16"
                       alignment="TOP_LEFT">
@@ -81,7 +88,7 @@
                     <Insets top="0" right="0" bottom="16" left="0"/>
                 </padding>
 
-                <!-- Task group cards are added here dynamically -->
+                <!-- Group cards are added here dynamically by the controller -->
 
             </FlowPane>
 

@@ -1,13 +1,6 @@
 package org.nodriver4j.ui.controllers;
 
 import javafx.fxml.FXML;
-import javafx.fxml.Initializable;
-import javafx.scene.control.Alert;
-import javafx.scene.control.Button;
-import javafx.scene.control.ScrollPane;
-import javafx.scene.layout.FlowPane;
-import javafx.scene.layout.VBox;
-import javafx.stage.Window;
 import org.nodriver4j.persistence.Database;
 import org.nodriver4j.persistence.entity.TaskGroupEntity;
 import org.nodriver4j.persistence.repository.TaskGroupRepository;
@@ -15,67 +8,52 @@ import org.nodriver4j.persistence.repository.TaskRepository;
 import org.nodriver4j.ui.components.TaskGroupCard;
 import org.nodriver4j.ui.dialogs.CreateTaskGroupDialog;
 
-import java.net.URL;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.ResourceBundle;
+import java.util.function.LongConsumer;
 
 /**
  * Controller for the Task Manager page.
  *
- * <p>Manages task group creation, display, and interaction. Task groups
- * are persisted to the database and loaded on startup so they survive
- * application restarts.</p>
+ * <p>Manages task group creation, display, and interaction. Extends
+ * {@link GroupManagerController} which provides the shared page layout,
+ * card management, empty state toggle, and error alert infrastructure.</p>
+ *
+ * <p>This controller is paired with {@code group-manager.fxml} (shared layout).
+ * {@link MainController} assigns this controller programmatically via
+ * {@code loader.setController(new TaskManagerController())} before loading.</p>
  *
  * <h2>Responsibilities</h2>
  * <ul>
+ *   <li>Provide task-manager-specific page text</li>
  *   <li>Load persisted task groups on initialization</li>
- *   <li>Handle "Add Task Group" button click</li>
- *   <li>Persist new task groups to the database</li>
- *   <li>Delete task groups from the database</li>
- *   <li>Show/hide empty state vs grid</li>
- *   <li>Create and manage TaskGroupCard components</li>
- *   <li>Handle card click events (navigate to group detail)</li>
- *   <li>Display error alerts on database failures</li>
+ *   <li>Handle "Add Task Group" button → dialog → persist → card</li>
+ *   <li>Handle card click → navigation to group detail</li>
+ *   <li>Handle card delete → persist → remove card</li>
+ *   <li>Build {@link TaskGroupCard} instances with wired callbacks</li>
  * </ul>
  *
  * <h2>NOT Responsible For</h2>
  * <ul>
- *   <li>Actually running automation scripts (delegated to service layer)</li>
+ *   <li>FXML injection for shared layout (inherited from {@link GroupManagerController})</li>
+ *   <li>Card list / grid synchronization (inherited)</li>
+ *   <li>Empty state toggle (inherited)</li>
+ *   <li>Error alert display (inherited)</li>
+ *   <li>Running automation scripts (service layer)</li>
  *   <li>Profile/proxy management (separate controllers)</li>
- *   <li>Database connection management (delegated to {@link Database})</li>
  *   <li>SQL queries (delegated to repositories)</li>
- *   <li>Card rendering (delegated to {@link TaskGroupCard})</li>
  * </ul>
+ *
+ * @see GroupManagerController
+ * @see TaskGroupCard
+ * @see CreateTaskGroupDialog
  */
-public class TaskManagerController implements Initializable {
-
-    // ==================== FXML Injected Fields ====================
-
-    @FXML
-    private Button addButton;
-
-    @FXML
-    private VBox emptyState;
-
-    @FXML
-    private ScrollPane scrollPane;
-
-    @FXML
-    private FlowPane taskGroupGrid;
+public class TaskManagerController extends GroupManagerController<TaskGroupCard> {
 
     // ==================== Repositories ====================
 
     private final TaskGroupRepository taskGroupRepository = new TaskGroupRepository();
     private final TaskRepository taskRepository = new TaskRepository();
-
-    // ==================== Internal State ====================
-
-    /**
-     * List of task group cards currently displayed.
-     */
-    private final List<TaskGroupCard> taskGroupCards = new ArrayList<>();
 
     // ==================== Callbacks ====================
 
@@ -84,22 +62,36 @@ public class TaskManagerController implements Initializable {
      * Set by {@link MainController} to navigate to the group detail page.
      * Accepts the group ID as a parameter.
      */
-    private java.util.function.LongConsumer onNavigateToGroup;
+    private LongConsumer onNavigateToGroup;
 
-    // ==================== Initialization ====================
+    // ==================== Page Text ====================
 
     @Override
-    public void initialize(URL location, ResourceBundle resources) {
-        System.out.println("[TaskManagerController] Initializing...");
-
-        // Load persisted task groups from database
-        loadTaskGroups();
-
-        // Update view based on whether groups exist
-        updateViewState();
-
-        System.out.println("[TaskManagerController] Initialized successfully");
+    protected String pageTitle() {
+        return "Task Manager";
     }
+
+    @Override
+    protected String pageSubtitle() {
+        return "Create and manage your automation task groups";
+    }
+
+    @Override
+    protected String emptyStateIcon() {
+        return "📋";
+    }
+
+    @Override
+    protected String emptyStateTitle() {
+        return "No Task Groups";
+    }
+
+    @Override
+    protected String emptyStateDescription() {
+        return "Click the + button to create your first task group";
+    }
+
+    // ==================== Data Loading ====================
 
     /**
      * Loads all task groups from the database and creates cards for them.
@@ -108,19 +100,19 @@ public class TaskManagerController implements Initializable {
      * the desired grid display order. Task counts are queried per group;
      * running counts default to 0 until task execution is wired.</p>
      */
-    private void loadTaskGroups() {
+    @Override
+    protected void loadGroups() {
         try {
             List<TaskGroupEntity> groups = taskGroupRepository.findAll();
 
             for (TaskGroupEntity group : groups) {
                 int taskCount = (int) taskRepository.countByGroupId(group.id());
-
                 TaskGroupCard card = buildCard(group.id(), group.name(), group.scriptName(), taskCount);
-                taskGroupCards.add(card);
-                taskGroupGrid.getChildren().add(card);
+                addCard(card);
             }
 
-            System.out.println("[TaskManagerController] Loaded " + groups.size() + " task groups from database");
+            System.out.println("[TaskManagerController] Loaded " + groups.size()
+                    + " task groups from database");
 
         } catch (Database.DatabaseException e) {
             System.err.println("[TaskManagerController] Failed to load task groups: " + e.getMessage());
@@ -130,24 +122,20 @@ public class TaskManagerController implements Initializable {
         }
     }
 
-    // ==================== Event Handlers ====================
+    // ==================== Add Button ====================
 
     /**
      * Handles the "Add Task Group" button click.
      * Opens a dialog to create a new task group.
      */
     @FXML
-    private void onAddTaskGroupClicked() {
+    @Override
+    protected void onAddClicked() {
         System.out.println("[TaskManagerController] Add button clicked");
 
-        // Get the owner window from the button's scene
-        Window owner = addButton.getScene().getWindow();
-
-        // Show the create dialog (centered on owner, moves with owner)
-        CreateTaskGroupDialog dialog = new CreateTaskGroupDialog(owner);
+        CreateTaskGroupDialog dialog = new CreateTaskGroupDialog(ownerWindow());
         Optional<CreateTaskGroupDialog.TaskGroupData> result = dialog.showAndWait();
 
-        // Handle the result
         result.ifPresent(this::createTaskGroup);
     }
 
@@ -157,13 +145,14 @@ public class TaskManagerController implements Initializable {
      * Creates a new task group from dialog data.
      *
      * <p>Persists the group to the database first. If persistence succeeds,
-     * builds a card and adds it to the grid. If persistence fails, shows
-     * an error alert and does not create the card.</p>
+     * builds a card and inserts it at the beginning of the grid (newest-first).
+     * If persistence fails, shows an error alert and does not create the card.</p>
      *
      * @param data the task group data from the dialog
      */
     private void createTaskGroup(CreateTaskGroupDialog.TaskGroupData data) {
-        System.out.println("[TaskManagerController] Creating task group: " + data.name() + " (" + data.script() + ")");
+        System.out.println("[TaskManagerController] Creating task group: "
+                + data.name() + " (" + data.script() + ")");
 
         // Persist to database first
         TaskGroupEntity entity;
@@ -178,18 +167,12 @@ public class TaskManagerController implements Initializable {
             return;
         }
 
-        // Build card with the persisted entity's ID
+        // Build card with the persisted entity's ID and insert at beginning
         TaskGroupCard card = buildCard(entity.id(), entity.name(), entity.scriptName(), 0);
-
-        // Add to the beginning of the list and grid (newest first)
-        taskGroupCards.addFirst(card);
-        taskGroupGrid.getChildren().addFirst(card);
-
-        // Update view state (show grid, hide empty state)
-        updateViewState();
+        addCardFirst(card);
 
         System.out.println("[TaskManagerController] Task group created with ID " + entity.id()
-                + ". Total groups: " + taskGroupCards.size());
+                + ". Total groups: " + cardCount());
     }
 
     /**
@@ -210,9 +193,9 @@ public class TaskManagerController implements Initializable {
     /**
      * Handles a task group card being deleted.
      *
-     * <p>Deletes from the database first. If deletion succeeds, removes the
-     * card from the UI. If deletion fails, shows an error alert and leaves
-     * the card in place.</p>
+     * <p>Deletes from the database first (CASCADE removes child tasks).
+     * If deletion succeeds, removes the card from the UI. If deletion
+     * fails, shows an error alert and leaves the card in place.</p>
      *
      * @param card the card to delete
      */
@@ -220,7 +203,6 @@ public class TaskManagerController implements Initializable {
         System.out.println("[TaskManagerController] Deleting task group: "
                 + card.groupName() + " (ID: " + card.groupId() + ")");
 
-        // Delete from database first (CASCADE will remove child tasks)
         try {
             taskGroupRepository.deleteById(card.groupId());
         } catch (Database.DatabaseException e) {
@@ -231,14 +213,9 @@ public class TaskManagerController implements Initializable {
             return;
         }
 
-        // Remove from tracking list and grid
-        taskGroupCards.remove(card);
-        taskGroupGrid.getChildren().remove(card);
+        removeCard(card);
 
-        // Update view state
-        updateViewState();
-
-        System.out.println("[TaskManagerController] Task group deleted. Total groups: " + taskGroupCards.size());
+        System.out.println("[TaskManagerController] Task group deleted. Total groups: " + cardCount());
     }
 
     // ==================== Card Building ====================
@@ -267,51 +244,6 @@ public class TaskManagerController implements Initializable {
         return card;
     }
 
-    // ==================== View State Management ====================
-
-    /**
-     * Updates the view to show either empty state or the task group grid.
-     */
-    private void updateViewState() {
-        boolean hasGroups = !taskGroupCards.isEmpty();
-
-        // Toggle visibility
-        emptyState.setVisible(!hasGroups);
-        emptyState.setManaged(!hasGroups);
-
-        scrollPane.setVisible(hasGroups);
-        scrollPane.setManaged(hasGroups);
-    }
-
-    // ==================== Error Handling ====================
-
-    /**
-     * Shows an error alert dialog to the user.
-     *
-     * @param title   the alert title
-     * @param header  the header text describing what went wrong
-     * @param content the detailed error message
-     */
-    private void showErrorAlert(String title, String header, String content) {
-        Alert alert = new Alert(Alert.AlertType.ERROR);
-        alert.setTitle(title);
-        alert.setHeaderText(header);
-        alert.setContentText(content);
-
-        // Style the alert with our dark theme if possible
-        try {
-            alert.getDialogPane().getStylesheets().add(
-                    getClass().getResource("../css/dark-theme.css").toExternalForm()
-            );
-            alert.getDialogPane().getStyleClass().add("dialog-pane");
-        } catch (Exception e) {
-            // Fallback to default styling if CSS can't be loaded
-            System.err.println("[TaskManagerController] Could not apply dark theme to alert: " + e.getMessage());
-        }
-
-        alert.showAndWait();
-    }
-
     // ==================== Public API ====================
 
     /**
@@ -320,7 +252,7 @@ public class TaskManagerController implements Initializable {
      * @return the count of task groups
      */
     public int taskGroupCount() {
-        return taskGroupCards.size();
+        return cardCount();
     }
 
     /**
@@ -329,7 +261,7 @@ public class TaskManagerController implements Initializable {
      * @return unmodifiable list of cards
      */
     public List<TaskGroupCard> taskGroupCards() {
-        return List.copyOf(taskGroupCards);
+        return cards();
     }
 
     /**
@@ -347,9 +279,7 @@ public class TaskManagerController implements Initializable {
             return;
         }
 
-        taskGroupCards.clear();
-        taskGroupGrid.getChildren().clear();
-        updateViewState();
+        clearCards();
 
         System.out.println("[TaskManagerController] All task groups cleared");
     }
@@ -362,7 +292,7 @@ public class TaskManagerController implements Initializable {
      *
      * @param onNavigateToGroup callback that accepts the group ID
      */
-    public void setOnNavigateToGroup(java.util.function.LongConsumer onNavigateToGroup) {
+    public void setOnNavigateToGroup(LongConsumer onNavigateToGroup) {
         this.onNavigateToGroup = onNavigateToGroup;
     }
 }
