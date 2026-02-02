@@ -67,6 +67,7 @@ public class MainController implements Initializable {
         TASK_MANAGER("fxml/group-manager.fxml", TaskManagerController::new),
         TASK_GROUP_DETAIL("fxml/task-group-detail.fxml"),
         PROFILE_MANAGER("fxml/group-manager.fxml", ProfileManagerController::new),
+        PROFILE_GROUP_DETAIL("fxml/profile-group-detail.fxml"),
         PROXY_MANAGER("fxml/proxy-manager.fxml"),
         SETTINGS("fxml/settings.fxml");
 
@@ -310,6 +311,15 @@ public class MainController implements Initializable {
     }
 
     /**
+     * Gets the ProfileGroupDetailController.
+     *
+     * @return the ProfileGroupDetailController, or null if not loaded
+     */
+    public ProfileGroupDetailController profileGroupDetailController() {
+        return getPageController(Page.PROFILE_GROUP_DETAIL);
+    }
+
+    /**
      * Gets the currently active page.
      *
      * @return the current page
@@ -323,6 +333,13 @@ public class MainController implements Initializable {
      */
     public void showTaskManager() {
         navigateTo(Page.TASK_MANAGER, navTasks);
+    }
+
+    /**
+     * Programmatically navigates to the Profile Manager page.
+     */
+    public void showProfileManager() {
+        navigateTo(Page.PROFILE_MANAGER, navProfiles);
     }
 
     /**
@@ -357,11 +374,29 @@ public class MainController implements Initializable {
     /**
      * Navigates to the Profile Group Detail page for a specific group.
      *
-     * <p>TODO: Implement when ProfileGroupDetailController is created.</p>
+     * <p>The FXML is loaded and cached on first call. On every call,
+     * {@link ProfileGroupDetailController#loadGroup(long)} is invoked to
+     * refresh the page with the specified group's data. The back callback
+     * is wired to return to the Profile Manager.</p>
+     *
+     * <p>The Profiles nav item remains active since the detail page is
+     * a sub-page of the Profile Manager.</p>
      *
      * @param groupId the database ID of the profile group to display
      */
     public void showProfileGroupDetail(long groupId) {
-        System.out.println("[MainController] Profile group detail not yet implemented for group " + groupId);
+        System.out.println("[MainController] Showing profile group detail for group " + groupId);
+
+        // Navigate to the detail page if not already there
+        if (currentPage != Page.PROFILE_GROUP_DETAIL) {
+            navigateTo(Page.PROFILE_GROUP_DETAIL);
+        }
+
+        // Load the group data (always called, even if already on the page)
+        ProfileGroupDetailController controller = profileGroupDetailController();
+        if (controller != null) {
+            controller.setOnBack(this::showProfileManager);
+            controller.loadGroup(groupId);
+        }
     }
 }

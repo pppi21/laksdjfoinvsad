@@ -772,3 +772,100 @@
 .status-stopped {
     -fx-text-fill: -fx-warning;
 }
+
+/* ==================== Profile Cards (ID-card style) ==================== */
+.profile-card {
+    -fx-background-color: -fx-card-bg;
+    -fx-background-radius: 12px;
+    -fx-border-color: -fx-border;
+    -fx-border-radius: 12px;
+    -fx-border-width: 1px;
+    -fx-pref-width: 260px;
+    -fx-pref-height: 170px;
+    -fx-padding: 16px;
+    -fx-cursor: hand;
+}
+
+.profile-card:hover {
+    -fx-background-color: -fx-hover;
+    -fx-border-color: -fx-accent;
+}
+
+.profile-card-name {
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -fx-text-primary;
+}
+
+.profile-card-email {
+    -fx-font-size: 13px;
+    -fx-text-fill: -fx-text-secondary;
+}
+
+.profile-card-phone {
+    -fx-font-size: 12px;
+    -fx-text-fill: -fx-text-muted;
+}
+
+.profile-card-payment {
+    -fx-padding: 8px 0 0 0;
+    -fx-border-color: -fx-border transparent transparent transparent;
+    -fx-border-width: 1px 0 0 0;
+}
+
+.profile-card-number {
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -fx-text-primary;
+    -fx-font-family: "Consolas", "SF Mono", monospace;
+    -fx-letter-spacing: 1px;
+}
+
+.profile-card-details {
+    -fx-font-size: 12px;
+    -fx-text-fill: -fx-text-muted;
+    -fx-font-family: "Consolas", "SF Mono", monospace;
+}
+
+/* ==================== Profile Card Grid ==================== */
+.profile-card-grid {
+    -fx-hgap: 16px;
+    -fx-vgap: 16px;
+    -fx-padding: 0;
+}
+
+/* ==================== Profile Detail Dialog ==================== */
+.profile-detail-section {
+    -fx-padding: 0;
+}
+
+.profile-detail-section-header {
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -fx-accent-light;
+    -fx-padding: 0 0 4px 0;
+    -fx-border-color: transparent transparent -fx-border transparent;
+    -fx-border-width: 0 0 1px 0;
+}
+
+.profile-detail-row {
+    -fx-padding: 4px 0;
+}
+
+.profile-detail-label {
+    -fx-font-size: 13px;
+    -fx-text-fill: -fx-text-muted;
+}
+
+.profile-detail-value {
+    -fx-font-size: 13px;
+    -fx-text-fill: -fx-text-primary;
+}
+
+.profile-detail-value:hover {
+    -fx-text-fill: -fx-accent-light;
+}
+
+.profile-detail-copied {
+    -fx-text-fill: -fx-success;
+}
