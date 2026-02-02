@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Priority?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.VBox?>
+
+<!--
+    Task Group Detail page layout.
+    Displays individual tasks belonging to a task group as full-width rows.
+    Navigated to by clicking a task group card in the Task Manager.
+    Controller: TaskGroupDetailController
+-->
+<VBox xmlns="http://javafx.com/javafx/21"
+      xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="org.nodriver4j.ui.controllers.TaskGroupDetailController"
+      styleClass="content-area"
+      spacing="0">
+
+    <!-- ==================== Page Header ==================== -->
+    <HBox alignment="CENTER_LEFT" styleClass="page-header" spacing="12">
+
+        <!-- Back Button -->
+        <Button fx:id="backButton"
+                styleClass="back-button"
+                onAction="#onBackClicked">
+            <graphic>
+                <Label text="←"
+                       style="-fx-text-fill: #e5e5e5; -fx-font-size: 18px; -fx-font-weight: bold;"/>
+            </graphic>
+        </Button>
+
+        <!-- Title and subtitle (populated dynamically by controller) -->
+        <VBox>
+            <Label fx:id="groupNameLabel" text="Task Group" styleClass="page-title"/>
+            <Label fx:id="scriptNameLabel" text="Script" styleClass="page-subtitle"/>
+        </VBox>
+
+        <!-- Spacer -->
+        <Region HBox.hgrow="ALWAYS"/>
+
+        <!-- Add Task Button -->
+        <Button fx:id="addButton"
+                styleClass="add-button"
+                onAction="#onAddTaskClicked">
+            <graphic>
+                <Label text="+"
+                       style="-fx-text-fill: #e5e5e5; -fx-font-size: 20px; -fx-font-weight: bold;"/>
+            </graphic>
+        </Button>
+
+    </HBox>
+
+    <!-- ==================== Content Area ==================== -->
+    <StackPane VBox.vgrow="ALWAYS">
+
+        <!-- Empty State (shown when no tasks) -->
+        <VBox fx:id="emptyState"
+              styleClass="empty-state"
+              alignment="CENTER"
+              visible="true"
+              managed="true">
+
+            <Label text="📝" styleClass="empty-state-icon"/>
+            <Label text="No Tasks" styleClass="empty-state-title"/>
+            <Label text="Click the + button to create tasks for this group"
+                   styleClass="empty-state-description"/>
+
+        </VBox>
+
+        <!-- Task List (shown when tasks exist) -->
+        <ScrollPane fx:id="scrollPane"
+                    fitToWidth="true"
+                    fitToHeight="true"
+                    hbarPolicy="NEVER"
+                    vbarPolicy="AS_NEEDED"
+                    visible="false"
+                    managed="false"
+                    style="-fx-background-color: transparent;">
+
+            <VBox fx:id="taskListContainer"
+                  styleClass="task-list-container"
+                  spacing="8">
+                <padding>
+                    <Insets top="0" right="0" bottom="16" left="0"/>
+                </padding>
+
+                <!-- TaskRow components are added here dynamically -->
+
+            </VBox>
+
+        </ScrollPane>
+
+    </StackPane>
+
+</VBox>
