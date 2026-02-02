@@ -8,6 +8,7 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
 import javafx.stage.FileChooser;
 import javafx.stage.Modality;
 import javafx.stage.StageStyle;
@@ -149,6 +150,11 @@ public final class CreateProfileGroupDialog extends Dialog<CreateProfileGroupDia
             }
             return null;
         });
+
+        setOnShown(event -> {
+            getDialogPane().getScene().setFill(Color.TRANSPARENT);
+        });
+
 
         // Focus name field when dialog opens
         Platform.runLater(() -> nameField.requestFocus());
