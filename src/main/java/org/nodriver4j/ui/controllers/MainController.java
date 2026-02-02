@@ -66,7 +66,7 @@ public class MainController implements Initializable {
     public enum Page {
         TASK_MANAGER("fxml/group-manager.fxml", TaskManagerController::new),
         TASK_GROUP_DETAIL("fxml/task-group-detail.fxml"),
-        PROFILE_MANAGER("fxml/profile-manager.fxml"),
+        PROFILE_MANAGER("fxml/group-manager.fxml", ProfileManagerController::new),
         PROXY_MANAGER("fxml/proxy-manager.fxml"),
         SETTINGS("fxml/settings.fxml");
 
@@ -133,6 +133,13 @@ public class MainController implements Initializable {
             tmc.setOnNavigateToGroup(this::showTaskGroupDetail);
         }
 
+        // Pre-load ProfileManager and wire navigation callback
+        getOrLoadPage(Page.PROFILE_MANAGER);
+        ProfileManagerController pmc = profileManagerController();
+        if (pmc != null) {
+            pmc.setOnNavigateToGroup(this::showProfileGroupDetail);
+        }
+
         System.out.println("[MainController] Initialized successfully");
     }
 
@@ -145,8 +152,7 @@ public class MainController implements Initializable {
 
     @FXML
     private void onNavProfilesClicked() {
-        // Future: navigateTo(Page.PROFILE_MANAGER, navProfiles);
-        System.out.println("[MainController] Profiles page not yet implemented");
+        navigateTo(Page.PROFILE_MANAGER, navProfiles);
     }
 
     @FXML
@@ -286,6 +292,15 @@ public class MainController implements Initializable {
     }
 
     /**
+     * Gets the ProfileManagerController.
+     *
+     * @return the ProfileManagerController, or null if not loaded
+     */
+    public ProfileManagerController profileManagerController() {
+        return getPageController(Page.PROFILE_MANAGER);
+    }
+
+    /**
      * Gets the TaskGroupDetailController.
      *
      * @return the TaskGroupDetailController, or null if not loaded
@@ -337,5 +352,16 @@ public class MainController implements Initializable {
             controller.setOnBack(this::showTaskManager);
             controller.loadGroup(groupId);
         }
+    }
+
+    /**
+     * Navigates to the Profile Group Detail page for a specific group.
+     *
+     * <p>TODO: Implement when ProfileGroupDetailController is created.</p>
+     *
+     * @param groupId the database ID of the profile group to display
+     */
+    public void showProfileGroupDetail(long groupId) {
+        System.out.println("[MainController] Profile group detail not yet implemented for group " + groupId);
     }
 }

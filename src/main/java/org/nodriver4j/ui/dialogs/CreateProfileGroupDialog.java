@@ -1,24 +1,19 @@
 package org.nodriver4j.ui.dialogs;
 
+import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
-import javafx.scene.Scene;
-import javafx.scene.control.Button;
-import javafx.scene.control.Label;
-import javafx.scene.control.TextField;
-import javafx.scene.input.KeyCode;
+import javafx.scene.control.*;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 import javafx.stage.Modality;
-import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 import javafx.stage.Window;
 
 import java.io.File;
-import java.net.URL;
 import java.nio.file.Path;
 import java.util.Optional;
 
@@ -35,6 +30,12 @@ import java.util.Optional;
  *
  * <p>The dialog validates that both a file is selected and the group name
  * is non-blank before enabling the Create button.</p>
+ *
+ * <p>This dialog extends {@link Dialog} and uses {@link DialogPane} to
+ * ensure consistent styling with other dialogs in the application
+ * (e.g., {@link CreateTaskGroupDialog}). The dark theme CSS selectors
+ * for {@code .dialog-pane}, {@code .dialog-pane > .button-bar}, and
+ * {@code .dialog-pane > .content} all apply correctly.</p>
  *
  * <h2>Usage</h2>
  * <pre>{@code
@@ -63,15 +64,10 @@ import java.util.Optional;
  *   <li>Profile group card creation (controller handles)</li>
  * </ul>
  *
+ * @see CreateTaskGroupDialog
  * @see org.nodriver4j.persistence.importer.ProfileImporter
  */
-public final class CreateProfileGroupDialog {
-
-    private static final double DIALOG_WIDTH = 420;
-
-    private CreateProfileGroupDialog() {
-        // Static utility class — prevent instantiation
-    }
+public final class CreateProfileGroupDialog extends Dialog<CreateProfileGroupDialog.Result> {
 
     // ==================== Result Record ====================
 
@@ -83,45 +79,142 @@ public final class CreateProfileGroupDialog {
      */
     public record Result(String groupName, Path csvPath) {}
 
-    // ==================== Public API ====================
+    // ==================== UI Components ====================
+
+    private final TextField nameField;
+    private final Label fileNameLabel;
+
+    // ==================== State ====================
+
+    /**
+     * The selected CSV file, or null if no file has been chosen.
+     */
+    private File selectedFile;
+
+    // ==================== Constructor ====================
+
+    /**
+     * Creates a new CreateProfileGroupDialog with an owner window.
+     *
+     * @param owner the owner window (dialog will be centered on this)
+     */
+    public CreateProfileGroupDialog(Window owner) {
+        // Set owner for proper positioning
+        initOwner(owner);
+        initModality(Modality.WINDOW_MODAL);
+
+        // TRANSPARENT for rounded corners without white artifacts
+        initStyle(StageStyle.TRANSPARENT);
+
+        // Create UI components
+        nameField = createNameField();
+        fileNameLabel = createFileNameLabel();
+
+        // Build content
+        DialogPane dialogPane = getDialogPane();
+        dialogPane.setContent(buildContent());
+        dialogPane.getStyleClass().add("dialog-pane");
+
+        // Apply stylesheet
+        dialogPane.getStylesheets().add(
+                getClass().getResource("../css/dark-theme.css").toExternalForm()
+        );
+
+        // Add buttons
+        ButtonType cancelButtonType = new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE);
+        ButtonType createButtonType = new ButtonType("Create", ButtonBar.ButtonData.OK_DONE);
+        dialogPane.getButtonTypes().addAll(cancelButtonType, createButtonType);
+
+        // Style the buttons
+        Button cancelBtn = (Button) dialogPane.lookupButton(cancelButtonType);
+        cancelBtn.getStyleClass().add("secondary");
+
+        Button createBtn = (Button) dialogPane.lookupButton(createButtonType);
+        createBtn.getStyleClass().add("primary");
+
+        // Disable create button initially
+        createBtn.setDisable(true);
+
+        // Add validation listener
+        nameField.textProperty().addListener((obs, oldVal, newVal) ->
+                validateAndUpdateButton(createBtn));
+
+        // Set result converter
+        setResultConverter(buttonType -> {
+            if (buttonType == createButtonType && selectedFile != null) {
+                return new Result(
+                        nameField.getText().trim(),
+                        selectedFile.toPath()
+                );
+            }
+            return null;
+        });
+
+        // Focus name field when dialog opens
+        Platform.runLater(() -> nameField.requestFocus());
+    }
+
+    // ==================== Static Show Method ====================
 
     /**
      * Shows the dialog and waits for the user to submit or cancel.
+     *
+     * <p>Convenience method that creates the dialog, shows it modally,
+     * and returns the result. Matches the calling convention used by
+     * other dialogs in the application.</p>
      *
      * @param owner the owner window (dialog is centered on this window)
      * @return an Optional containing the result if the user clicked Create,
      *         or empty if the user cancelled
      */
     public static Optional<Result> show(Window owner) {
-        // Result holder (effectively final for use in lambdas)
-        final Result[] result = {null};
+        CreateProfileGroupDialog dialog = new CreateProfileGroupDialog(owner);
+        return dialog.showAndWait();
+    }
 
-        // ---- Build the stage ----
-        Stage dialog = new Stage();
-        dialog.initModality(Modality.APPLICATION_MODAL);
-        dialog.initOwner(owner);
-        dialog.initStyle(StageStyle.UNDECORATED);
-        dialog.setResizable(false);
+    // ==================== UI Building ====================
 
-        // ---- Title ----
+    /**
+     * Builds the main content layout.
+     *
+     * @return the content VBox
+     */
+    private VBox buildContent() {
+        // Title
         Label titleLabel = new Label("Create Profile Group");
         titleLabel.getStyleClass().add("dialog-title");
 
-        // ---- CSV File Selection ----
+        // File selection group
+        VBox fileGroup = buildFileGroup();
+
+        // Name group
+        VBox nameGroup = buildNameGroup();
+
+        // Assemble
+        VBox content = new VBox(4);
+        content.setPadding(new Insets(24));
+        content.setPrefWidth(420);
+        content.getChildren().addAll(titleLabel, fileGroup, nameGroup);
+
+        return content;
+    }
+
+    /**
+     * Builds the CSV file selection form group.
+     *
+     * @return the file selection VBox
+     */
+    private VBox buildFileGroup() {
         Label fileLabel = new Label("Profiles CSV");
         fileLabel.getStyleClass().add("form-label");
 
-        Label fileNameLabel = new Label("No file selected");
-        fileNameLabel.getStyleClass().addAll("label", "muted");
         fileNameLabel.setMaxWidth(Double.MAX_VALUE);
         HBox.setHgrow(fileNameLabel, Priority.ALWAYS);
-
-        // Track selected file
-        final File[] selectedFile = {null};
 
         Button browseButton = new Button("Browse...");
         browseButton.getStyleClass().addAll("button", "secondary");
         browseButton.setStyle("-fx-padding: 6px 14px; -fx-font-size: 13px;");
+        browseButton.setOnAction(event -> onBrowseClicked());
 
         HBox fileRow = new HBox(10);
         fileRow.setAlignment(Pos.CENTER_LEFT);
@@ -131,118 +224,104 @@ public final class CreateProfileGroupDialog {
         fileGroup.getStyleClass().add("form-group");
         fileGroup.getChildren().addAll(fileLabel, fileRow);
 
-        // ---- Group Name ----
+        return fileGroup;
+    }
+
+    /**
+     * Builds the group name form group.
+     *
+     * @return the name VBox
+     */
+    private VBox buildNameGroup() {
         Label nameLabel = new Label("Group Name");
         nameLabel.getStyleClass().add("form-label");
-
-        TextField nameField = new TextField();
-        nameField.setPromptText("e.g. Uber Accounts");
 
         VBox nameGroup = new VBox();
         nameGroup.getStyleClass().add("form-group");
         nameGroup.getChildren().addAll(nameLabel, nameField);
 
-        // ---- Buttons ----
-        Button cancelButton = new Button("Cancel");
-        cancelButton.getStyleClass().addAll("button", "secondary");
+        return nameGroup;
+    }
 
-        Button createButton = new Button("Create");
-        createButton.getStyleClass().addAll("button", "primary");
-        createButton.setDisable(true);
+    /**
+     * Creates the group name text field.
+     *
+     * @return the configured TextField
+     */
+    private TextField createNameField() {
+        TextField field = new TextField();
+        field.setPromptText("e.g. Uber Accounts");
+        return field;
+    }
 
-        Region buttonSpacer = new Region();
-        HBox.setHgrow(buttonSpacer, Priority.ALWAYS);
+    /**
+     * Creates the file name display label.
+     *
+     * @return the configured Label
+     */
+    private Label createFileNameLabel() {
+        Label label = new Label("No file selected");
+        label.getStyleClass().addAll("label", "muted");
+        return label;
+    }
 
-        HBox buttonRow = new HBox(12);
-        buttonRow.setAlignment(Pos.CENTER_RIGHT);
-        buttonRow.setPadding(new Insets(8, 0, 0, 0));
-        buttonRow.getChildren().addAll(buttonSpacer, cancelButton, createButton);
+    // ==================== Actions ====================
 
-        // ---- Layout ----
-        VBox content = new VBox(4);
-        content.setPadding(new Insets(24));
-        content.setPrefWidth(DIALOG_WIDTH);
-        content.getStyleClass().add("dialog-pane");
-        content.getChildren().addAll(titleLabel, fileGroup, nameGroup, buttonRow);
+    /**
+     * Handles the Browse button click.
+     *
+     * <p>Opens a native file chooser filtered to CSV files. On selection,
+     * updates the file name display and auto-populates the group name
+     * field if it is currently empty.</p>
+     */
+    private void onBrowseClicked() {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Select Profiles CSV");
+        fileChooser.getExtensionFilters().add(
+                new FileChooser.ExtensionFilter("CSV Files", "*.csv")
+        );
 
-        // ---- Validation ----
-        Runnable validateForm = () -> {
-            boolean valid = selectedFile[0] != null
-                    && !nameField.getText().isBlank();
-            createButton.setDisable(!valid);
-        };
+        File file = fileChooser.showOpenDialog(getOwner());
+        if (file != null) {
+            selectedFile = file;
+            fileNameLabel.setText(file.getName());
+            fileNameLabel.getStyleClass().remove("muted");
 
-        nameField.textProperty().addListener((obs, oldVal, newVal) -> validateForm.run());
+            // Auto-populate group name if empty
+            if (nameField.getText().isBlank()) {
+                String filename = file.getName();
+                String nameWithoutExtension = filename.contains(".")
+                        ? filename.substring(0, filename.lastIndexOf('.'))
+                        : filename;
+                nameField.setText(nameWithoutExtension);
+            }
 
-        // ---- Browse action ----
-        browseButton.setOnAction(event -> {
-            FileChooser fileChooser = new FileChooser();
-            fileChooser.setTitle("Select Profiles CSV");
-            fileChooser.getExtensionFilters().add(
-                    new FileChooser.ExtensionFilter("CSV Files", "*.csv")
+            // Re-validate since file selection changed
+            Button createBtn = (Button) getDialogPane().lookupButton(
+                    getDialogPane().getButtonTypes().stream()
+                            .filter(bt -> bt.getButtonData() == ButtonBar.ButtonData.OK_DONE)
+                            .findFirst()
+                            .orElse(null)
             );
-
-            File file = fileChooser.showOpenDialog(dialog);
-            if (file != null) {
-                selectedFile[0] = file;
-                fileNameLabel.setText(file.getName());
-                fileNameLabel.getStyleClass().remove("muted");
-
-                // Auto-populate group name if empty
-                if (nameField.getText().isBlank()) {
-                    String filename = file.getName();
-                    String nameWithoutExtension = filename.contains(".")
-                            ? filename.substring(0, filename.lastIndexOf('.'))
-                            : filename;
-                    nameField.setText(nameWithoutExtension);
-                }
-
-                validateForm.run();
+            if (createBtn != null) {
+                validateAndUpdateButton(createBtn);
             }
-        });
-
-        // ---- Button actions ----
-        cancelButton.setOnAction(event -> dialog.close());
-
-        createButton.setOnAction(event -> {
-            String groupName = nameField.getText().trim();
-            Path csvPath = selectedFile[0].toPath();
-
-            result[0] = new Result(groupName, csvPath);
-            dialog.close();
-        });
-
-        // ---- Scene ----
-        Scene scene = new Scene(content);
-
-        // Apply dark theme
-        URL cssUrl = CreateProfileGroupDialog.class.getResource(
-                "/org/nodriver4j/ui/css/dark-theme.css");
-        if (cssUrl != null) {
-            scene.getStylesheets().add(cssUrl.toExternalForm());
         }
+    }
 
-        // ---- Keyboard shortcuts ----
-        scene.setOnKeyPressed(event -> {
-            if (event.getCode() == KeyCode.ESCAPE) {
-                dialog.close();
-            } else if (event.getCode() == KeyCode.ENTER && !createButton.isDisabled()) {
-                createButton.fire();
-            }
-        });
+    // ==================== Validation ====================
 
-        dialog.setScene(scene);
-
-        // Center on owner window
-        if (owner != null) {
-            dialog.setOnShown(event -> {
-                dialog.setX(owner.getX() + (owner.getWidth() - dialog.getWidth()) / 2);
-                dialog.setY(owner.getY() + (owner.getHeight() - dialog.getHeight()) / 2);
-            });
-        }
-
-        dialog.showAndWait();
-
-        return Optional.ofNullable(result[0]);
+    /**
+     * Validates the form and enables/disables the Create button.
+     *
+     * <p>The form is valid when both a CSV file has been selected
+     * and the group name is non-blank.</p>
+     *
+     * @param createButton the Create button to enable/disable
+     */
+    private void validateAndUpdateButton(Button createButton) {
+        boolean valid = selectedFile != null
+                && !nameField.getText().isBlank();
+        createButton.setDisable(!valid);
     }
 }
