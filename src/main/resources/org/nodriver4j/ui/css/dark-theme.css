@@ -869,3 +869,52 @@
 .profile-detail-copied {
     -fx-text-fill: -fx-success;
 }
+
+/* ==================== Proxy Row ==================== */
+.proxy-row {
+    -fx-background-color: -fx-card-bg;
+    -fx-background-radius: 10px;
+    -fx-border-color: -fx-border;
+    -fx-border-radius: 10px;
+    -fx-border-width: 1px;
+    -fx-padding: 14px 18px;
+    -fx-min-height: 72px;
+}
+
+.proxy-row:hover {
+    -fx-background-color: -fx-hover;
+    -fx-border-color: -fx-accent;
+}
+
+.proxy-row-host {
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -fx-text-primary;
+}
+
+.proxy-row-string {
+    -fx-font-size: 12px;
+    -fx-text-fill: -fx-text-secondary;
+    -fx-font-family: "Consolas", "SF Mono", monospace;
+}
+
+.proxy-row-button {
+    -fx-background-color: transparent;
+    -fx-background-radius: 6px;
+    -fx-min-width: 32px;
+    -fx-min-height: 32px;
+    -fx-max-width: 32px;
+    -fx-max-height: 32px;
+    -fx-padding: 0;
+    -fx-cursor: hand;
+}
+
+.proxy-row-button:hover {
+    -fx-background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* ==================== Proxy List ==================== */
+.proxy-list-container {
+    -fx-padding: 0;
+    -fx-spacing: 8px;
+}

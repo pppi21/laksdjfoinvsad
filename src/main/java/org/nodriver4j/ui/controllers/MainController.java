@@ -68,7 +68,8 @@ public class MainController implements Initializable {
         TASK_GROUP_DETAIL("fxml/task-group-detail.fxml"),
         PROFILE_MANAGER("fxml/group-manager.fxml", ProfileManagerController::new),
         PROFILE_GROUP_DETAIL("fxml/profile-group-detail.fxml"),
-        PROXY_MANAGER("fxml/proxy-manager.fxml"),
+        PROXY_MANAGER("fxml/group-manager.fxml", ProxyManagerController::new),
+        PROXY_GROUP_DETAIL("fxml/proxy-group-detail.fxml"),
         SETTINGS("fxml/settings.fxml");
 
         private final String fxmlPath;
@@ -141,6 +142,13 @@ public class MainController implements Initializable {
             pmc.setOnNavigateToGroup(this::showProfileGroupDetail);
         }
 
+        // Pre-load ProxyManager and wire navigation callback
+        getOrLoadPage(Page.PROXY_MANAGER);
+        ProxyManagerController xmc = proxyManagerController();
+        if (xmc != null) {
+            xmc.setOnNavigateToGroup(this::showProxyGroupDetail);
+        }
+
         System.out.println("[MainController] Initialized successfully");
     }
 
@@ -158,8 +166,7 @@ public class MainController implements Initializable {
 
     @FXML
     private void onNavProxiesClicked() {
-        // Future: navigateTo(Page.PROXY_MANAGER, navProxies);
-        System.out.println("[MainController] Proxies page not yet implemented");
+        navigateTo(Page.PROXY_MANAGER, navProxies);
     }
 
     @FXML
@@ -302,6 +309,15 @@ public class MainController implements Initializable {
     }
 
     /**
+     * Gets the ProxyManagerController.
+     *
+     * @return the ProxyManagerController, or null if not loaded
+     */
+    public ProxyManagerController proxyManagerController() {
+        return getPageController(Page.PROXY_MANAGER);
+    }
+
+    /**
      * Gets the TaskGroupDetailController.
      *
      * @return the TaskGroupDetailController, or null if not loaded
@@ -317,6 +333,15 @@ public class MainController implements Initializable {
      */
     public ProfileGroupDetailController profileGroupDetailController() {
         return getPageController(Page.PROFILE_GROUP_DETAIL);
+    }
+
+    /**
+     * Gets the ProxyGroupDetailController.
+     *
+     * @return the ProxyGroupDetailController, or null if not loaded
+     */
+    public ProxyGroupDetailController proxyGroupDetailController() {
+        return getPageController(Page.PROXY_GROUP_DETAIL);
     }
 
     /**
@@ -340,6 +365,13 @@ public class MainController implements Initializable {
      */
     public void showProfileManager() {
         navigateTo(Page.PROFILE_MANAGER, navProfiles);
+    }
+
+    /**
+     * Programmatically navigates to the Proxy Manager page.
+     */
+    public void showProxyManager() {
+        navigateTo(Page.PROXY_MANAGER, navProxies);
     }
 
     /**
@@ -396,6 +428,35 @@ public class MainController implements Initializable {
         ProfileGroupDetailController controller = profileGroupDetailController();
         if (controller != null) {
             controller.setOnBack(this::showProfileManager);
+            controller.loadGroup(groupId);
+        }
+    }
+
+    /**
+     * Navigates to the Proxy Group Detail page for a specific group.
+     *
+     * <p>The FXML is loaded and cached on first call. On every call,
+     * {@link ProxyGroupDetailController#loadGroup(long)} is invoked to
+     * refresh the page with the specified group's data. The back callback
+     * is wired to return to the Proxy Manager.</p>
+     *
+     * <p>The Proxies nav item remains active since the detail page is
+     * a sub-page of the Proxy Manager.</p>
+     *
+     * @param groupId the database ID of the proxy group to display
+     */
+    public void showProxyGroupDetail(long groupId) {
+        System.out.println("[MainController] Showing proxy group detail for group " + groupId);
+
+        // Navigate to the detail page if not already there
+        if (currentPage != Page.PROXY_GROUP_DETAIL) {
+            navigateTo(Page.PROXY_GROUP_DETAIL);
+        }
+
+        // Load the group data (always called, even if already on the page)
+        ProxyGroupDetailController controller = proxyGroupDetailController();
+        if (controller != null) {
+            controller.setOnBack(this::showProxyManager);
             controller.loadGroup(groupId);
         }
     }
