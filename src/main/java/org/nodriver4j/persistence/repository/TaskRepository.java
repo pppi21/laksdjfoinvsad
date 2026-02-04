@@ -81,19 +81,19 @@ public class TaskRepository implements Repository<TaskEntity> {
     // ==================== SQL Statements ====================
 
     private static final String INSERT_SQL = """
-            INSERT INTO tasks (
-                group_id, profile_id, proxy_id, status, userdata_path,
-                notes, custom_status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """;
+        INSERT INTO tasks (
+            group_id, profile_id, proxy_id, status, userdata_path,
+            notes, custom_status, warm_session, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """;
 
     private static final String UPDATE_SQL = """
-            UPDATE tasks SET
-                group_id = ?, profile_id = ?, proxy_id = ?, status = ?,
-                userdata_path = ?, notes = ?, custom_status = ?,
-                updated_at = datetime('now')
-            WHERE id = ?
-            """;
+        UPDATE tasks SET
+            group_id = ?, profile_id = ?, proxy_id = ?, status = ?,
+            userdata_path = ?, notes = ?, custom_status = ?, warm_session = ?,
+            updated_at = datetime('now')
+        WHERE id = ?
+        """;
 
     private static final String UPDATE_STATUS_SQL = """
             UPDATE tasks SET status = ?, updated_at = datetime('now')
@@ -101,9 +101,9 @@ public class TaskRepository implements Repository<TaskEntity> {
             """;
 
     private static final String SELECT_COLUMNS = """
-            id, group_id, profile_id, proxy_id, status, userdata_path,
-            notes, custom_status, created_at, updated_at
-            """;
+        id, group_id, profile_id, proxy_id, status, userdata_path,
+        notes, custom_status, warm_session, created_at, updated_at
+        """;
 
     private static final String SELECT_BY_ID_SQL =
             "SELECT " + SELECT_COLUMNS + " FROM tasks WHERE id = ?";
@@ -474,6 +474,7 @@ public class TaskRepository implements Repository<TaskEntity> {
         stmt.setString(i++, e.userdataPath());
         stmt.setString(i++, e.notes());
         stmt.setString(i++, e.customStatus());
+        stmt.setInt(i++, e.warmSession() ? 1 : 0);
         stmt.setString(i++, e.createdAtString());
         stmt.setString(i, e.updatedAtString());
     }
@@ -496,6 +497,7 @@ public class TaskRepository implements Repository<TaskEntity> {
         stmt.setString(i++, e.userdataPath());
         stmt.setString(i++, e.notes());
         stmt.setString(i++, e.customStatus());
+        stmt.setInt(i++, e.warmSession() ? 1 : 0);
         // updated_at is set via datetime('now') in SQL
         // WHERE id = ?
         stmt.setLong(i, e.id());
@@ -528,6 +530,7 @@ public class TaskRepository implements Repository<TaskEntity> {
                 .userdataPath(rs.getString("userdata_path"))
                 .notes(rs.getString("notes"))
                 .customStatus(rs.getString("custom_status"))
+                .warmSession(rs.getInt("warm_session") == 1)
                 .build();
 
         String createdAtStr = rs.getString("created_at");

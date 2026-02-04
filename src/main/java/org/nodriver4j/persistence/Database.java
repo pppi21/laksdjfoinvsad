@@ -47,7 +47,7 @@ public final class Database {
 
     private static final String DATA_DIRECTORY = "nodriver4j-data";
     private static final String DATABASE_FILE = "data.db";
-    private static final int CURRENT_SCHEMA_VERSION = 1;
+    private static final int CURRENT_SCHEMA_VERSION = 2;
 
     private static final AtomicBoolean initialized = new AtomicBoolean(false);
     private static String connectionUrl;
@@ -214,14 +214,10 @@ public final class Database {
         }
     }
 
-    /**
-     * Applies a specific migration version.
-     *
-     * <p>Add new cases here as the schema evolves.</p>
-     */
     private static void applyMigration(Connection conn, int version) throws SQLException {
         switch (version) {
             case 1 -> migrateV1(conn);
+            case 2 -> migrateV2(conn);
             default -> throw new DatabaseException("Unknown migration version: " + version);
         }
     }
@@ -341,6 +337,15 @@ public final class Database {
             stmt.execute("CREATE INDEX idx_proxies_group_id ON proxies(group_id)");
             stmt.execute("CREATE INDEX idx_tasks_group_id ON tasks(group_id)");
             stmt.execute("CREATE INDEX idx_tasks_status ON tasks(status)");
+        }
+    }
+
+    /**
+     * V2: Add warm_session column to tasks table.
+     */
+    private static void migrateV2(Connection conn) throws SQLException {
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute("ALTER TABLE tasks ADD COLUMN warm_session INTEGER NOT NULL DEFAULT 0");
         }
     }
 

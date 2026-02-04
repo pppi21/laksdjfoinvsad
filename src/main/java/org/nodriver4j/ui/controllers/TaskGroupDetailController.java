@@ -11,10 +11,9 @@ import org.nodriver4j.persistence.Database;
 import org.nodriver4j.persistence.entity.ProfileEntity;
 import org.nodriver4j.persistence.entity.TaskEntity;
 import org.nodriver4j.persistence.entity.TaskGroupEntity;
-import org.nodriver4j.persistence.repository.ProfileRepository;
-import org.nodriver4j.persistence.repository.TaskGroupRepository;
-import org.nodriver4j.persistence.repository.TaskRepository;
+import org.nodriver4j.persistence.repository.*;
 import org.nodriver4j.ui.components.TaskRow;
+import org.nodriver4j.ui.dialogs.CreateTaskDialog;
 
 import java.net.URL;
 import java.util.*;
@@ -91,6 +90,8 @@ public class TaskGroupDetailController implements Initializable {
     private final TaskGroupRepository taskGroupRepository = new TaskGroupRepository();
     private final TaskRepository taskRepository = new TaskRepository();
     private final ProfileRepository profileRepository = new ProfileRepository();
+    private final ProxyGroupRepository proxyGroupRepository = new ProxyGroupRepository();
+    private final ProxyRepository proxyRepository = new ProxyRepository();
 
     // ==================== Internal State ====================
 
@@ -300,17 +301,24 @@ public class TaskGroupDetailController implements Initializable {
         }
     }
 
-    /**
-     * Handles the "Add Task" button click.
-     *
-     * <p>Future: Opens a dialog to create new tasks for this group.
-     * Currently a stub pending the Create Task dialog implementation.</p>
-     */
     @FXML
     private void onAddTaskClicked() {
         System.out.println("[TaskGroupDetailController] Add task clicked for group " + currentGroupId);
 
-        // Future: Open CreateTaskDialog
+        CreateTaskDialog dialog = new CreateTaskDialog(
+                addButton.getScene().getWindow(),
+                new ProfileGroupRepository(),
+                profileRepository,
+                proxyGroupRepository,
+                proxyRepository
+        );
+
+        dialog.showAndWait().ifPresent(result -> {
+            System.out.println("[TaskGroupDetailController] Dialog result:");
+            System.out.println("  Profile IDs: " + result.profileIds());
+            System.out.println("  Proxy Group ID: " + result.proxyGroupId());
+            System.out.println("  Warm Session: " + result.warmSession());
+        });
     }
 
     // ==================== View State Management ====================

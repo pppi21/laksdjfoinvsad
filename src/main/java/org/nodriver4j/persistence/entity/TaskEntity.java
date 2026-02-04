@@ -111,6 +111,10 @@ public class TaskEntity {
 
     private String userdataPath;
 
+    // ==================== Session Options ====================
+
+    private boolean warmSession;
+
     // ==================== Metadata ====================
 
     private String notes;
@@ -139,6 +143,7 @@ public class TaskEntity {
         this.status = builder.status;
         this.customStatus = builder.customStatus;
         this.userdataPath = builder.userdataPath;
+        this.warmSession = builder.warmSession;
         this.notes = builder.notes;
         this.createdAt = builder.createdAt != null ? builder.createdAt : LocalDateTime.now();
         this.updatedAt = builder.updatedAt != null ? builder.updatedAt : LocalDateTime.now();
@@ -169,6 +174,7 @@ public class TaskEntity {
                 .status(status)
                 .customStatus(customStatus)
                 .userdataPath(userdataPath)
+                .warmSession(warmSession)
                 .notes(notes)
                 .createdAt(createdAt)
                 .updatedAt(updatedAt);
@@ -244,6 +250,15 @@ public class TaskEntity {
      */
     public String userdataPath() {
         return userdataPath;
+    }
+
+    /**
+     * Gets whether the session should be warmed with activity.
+     *
+     * @return true if the session should be warmed before automation
+     */
+    public boolean warmSession() {
+        return warmSession;
     }
 
     /**
@@ -367,6 +382,17 @@ public class TaskEntity {
      */
     public TaskEntity userdataPath(String userdataPath) {
         this.userdataPath = userdataPath;
+        return this;
+    }
+
+    /**
+     * Sets whether the session should be warmed with activity.
+     *
+     * @param warmSession true to warm the session before automation
+     * @return this entity for chaining
+     */
+    public TaskEntity warmSession(boolean warmSession) {
+        this.warmSession = warmSession;
         return this;
     }
 
@@ -569,6 +595,7 @@ public class TaskEntity {
         private String status = STATUS_IDLE;
         private String customStatus;
         private String userdataPath;
+        private boolean warmSession = false;
         private String notes;
         private LocalDateTime createdAt;
         private LocalDateTime updatedAt;
@@ -607,6 +634,11 @@ public class TaskEntity {
 
         public Builder userdataPath(String userdataPath) {
             this.userdataPath = userdataPath;
+            return this;
+        }
+
+        public Builder warmSession(boolean warmSession) {
+            this.warmSession = warmSession;
             return this;
         }
 
