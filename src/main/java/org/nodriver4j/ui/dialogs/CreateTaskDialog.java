@@ -160,8 +160,8 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
     /** Hint label showing proxy assignment info below the proxy ComboBox. */
     private final Label proxyHintLabel = new Label();
 
-    // TODO: Warm session checkbox
-
+    /** Checkbox for warming the browser session with activity before automation. */
+    private final CheckBox warmSessionCheckBox = new CheckBox("Warm session with activity");
     // ==================== Selection State ====================
 
     /**
@@ -312,12 +312,11 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
         // Proxy group section
         VBox proxySection = buildProxyGroupSection();
 
-        // TODO: Add warm session checkbox
-
         content.getChildren().addAll(
                 titleLabel,
                 profileSection,
-                proxySection
+                proxySection,
+                buildWarmSessionSection()
         );
 
         // Wrap in ScrollPane
@@ -596,6 +595,22 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
         });
 
         return comboBox;
+    }
+
+    /**
+     * Builds the warm session checkbox section.
+     *
+     * @return the configured VBox
+     */
+    private VBox buildWarmSessionSection() {
+        warmSessionCheckBox.setStyle("-fx-font-size: 13px;");
+        warmSessionCheckBox.setSelected(false);
+
+        VBox section = new VBox();
+        section.getStyleClass().add("form-group");
+        section.getChildren().add(warmSessionCheckBox);
+
+        return section;
     }
 
     // ==================== Data Loading ====================
@@ -1060,9 +1075,8 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
         ProxyGroupEntity selectedProxyGroup = proxyGroupComboBox.getValue();
         Long proxyGroupId = (selectedProxyGroup != null) ? selectedProxyGroup.id() : null;
 
-        // TODO: Get warm session checkbox state
-        boolean warmSession = false;
 
+        boolean warmSession = warmSessionCheckBox.isSelected();
         return new Result(profileIds, proxyGroupId, warmSession);
     }
 
