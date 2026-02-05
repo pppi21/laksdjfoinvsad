@@ -156,6 +156,10 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
     /** Dropdown for selecting a proxy group (nullable — first item is "None"). */
     private final ComboBox<ProxyGroupEntity> proxyGroupComboBox;
 
+    // Add near the other UI component fields
+    /** Hint label showing proxy assignment info below the proxy ComboBox. */
+    private final Label proxyHintLabel = new Label();
+
     // TODO: Warm session checkbox
 
     // ==================== Selection State ====================
@@ -357,25 +361,58 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
         Label label = new Label("Proxy Group (Optional)");
         label.getStyleClass().add("form-label");
 
-        Label hintLabel = new Label("First N proxies will be assigned to N tasks");
-        hintLabel.getStyleClass().addAll("label", "muted");
-        hintLabel.setStyle("-fx-font-size: 12px;");
+        proxyHintLabel.getStyleClass().addAll("label", "muted");
+        proxyHintLabel.setStyle("-fx-font-size: 12px;");
+        proxyHintLabel.setVisible(false);
+        proxyHintLabel.setManaged(false);
 
-        // Only show hint when a proxy group is actually selected
-        hintLabel.setVisible(false);
-        hintLabel.setManaged(false);
-
-        proxyGroupComboBox.valueProperty().addListener((obs, oldVal, newVal) -> {
-            boolean hasSelection = newVal != null;
-            hintLabel.setVisible(hasSelection);
-            hintLabel.setManaged(hasSelection);
-        });
+        proxyGroupComboBox.valueProperty().addListener((obs, oldVal, newVal) -> refreshProxyHint());
 
         VBox section = new VBox(6);
         section.getStyleClass().add("form-group");
-        section.getChildren().addAll(label, proxyGroupComboBox, hintLabel);
+        section.getChildren().addAll(label, proxyGroupComboBox, proxyHintLabel);
 
         return section;
+    }
+
+    /**
+     * Updates the proxy hint label based on the number of selected profiles
+     * and the number of proxies in the selected proxy group.
+     *
+     * <p>Shows nothing if no proxy group is selected. Otherwise displays
+     * how many proxies will actually be assigned.</p>
+     */
+    private void refreshProxyHint() {
+        ProxyGroupEntity selectedGroup = proxyGroupComboBox.getValue();
+
+        if (selectedGroup == null) {
+            proxyHintLabel.setVisible(false);
+            proxyHintLabel.setManaged(false);
+            return;
+        }
+
+        long selectedProfileCount = profileSelectionMap.values().stream()
+                .filter(BooleanProperty::get)
+                .count();
+
+        long proxyCount = proxyRepository.countByGroupId(selectedGroup.id());
+        long assignedCount = Math.min(selectedProfileCount, proxyCount);
+
+        String text;
+        if (selectedProfileCount == 0) {
+            text = proxyCount + " proxies available";
+        } else if (proxyCount >= selectedProfileCount) {
+            text = "First " + selectedProfileCount + " proxies will be assigned to "
+                    + selectedProfileCount + (selectedProfileCount == 1 ? " task" : " tasks");
+        } else {
+            text = proxyCount + (proxyCount == 1 ? " proxy" : " proxies")
+                    + " will be assigned to the first " + proxyCount
+                    + (proxyCount == 1 ? " task" : " tasks");
+        }
+
+        proxyHintLabel.setText(text);
+        proxyHintLabel.setVisible(true);
+        proxyHintLabel.setManaged(true);
     }
 
     /**
@@ -997,6 +1034,9 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
                 .anyMatch(BooleanProperty::get);
 
         createButton.setDisable(!hasSelection);
+
+        // Update proxy hint to reflect current selection count
+        refreshProxyHint();
     }
 
     // ==================== Result Building ====================
