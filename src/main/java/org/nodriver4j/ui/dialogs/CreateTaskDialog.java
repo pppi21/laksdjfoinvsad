@@ -11,8 +11,10 @@ import javafx.scene.paint.Color;
 import javafx.stage.Modality;
 import javafx.stage.StageStyle;
 import javafx.stage.Window;
+import javafx.util.StringConverter;
 import org.nodriver4j.persistence.entity.ProfileEntity;
 import org.nodriver4j.persistence.entity.ProfileGroupEntity;
+import org.nodriver4j.persistence.entity.ProxyGroupEntity;
 import org.nodriver4j.persistence.repository.ProfileGroupRepository;
 import org.nodriver4j.persistence.repository.ProfileRepository;
 import org.nodriver4j.persistence.repository.ProxyGroupRepository;
@@ -58,6 +60,7 @@ import java.util.*;
  *   <li>Chips display of selected profiles (max 2 rows + overflow)</li>
  *   <li>Load profile groups and profiles from repositories</li>
  *   <li>Load proxy groups with counts from repositories</li>
+ *   <li>Provide optional proxy group selection</li>
  *   <li>Validate that at least one profile is selected</li>
  *   <li>Return result as immutable record</li>
  * </ul>
@@ -148,7 +151,11 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
     /** Label showing the current group name in profile view header. */
     private final Label profileViewGroupName;
 
-    // TODO: Proxy Group dropdown
+    // ==================== UI Components — Proxy Group ====================
+
+    /** Dropdown for selecting a proxy group (nullable — first item is "None"). */
+    private final ComboBox<ProxyGroupEntity> proxyGroupComboBox;
+
     // TODO: Warm session checkbox
 
     // ==================== Selection State ====================
@@ -235,6 +242,7 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
         profileViewGroupName = new Label();
         profileViewContainer = buildProfileViewContainer();
         selectorPanel = buildSelectorPanel();
+        proxyGroupComboBox = createProxyGroupComboBox();
 
         // Build content
         DialogPane dialogPane = getDialogPane();
@@ -274,6 +282,7 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
 
         // Load initial data and show group view
         loadGroupList();
+        loadProxyGroups();
         showGroupView();
     }
 
@@ -296,12 +305,15 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
         // Profile selector section
         VBox profileSection = buildProfileSelectorSection();
 
-        // TODO: Add proxy group section
+        // Proxy group section
+        VBox proxySection = buildProxyGroupSection();
+
         // TODO: Add warm session checkbox
 
         content.getChildren().addAll(
                 titleLabel,
-                profileSection
+                profileSection,
+                proxySection
         );
 
         // Wrap in ScrollPane
@@ -329,6 +341,39 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
         VBox section = new VBox(6);
         section.getStyleClass().add("form-group");
         section.getChildren().addAll(label, chipsContainer, selectorPanel);
+
+        return section;
+    }
+
+    /**
+     * Builds the proxy group selection section with a ComboBox and hint label.
+     *
+     * <p>The ComboBox has a null first item representing "None". Each proxy group
+     * is displayed with its proxy count (e.g., "Lightning Proxies (50 proxies)").</p>
+     *
+     * @return the proxy group section VBox
+     */
+    private VBox buildProxyGroupSection() {
+        Label label = new Label("Proxy Group (Optional)");
+        label.getStyleClass().add("form-label");
+
+        Label hintLabel = new Label("First N proxies will be assigned to N tasks");
+        hintLabel.getStyleClass().addAll("label", "muted");
+        hintLabel.setStyle("-fx-font-size: 12px;");
+
+        // Only show hint when a proxy group is actually selected
+        hintLabel.setVisible(false);
+        hintLabel.setManaged(false);
+
+        proxyGroupComboBox.valueProperty().addListener((obs, oldVal, newVal) -> {
+            boolean hasSelection = newVal != null;
+            hintLabel.setVisible(hasSelection);
+            hintLabel.setManaged(hasSelection);
+        });
+
+        VBox section = new VBox(6);
+        section.getStyleClass().add("form-group");
+        section.getChildren().addAll(label, proxyGroupComboBox, hintLabel);
 
         return section;
     }
@@ -474,6 +519,72 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
         });
 
         return listView;
+    }
+
+    /**
+     * Creates the proxy group ComboBox with a custom StringConverter.
+     *
+     * <p>The ComboBox uses {@code null} as its first item to represent "None".
+     * Each non-null item displays the group name followed by its proxy count
+     * (e.g., "Lightning Proxies (50 proxies)").</p>
+     *
+     * <p>Proxy counts are queried from {@link ProxyRepository#countByGroupId(long)}
+     * during display. This is acceptable since the converter is only called
+     * when the dropdown is rendered, which happens infrequently.</p>
+     *
+     * @return the configured ComboBox
+     */
+    private ComboBox<ProxyGroupEntity> createProxyGroupComboBox() {
+        ComboBox<ProxyGroupEntity> comboBox = new ComboBox<>();
+        comboBox.setMaxWidth(Double.MAX_VALUE);
+        comboBox.setPrefHeight(40);
+        comboBox.setPromptText("None");
+
+        comboBox.setConverter(new StringConverter<>() {
+            @Override
+            public String toString(ProxyGroupEntity group) {
+                if (group == null) {
+                    return "None";
+                }
+                long count = proxyRepository.countByGroupId(group.id());
+                String suffix = (count == 1) ? " proxy" : " proxies";
+                return group.name() + " (" + count + suffix + ")";
+            }
+
+            @Override
+            public ProxyGroupEntity fromString(String string) {
+                // Not needed — ComboBox is not editable
+                return null;
+            }
+        });
+
+        return comboBox;
+    }
+
+    // ==================== Data Loading ====================
+
+    /**
+     * Loads all proxy groups into the ComboBox.
+     *
+     * <p>Inserts {@code null} as the first item to represent "None",
+     * followed by all proxy groups from the database. The ComboBox
+     * defaults to {@code null} (no proxy group selected).</p>
+     */
+    private void loadProxyGroups() {
+        try {
+            List<ProxyGroupEntity> groups = proxyGroupRepository.findAll();
+
+            // null represents "None" — rendered by the StringConverter
+            proxyGroupComboBox.getItems().add(null);
+            proxyGroupComboBox.getItems().addAll(groups);
+
+            // Default to "None"
+            proxyGroupComboBox.getSelectionModel().selectFirst();
+
+        } catch (Exception e) {
+            System.err.println("[CreateTaskDialog] Failed to load proxy groups: " + e.getMessage());
+            // ComboBox stays empty — user can still create tasks without proxies
+        }
     }
 
     // ==================== Navigation ====================
@@ -905,8 +1016,9 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
             return null;
         }
 
-        // TODO: Get selected proxy group ID
-        Long proxyGroupId = null;
+        // Read selected proxy group (null means "None")
+        ProxyGroupEntity selectedProxyGroup = proxyGroupComboBox.getValue();
+        Long proxyGroupId = (selectedProxyGroup != null) ? selectedProxyGroup.id() : null;
 
         // TODO: Get warm session checkbox state
         boolean warmSession = false;
