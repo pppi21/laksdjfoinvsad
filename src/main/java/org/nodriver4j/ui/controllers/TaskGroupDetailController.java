@@ -9,6 +9,7 @@ import javafx.scene.control.ScrollPane;
 import javafx.scene.layout.VBox;
 import org.nodriver4j.persistence.Database;
 import org.nodriver4j.persistence.entity.ProfileEntity;
+import org.nodriver4j.persistence.entity.ProxyEntity;
 import org.nodriver4j.persistence.entity.TaskEntity;
 import org.nodriver4j.persistence.entity.TaskGroupEntity;
 import org.nodriver4j.persistence.repository.*;
@@ -314,10 +315,47 @@ public class TaskGroupDetailController implements Initializable {
         );
 
         dialog.showAndWait().ifPresent(result -> {
-            System.out.println("[TaskGroupDetailController] Dialog result:");
-            System.out.println("  Profile IDs: " + result.profileIds());
-            System.out.println("  Proxy Group ID: " + result.proxyGroupId());
-            System.out.println("  Warm Session: " + result.warmSession());
+            List<Long> profileIds = result.profileIds();
+            Long proxyGroupId = result.proxyGroupId();
+            boolean warmSession = result.warmSession();
+
+            // Load proxies sequentially if a proxy group was selected
+            List<ProxyEntity> proxies = (proxyGroupId != null)
+                    ? proxyRepository.findByGroupId(proxyGroupId)
+                    : List.of();
+
+            // Create a TaskEntity for each selected profile
+            List<TaskEntity> tasks = new ArrayList<>();
+            for (int i = 0; i < profileIds.size(); i++) {
+                Long proxyId = (i < proxies.size()) ? proxies.get(i).id() : null;
+
+                TaskEntity task = TaskEntity.builder()
+                        .groupId(currentGroupId)
+                        .profileId(profileIds.get(i))
+                        .proxyId(proxyId)
+                        .warmSession(warmSession)
+                        .build();
+
+                tasks.add(task);
+            }
+
+            // Persist all tasks
+            taskRepository.saveAll(tasks);
+
+            // Build profile map for display name resolution
+            Map<Long, ProfileEntity> profileMap = buildProfileMap(tasks);
+
+            // Create a TaskRow for each saved task
+            for (TaskEntity task : tasks) {
+                String displayName = resolveDisplayName(task, profileMap);
+                TaskRow row = new TaskRow(task.id(), displayName, task.displayStatus());
+                taskRows.add(row);
+                taskListContainer.getChildren().add(row);
+            }
+
+            updateViewState();
+
+            System.out.println("[TaskGroupDetailController] Created " + tasks.size() + " tasks");
         });
     }
 

@@ -343,10 +343,11 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
 
         VBox section = new VBox(6);
         section.getStyleClass().add("form-group");
-        section.getChildren().addAll(label, chipsContainer, selectorPanel);
+        section.getChildren().addAll(label, selectorPanel, chipsContainer);
 
         return section;
     }
+
 
     /**
      * Builds the proxy group selection section with a ComboBox and hint label.
@@ -514,14 +515,20 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
         listView.setMaxWidth(Double.MAX_VALUE);
         listView.setStyle("-fx-background-color: transparent;");
 
-        // Custom cell factory for checkboxes
         listView.setCellFactory(lv -> new ListCell<>() {
-            private final CheckBox checkBox = new CheckBox();
+            private final Label nameLabel = new Label();
+            private final Label checkLabel = new Label("✓");
+            private final Region spacer = new Region();
+            private final HBox container = new HBox();
 
             {
+                HBox.setHgrow(spacer, Priority.ALWAYS);
+                checkLabel.setStyle("-fx-text-fill: -fx-success; -fx-font-size: 14px; -fx-font-weight: bold;");
+                container.setAlignment(Pos.CENTER_LEFT);
+                container.setPadding(new Insets(6, 12, 6, 12));
+                container.setStyle("-fx-background-color: transparent; -fx-background-radius: 6px; -fx-cursor: hand;");
                 setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
-                checkBox.setMaxWidth(Double.MAX_VALUE);
-                setStyle("-fx-background-color: transparent;");
+                setStyle("-fx-background-color: transparent; -fx-padding: 1 0;");
             }
 
             @Override
@@ -530,27 +537,53 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
 
                 if (empty || item == null) {
                     setGraphic(null);
-                    checkBox.setOnAction(null);
+                    setOnMouseClicked(null);
                     return;
                 }
 
-                checkBox.setText(item.displayText());
+                boolean isSelectAll = item instanceof SelectAllItem;
+                boolean selected;
 
-                if (item instanceof SelectAllItem) {
-                    checkBox.setStyle("-fx-font-weight: bold;");
-                    checkBox.setSelected(selectAllProperty.get());
-                    checkBox.setOnAction(event -> onSelectAllToggled(checkBox.isSelected()));
-                } else if (item instanceof ProfileItem profileItem) {
-                    checkBox.setStyle("");
+                if (isSelectAll) {
+                    selected = selectAllProperty.get();
+                    nameLabel.setText(item.displayText());
+                    nameLabel.setStyle("-fx-text-fill: -fx-text-primary; -fx-font-size: 13px; -fx-font-weight: bold;");
+                } else {
+                    ProfileItem profileItem = (ProfileItem) item;
                     long profileId = profileItem.profile().id();
-                    BooleanProperty selectedProp = profileSelectionMap.get(profileId);
-                    if (selectedProp != null) {
-                        checkBox.setSelected(selectedProp.get());
-                        checkBox.setOnAction(event -> onProfileToggled(profileId, checkBox.isSelected()));
-                    }
+                    BooleanProperty prop = profileSelectionMap.get(profileId);
+                    selected = prop != null && prop.get();
+                    nameLabel.setText(item.displayText());
+                    nameLabel.setStyle("-fx-text-fill: -fx-text-primary; -fx-font-size: 13px;");
                 }
 
-                setGraphic(checkBox);
+                checkLabel.setVisible(selected);
+                checkLabel.setManaged(selected);
+
+                container.getChildren().setAll(nameLabel, spacer, checkLabel);
+
+                // Hover effect
+                container.setOnMouseEntered(e -> container.setStyle(
+                        "-fx-background-color: -fx-hover; -fx-background-radius: 6px; -fx-cursor: hand;"
+                ));
+                container.setOnMouseExited(e -> container.setStyle(
+                        "-fx-background-color: transparent; -fx-background-radius: 6px; -fx-cursor: hand;"
+                ));
+
+                // Click toggles selection
+                setOnMouseClicked(event -> {
+                    if (isSelectAll) {
+                        onSelectAllToggled(!selectAllProperty.get());
+                    } else {
+                        long profileId = ((ProfileItem) item).profile().id();
+                        BooleanProperty prop = profileSelectionMap.get(profileId);
+                        if (prop != null) {
+                            onProfileToggled(profileId, !prop.get());
+                        }
+                    }
+                });
+
+                setGraphic(container);
             }
         });
 
@@ -603,8 +636,15 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
      * @return the configured VBox
      */
     private VBox buildWarmSessionSection() {
-        warmSessionCheckBox.setStyle("-fx-font-size: 13px;");
+        warmSessionCheckBox.setStyle(
+                "-fx-font-size: 13px; " +
+                        "-fx-text-fill: -fx-text-primary;"
+        );
         warmSessionCheckBox.setSelected(false);
+
+        // Style the checkbox box itself
+        warmSessionCheckBox.selectedProperty().addListener((obs, oldVal, newVal) -> applyCheckBoxStyle());
+        applyCheckBoxStyle();
 
         VBox section = new VBox();
         section.getStyleClass().add("form-group");
@@ -612,6 +652,32 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
 
         return section;
     }
+
+    /**
+     * Applies custom styling to the warm session checkbox.
+     * Grey box with white checkmark when selected, grey box when unselected.
+     */
+    private void applyCheckBoxStyle() {
+        Platform.runLater(() -> {
+            Region box = (Region) warmSessionCheckBox.lookup(".box");
+            if (box != null) {
+                box.setStyle(
+                        "-fx-background-color: -fx-primary-light; " +
+                                "-fx-border-color: -fx-border; " +
+                                "-fx-border-width: 1px; " +
+                                "-fx-border-radius: 3px; " +
+                                "-fx-background-radius: 3px;"
+                );
+
+                Region mark = (Region) box.lookup(".mark");
+                if (mark != null) {
+                    mark.setStyle("-fx-background-color: " +
+                            (warmSessionCheckBox.isSelected() ? "white" : "transparent") + ";");
+                }
+            }
+        });
+    }
+
 
     // ==================== Data Loading ====================
 

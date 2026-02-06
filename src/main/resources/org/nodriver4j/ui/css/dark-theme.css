@@ -22,6 +22,7 @@
     -fx-border: #404040;
     -fx-card-bg: #323232;
     -fx-hover: #3d3d3d;
+    -fx-scrollbar: #ff0000;
 }
 
 /* ==================== Base Styles ==================== */
@@ -416,16 +417,46 @@
     -fx-background-color: -fx-accent;
 }
 
+.scroll-bar:vertical {
+    -fx-background-color: transparent;
+    -fx-pref-width: 10px;
+}
+
+.scroll-bar:horizontal {
+    -fx-background-color: transparent;
+    -fx-pref-height: 10px;
+}
+
+.scroll-bar > .track {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+}
+
+.scroll-bar > .thumb {
+    -fx-background-color: -fx-accent-dark;
+    -fx-background-radius: 4px;
+    -fx-min-width: 6px;
+    -fx-pref-width: 6px;
+    -fx-min-height: 30px;
+}
+
+.scroll-bar > .thumb:hover {
+    -fx-background-color: -fx-accent;
+}
+
 .scroll-bar > .increment-button,
 .scroll-bar > .decrement-button {
     -fx-background-color: transparent;
-    -fx-padding: 0;
+    -fx-padding: 0 0 0 0;
+    -fx-pref-width: 10px;
+    -fx-pref-height: 0;
 }
 
 .scroll-bar > .increment-button > .increment-arrow,
 .scroll-bar > .decrement-button > .decrement-arrow {
     -fx-background-color: transparent;
     -fx-padding: 0;
+    -fx-shape: "";
 }
 
 /* ==================== Empty State ==================== */
