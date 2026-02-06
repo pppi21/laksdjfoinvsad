@@ -410,7 +410,7 @@ public class ProxyRepository implements Repository<ProxyEntity> {
      */
     private void setInsertParameters(PreparedStatement stmt, ProxyEntity e) throws SQLException {
         int i = 1;
-        stmt.setLong(i++, e.groupId());
+        stmt.setObject(i++, e.groupId(), Types.BIGINT);
         stmt.setString(i++, e.host());
         stmt.setInt(i++, e.port());
         stmt.setString(i++, e.username());
@@ -423,7 +423,7 @@ public class ProxyRepository implements Repository<ProxyEntity> {
      */
     private void setUpdateParameters(PreparedStatement stmt, ProxyEntity e) throws SQLException {
         int i = 1;
-        stmt.setLong(i++, e.groupId());
+        stmt.setObject(i++, e.groupId(), Types.BIGINT);
         stmt.setString(i++, e.host());
         stmt.setInt(i++, e.port());
         stmt.setString(i++, e.username());
@@ -442,9 +442,13 @@ public class ProxyRepository implements Repository<ProxyEntity> {
      * @throws SQLException if a database access error occurs
      */
     private ProxyEntity mapRow(ResultSet rs) throws SQLException {
+        // Handle nullable group_id
+        long groupIdRaw = rs.getLong("group_id");
+        Long groupId = rs.wasNull() ? null : groupIdRaw;
+
         ProxyEntity entity = ProxyEntity.builder()
                 .id(rs.getLong("id"))
-                .groupId(rs.getLong("group_id"))
+                .groupId(groupId)
                 .host(rs.getString("host"))
                 .port(rs.getInt("port"))
                 .username(rs.getString("username"))

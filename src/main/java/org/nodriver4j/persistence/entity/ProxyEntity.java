@@ -72,7 +72,7 @@ public class ProxyEntity {
     // ==================== Identity ====================
 
     private long id;
-    private long groupId;
+    private Long groupId;
 
     // ==================== Connection Details ====================
 
@@ -150,7 +150,7 @@ public class ProxyEntity {
      *
      * @return the group ID
      */
-    public long groupId() {
+    public Long groupId() {
         return groupId;
     }
 
@@ -227,7 +227,7 @@ public class ProxyEntity {
      * @param groupId the group ID
      * @return this entity for chaining
      */
-    public ProxyEntity groupId(long groupId) {
+    public ProxyEntity groupId(Long groupId) {
         this.groupId = groupId;
         return this;
     }
@@ -357,6 +357,18 @@ public class ProxyEntity {
                 && password != null && !password.isBlank();
     }
 
+    /**
+     * Checks if this proxy belongs to a group.
+     *
+     * <p>Standalone proxies (created via the task edit dialog) have
+     * a null group ID and are not visible in the Proxy Manager.</p>
+     *
+     * @return true if this proxy belongs to a proxy group
+     */
+    public boolean isGrouped() {
+        return groupId != null && groupId > 0;
+    }
+
     // ==================== Object Methods ====================
 
     @Override
@@ -386,7 +398,7 @@ public class ProxyEntity {
     public static class Builder {
 
         private long id;
-        private long groupId;
+        private Long groupId;
         private String host = "";
         private int port;
         private String username = "";
@@ -400,7 +412,7 @@ public class ProxyEntity {
             return this;
         }
 
-        public Builder groupId(long groupId) {
+        public Builder groupId(Long groupId) {
             this.groupId = groupId;
             return this;
         }

@@ -47,8 +47,7 @@ public final class Database {
 
     private static final String DATA_DIRECTORY = "nodriver4j-data";
     private static final String DATABASE_FILE = "data.db";
-    private static final int CURRENT_SCHEMA_VERSION = 2;
-
+    private static final int CURRENT_SCHEMA_VERSION = 3;
     private static final AtomicBoolean initialized = new AtomicBoolean(false);
     private static String connectionUrl;
 
@@ -218,6 +217,7 @@ public final class Database {
         switch (version) {
             case 1 -> migrateV1(conn);
             case 2 -> migrateV2(conn);
+            case 3 -> migrateV3(conn);
             default -> throw new DatabaseException("Unknown migration version: " + version);
         }
     }
@@ -346,6 +346,41 @@ public final class Database {
     private static void migrateV2(Connection conn) throws SQLException {
         try (Statement stmt = conn.createStatement()) {
             stmt.execute("ALTER TABLE tasks ADD COLUMN warm_session INTEGER NOT NULL DEFAULT 0");
+        }
+    }
+
+    /**
+     * V3: Make proxy group_id nullable to support standalone proxies.
+     *
+     * <p>Standalone proxies (group_id = NULL) are created when a user
+     * manually assigns a proxy string to a task via the edit dialog.
+     * They are not visible in the Proxy Manager and are cleaned up
+     * when replaced or when their task is deleted.</p>
+     *
+     * <p>SQLite does not support ALTER COLUMN, so the table must be
+     * recreated. The ON DELETE CASCADE foreign key is preserved —
+     * it only affects proxies that reference a group, leaving
+     * standalone proxies (NULL group_id) untouched.</p>
+     */
+    private static void migrateV3(Connection conn) throws SQLException {
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute("""
+            CREATE TABLE proxies_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER,
+                host TEXT NOT NULL,
+                port INTEGER NOT NULL,
+                username TEXT NOT NULL,
+                password TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (group_id) REFERENCES proxy_groups(id) ON DELETE CASCADE
+            )
+            """);
+
+            stmt.execute("INSERT INTO proxies_new SELECT * FROM proxies");
+            stmt.execute("DROP TABLE proxies");
+            stmt.execute("ALTER TABLE proxies_new RENAME TO proxies");
+            stmt.execute("CREATE INDEX idx_proxies_group_id ON proxies(group_id)");
         }
     }
 

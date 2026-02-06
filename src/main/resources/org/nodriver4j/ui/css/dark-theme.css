@@ -777,6 +777,12 @@
     -fx-text-fill: -fx-text-muted;
 }
 
+.task-row-proxy {
+    -fx-font-size: 11px;
+    -fx-text-fill: -fx-text-muted;
+    -fx-font-family: "Consolas", "SF Mono", monospace;
+}
+
 .task-row-log {
     -fx-font-size: 12px;
     -fx-text-fill: -fx-text-secondary;

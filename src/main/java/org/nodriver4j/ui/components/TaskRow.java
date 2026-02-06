@@ -95,6 +95,7 @@ public class TaskRow extends HBox {
     private final Label nameLabel;
     private final Label statusLabel;
     private final Label logLabel;
+    private final Label proxyLabel;
 
     // ==================== UI Components — Action Buttons ====================
 
@@ -164,14 +165,16 @@ public class TaskRow extends HBox {
         // ---- Left side: info ----
         nameLabel  = createLabel(taskName, "task-row-name");
         statusLabel = createLabel(statusText, "task-row-status");
+        proxyLabel = createLabel("", "task-row-proxy");
         logLabel   = createLabel("", "task-row-log");
         nameLabel.setMaxWidth(Double.MAX_VALUE);
         logLabel.setMaxWidth(Double.MAX_VALUE);
 
         VBox infoBox = new VBox(4);
         infoBox.setAlignment(Pos.CENTER_LEFT);
-        infoBox.getChildren().addAll(nameLabel, statusLabel, logLabel);
+        infoBox.getChildren().addAll(nameLabel, statusLabel, proxyLabel, logLabel);
         HBox.setHgrow(infoBox, Priority.ALWAYS);
+
 
         // ---- Create swappable icons ----
         playIcon       = createIcon(FontAwesomeSolid.PLAY,      COLOR_START);
@@ -511,6 +514,26 @@ public class TaskRow extends HBox {
      */
     public void setLogText(String text) {
         logLabel.setText(text != null ? text : "");
+    }
+
+    /**
+     * Updates the proxy display text.
+     *
+     * <p>Typically shows the masked proxy string (e.g., "proxy.example.com:8080:user:***")
+     * or "No Proxy" if none is assigned. Hidden when text is null or empty.</p>
+     *
+     * @param text the proxy display text
+     */
+    public void setProxyText(String text) {
+        if (text == null || text.isBlank()) {
+            proxyLabel.setText("");
+            proxyLabel.setVisible(false);
+            proxyLabel.setManaged(false);
+        } else {
+            proxyLabel.setText(text);
+            proxyLabel.setVisible(true);
+            proxyLabel.setManaged(true);
+        }
     }
 
     /**

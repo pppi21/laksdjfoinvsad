@@ -1,6 +1,6 @@
 # Task Manager (Startup page)
-This page handles Task group creation. The distinction between task groups is 
-their name and the script they're running. A simple shell UI has already been 
+This page handles Task group creation. The distinction between task groups is
+their name and the script they're running. A simple shell UI has already been
 made for this page.
 ## Task Group Page
     This page can be accessed by clicking on any group in the task manager. 
@@ -27,30 +27,42 @@ made for this page.
 ### Task Container
     This represents a single task in the Task Group page. They will appear
     in rows (1 per row) and span the entire width of the available space in the UI.
-    They will display the task name, status(custom per script), and real time logs 
-    on the left and have a start, clone, and edit and delete button on the right 
-    (in that order from left to right). The start button will transform to a stop 
-    button when a task is running. The clone button makes an identical copy of 
-    the task and appends it to the task list. The edit button will trigger a popup
-    that looks similar to the task creation prompt that I described about, but it
-    will instead only allow a single profile to be selected and will allow the
-    user to enter a new proxy as a string. The can also set a custom status string.
+    They will display the task name, status (custom per script), and real time logs
+    on the left and action buttons on the right.
+
+    Button order (left to right):
+    1. Start/Stop â€” Toggles between play and stop icons. Start launches the
+       automation script; stop terminates it.
+    2. View Browser / Manual Browser â€” These share the same slot:
+       - View Browser (eye icon): Only visible while a task is running. Opens a
+         read-only window that streams the headless browser's visual output so the
+         user can observe what the automation is doing without making the browser
+         headed. The user cannot interact with the page or close the browser through
+         this window â€” it is purely a visual debugging/monitoring tool. The icon
+         toggles to a crossed-out eye while the view window is open.
+       - Manual Browser (Chrome icon): Only visible while the task is NOT running.
+         Opens a fully headed browser session with all the same characteristics as
+         the scripted task (same proxy, fingerprint, userdata) but without the
+         automation script running. The icon toggles to a stop icon while the
+         manual browser is open. Disabled while a task is running.
+    3. Clone â€” Makes an identical copy of the task and appends it to the task list.
+    4. Edit â€” Triggers a popup similar to the task creation dialog, but only allows
+       the user enter a new proxy as a string. The user can also set a custom status 
+       string which will show to the right of the task name/email (max 20 characters).
+    5. Delete â€” Removes the task with an inline confirmation (Yes/No).
+
     One key feature that we need to adjust our backend to support is preserving the
     browser userdata until a task is deleted. The user should be able to stop a browser
     and restart it later, picking up with the same cookies as before. This shouldn't be
     too complicated. It's as simple as keeping track of the userdata folder and starting
     chrome with that folder when the user clicks to start a task.
-    I also just remembered that there needs to be an extra button for manually opening a
-    headed browser session with all the same characteristics of the scripted task, just
-    without the automation script running (proxy should still be present, should use the
-    same fingerprint, etc.).
 
 # Proxy Manager
 This page allow the user to create proxy groups. The page will be formatted
 the exact same way as Task Manager, but some features will be different.
 One difference will be the popup that appears after the plus button. Obviously
-the user will choose a name for the group. Instead of choosing a script, the user 
-will choose a .txt file with one proxy per line. The user can also select which 
+the user will choose a name for the group. Instead of choosing a script, the user
+will choose a .txt file with one proxy per line. The user can also select which
 format his proxies are in (e.g. host:port:user:pass or user:pass@host:port).
 Just like task manager, the groups can be deleted from the manager page.
 The primary architectural difference between Task Manager and Proxy manager is
