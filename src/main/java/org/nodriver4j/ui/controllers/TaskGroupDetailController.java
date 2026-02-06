@@ -86,6 +86,15 @@ public class TaskGroupDetailController implements Initializable {
     @FXML
     private VBox taskListContainer;
 
+    @FXML
+    private Button startAllButton;
+
+    @FXML
+    private Button stopAllButton;
+
+    @FXML
+    private Button changeProxiesButton;
+
     // ==================== Repositories ====================
 
     private final TaskGroupRepository taskGroupRepository = new TaskGroupRepository();
@@ -113,6 +122,52 @@ public class TaskGroupDetailController implements Initializable {
      * Set by {@link MainController} to navigate back to the Task Manager.
      */
     private Runnable onBack;
+
+    /**
+     * Wires all action button callbacks on a TaskRow.
+     *
+     * <p>All callbacks are stubs for now — they log the action and task ID.
+     * Execution logic will be wired in a future stage when the service
+     * layer is implemented.</p>
+     *
+     * @param row the task row to wire
+     */
+    private void wireRowCallbacks(TaskRow row) {
+        long id = row.taskId();
+
+        row.setOnStart(taskId ->
+                System.out.println("[TaskGroupDetailController] Start task #" + taskId));
+
+        row.setOnStop(taskId ->
+                System.out.println("[TaskGroupDetailController] Stop task #" + taskId));
+
+        row.setOnOpenViewBrowser(taskId ->
+                System.out.println("[TaskGroupDetailController] Open view browser — Task #" + taskId));
+
+        row.setOnCloseViewBrowser(taskId ->
+                System.out.println("[TaskGroupDetailController] Close view browser — Task #" + taskId));
+
+        row.setOnOpenManualBrowser(taskId ->
+                System.out.println("[TaskGroupDetailController] Open manual browser — Task #" + taskId));
+
+        row.setOnCloseManualBrowser(taskId ->
+                System.out.println("[TaskGroupDetailController] Close manual browser — Task #" + taskId));
+
+        row.setOnClone(taskId -> {
+            System.out.println("[TaskGroupDetailController] Clone task #" + taskId);
+            // TODO: Duplicate task entity and append new row
+        });
+
+        row.setOnEdit(taskId -> {
+            System.out.println("[TaskGroupDetailController] Edit task #" + taskId);
+            // TODO: Open edit dialog with single profile + proxy string
+        });
+
+        row.setOnDelete(taskId -> {
+            System.out.println("[TaskGroupDetailController] Delete task #" + taskId);
+            // TODO: Delete from DB, remove userdata, remove row from list
+        });
+    }
 
     // ==================== Initialization ====================
 
@@ -208,6 +263,7 @@ public class TaskGroupDetailController implements Initializable {
                 String statusText = task.displayStatus();
 
                 TaskRow row = new TaskRow(task.id(), displayName, statusText);
+                wireRowCallbacks(row);
                 taskRows.add(row);
                 taskListContainer.getChildren().add(row);
             }
@@ -349,6 +405,7 @@ public class TaskGroupDetailController implements Initializable {
             for (TaskEntity task : tasks) {
                 String displayName = resolveDisplayName(task, profileMap);
                 TaskRow row = new TaskRow(task.id(), displayName, task.displayStatus());
+                wireRowCallbacks(row);
                 taskRows.add(row);
                 taskListContainer.getChildren().add(row);
             }
@@ -357,6 +414,24 @@ public class TaskGroupDetailController implements Initializable {
 
             System.out.println("[TaskGroupDetailController] Created " + tasks.size() + " tasks");
         });
+    }
+
+    @FXML
+    private void onStartAllClicked() {
+        System.out.println("[TaskGroupDetailController] Start All clicked for group " + currentGroupId);
+        // TODO: Iterate taskRows and start each task via service layer
+    }
+
+    @FXML
+    private void onStopAllClicked() {
+        System.out.println("[TaskGroupDetailController] Stop All clicked for group " + currentGroupId);
+        // TODO: Iterate taskRows and stop each running task via service layer
+    }
+
+    @FXML
+    private void onChangeProxiesClicked() {
+        System.out.println("[TaskGroupDetailController] Change Proxies clicked for group " + currentGroupId);
+        // TODO: Open proxy group selection dialog and reassign proxies
     }
 
     // ==================== View State Management ====================

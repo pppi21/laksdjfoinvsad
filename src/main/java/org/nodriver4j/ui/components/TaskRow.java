@@ -1,61 +1,121 @@
 package org.nodriver4j.ui.components;
 
 import javafx.geometry.Pos;
+import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
+import org.kordamp.ikonli.Ikon;
+import org.kordamp.ikonli.fontawesome5.FontAwesomeBrands;
+import org.kordamp.ikonli.fontawesome5.FontAwesomeSolid;
+import org.kordamp.ikonli.javafx.FontIcon;
+
+import java.util.function.Consumer;
 
 /**
- * A full-width row component that displays a single task's information.
+ * A full-width row component that displays a single task's information
+ * and action buttons.
  *
- * <p>Each row shows:</p>
- * <ul>
- *   <li>Task name (derived from profile name + email by the controller)</li>
- *   <li>Status with color-coded styling</li>
- *   <li>Most recent log message</li>
- * </ul>
+ * <p>Each row shows task info on the left (name, status, log) and
+ * action buttons on the right. Button order (left to right):
+ * Start/Stop, View/Manual Browser, Clone, Edit, Delete.</p>
  *
- * <p>The row receives only display strings — it has no knowledge of
- * entities, repositories, or the database. The controller is responsible
- * for assembling display data from {@code TaskEntity}, {@code ProfileEntity},
- * and {@code ProxyEntity} before passing it here.</p>
+ * <h2>Button Behavior</h2>
+ * <table>
+ *   <tr><th>Button</th><th>Idle</th><th>Running</th><th>Finished</th></tr>
+ *   <tr><td>Start/Stop</td><td>PLAY</td><td>STOP</td><td>PLAY</td></tr>
+ *   <tr><td>Browser slot</td><td>CHROME (manual)</td><td>EYE (view)</td><td>CHROME (manual)</td></tr>
+ *   <tr><td>Clone</td><td>enabled</td><td>enabled</td><td>enabled</td></tr>
+ *   <tr><td>Edit</td><td>enabled</td><td>disabled</td><td>enabled</td></tr>
+ *   <tr><td>Delete</td><td>enabled</td><td>disabled</td><td>enabled</td></tr>
+ * </table>
  *
- * <h2>Future Additions</h2>
- * <p>Start/Stop, Clone, and Edit buttons will be added on the right side
- * in a later stage. The layout is structured to accommodate them.</p>
+ * <p>The browser slot is a shared space: when the task is running,
+ * the View Browser button (eye icon) is shown; when not running,
+ * the Manual Browser button (Chrome icon) is shown instead.</p>
+ *
+ * <h2>Delete Confirmation</h2>
+ * <p>Clicking the trash icon reveals inline "Yes" / "No" buttons.
+ * The delete area has a fixed width to prevent layout shifts.</p>
+ *
+ * <h2>Test Mode</h2>
+ * <p>When no callback is wired for a button, clicking it will
+ * auto-toggle the visual state so the UI can be verified without
+ * a controller. Once callbacks are set, state management is
+ * deferred to the controller.</p>
  *
  * <h2>Responsibilities</h2>
  * <ul>
- *   <li>Display task name, status, and log text</li>
- *   <li>Hold the database task ID for controller lookups</li>
- *   <li>Apply status-based CSS styling (color-coded)</li>
- *   <li>Provide update methods for dynamic data changes</li>
+ *   <li>Render 6 action buttons with FontAwesome5 icons</li>
+ *   <li>Toggle icons based on state (play↔stop, eye↔eye_slash, chrome↔stop)</li>
+ *   <li>Inline delete confirmation flow</li>
+ *   <li>Disable/hide buttons based on task status</li>
+ *   <li>Hold {@code Consumer<Long>} callbacks — invoke them, define no behavior</li>
  * </ul>
  *
  * <h2>NOT Responsible For</h2>
  * <ul>
- *   <li>Database operations (controller handles persistence)</li>
- *   <li>Profile/proxy lookups (controller resolves display strings)</li>
- *   <li>Task execution or lifecycle (handled by service layer)</li>
- *   <li>Button actions (deferred to a future stage)</li>
+ *   <li>Task execution or browser lifecycle (controller handles via callbacks)</li>
+ *   <li>Deciding when status changes (controller calls {@link #setStatus(String)})</li>
+ *   <li>Database operations or dialog creation</li>
  * </ul>
  *
  * <h2>Usage</h2>
  * <pre>{@code
  * TaskRow row = new TaskRow(42L, "John Doe (johndoe@gmail.com)", "IDLE");
  * row.setLogText("Waiting to start...");
- * row.setStatus("RUNNING");
+ *
+ * // Wire callbacks (controller)
+ * row.setOnStart(id -> taskService.start(id));
+ * row.setOnStop(id -> taskService.stop(id));
+ *
+ * // Or test without callbacks — buttons auto-toggle on click
  * taskList.getChildren().add(row);
  * }</pre>
  */
 public class TaskRow extends HBox {
 
-    // ==================== UI Components ====================
+    // ==================== Icon Colors ====================
+
+    private static final String COLOR_START   = "#6aeb8a";
+    private static final String COLOR_STOP    = "#d15252";
+    private static final String COLOR_VIEW    = "#389deb";
+    private static final String COLOR_MANUAL  = "#a3a3a3";
+    private static final String COLOR_CLONE   = "#389deb";
+    private static final String COLOR_EDIT    = "#f7c82d";
+    private static final String COLOR_DELETE  = "#d15252";
+
+    private static final int ICON_SIZE = 14;
+
+    // ==================== UI Components — Info ====================
 
     private final Label nameLabel;
     private final Label statusLabel;
     private final Label logLabel;
+
+    // ==================== UI Components — Action Buttons ====================
+
+    private final Button startStopButton;
+    private final Button viewBrowserButton;
+    private final Button manualBrowserButton;
+    private final StackPane browserSlot;
+    private final Button cloneButton;
+    private final Button editButton;
+    private final Button deleteButton;
+    private final HBox deleteConfirmBox;
+    private final StackPane deleteSlot;
+
+    // ==================== Icons (created once, swapped as graphics) ====================
+
+    private final FontIcon playIcon;
+    private final FontIcon stopIcon;
+    private final FontIcon eyeIcon;
+    private final FontIcon eyeSlashIcon;
+    private final FontIcon chromeIcon;
+    private final FontIcon manualStopIcon;
 
     // ==================== Data ====================
 
@@ -63,10 +123,28 @@ public class TaskRow extends HBox {
     private String taskName;
     private String statusText;
 
+    // ==================== Button State ====================
+
+    private boolean running;
+    private boolean viewBrowserActive;
+    private boolean manualBrowserActive;
+
+    // ==================== Callbacks ====================
+
+    private Consumer<Long> onStart;
+    private Consumer<Long> onStop;
+    private Consumer<Long> onOpenViewBrowser;
+    private Consumer<Long> onCloseViewBrowser;
+    private Consumer<Long> onOpenManualBrowser;
+    private Consumer<Long> onCloseManualBrowser;
+    private Consumer<Long> onClone;
+    private Consumer<Long> onEdit;
+    private Consumer<Long> onDelete;
+
     // ==================== Constructor ====================
 
     /**
-     * Creates a new TaskRow.
+     * Creates a new TaskRow with info labels and action buttons.
      *
      * @param taskId     the database ID of the task
      * @param taskName   the display name (e.g., "John Doe (johndoe@gmail.com)")
@@ -76,67 +154,265 @@ public class TaskRow extends HBox {
         this.taskId = taskId;
         this.taskName = taskName;
         this.statusText = statusText;
+        this.running = "RUNNING".equals(statusText);
 
-        // Apply row styling
+        // Row styling — CENTER aligns children vertically
         getStyleClass().add("task-row");
-        setAlignment(Pos.CENTER_LEFT);
+        setAlignment(Pos.CENTER);
         setMaxWidth(Double.MAX_VALUE);
 
         // ---- Left side: info ----
-        nameLabel = createNameLabel();
-        statusLabel = createStatusLabel();
-        logLabel = createLogLabel();
+        nameLabel  = createLabel(taskName, "task-row-name");
+        statusLabel = createLabel(statusText, "task-row-status");
+        logLabel   = createLabel("", "task-row-log");
+        nameLabel.setMaxWidth(Double.MAX_VALUE);
+        logLabel.setMaxWidth(Double.MAX_VALUE);
 
         VBox infoBox = new VBox(4);
         infoBox.setAlignment(Pos.CENTER_LEFT);
         infoBox.getChildren().addAll(nameLabel, statusLabel, logLabel);
         HBox.setHgrow(infoBox, Priority.ALWAYS);
 
-        // ---- Right side: buttons (deferred to future stage) ----
-        // HBox buttonBox = createButtonBox();
+        // ---- Create swappable icons ----
+        playIcon       = createIcon(FontAwesomeSolid.PLAY,      COLOR_START);
+        stopIcon       = createIcon(FontAwesomeSolid.STOP,      COLOR_STOP);
+        eyeIcon        = createIcon(FontAwesomeSolid.EYE,       COLOR_VIEW);
+        eyeSlashIcon   = createIcon(FontAwesomeSolid.EYE_SLASH, COLOR_VIEW);
+        chromeIcon     = createIcon(FontAwesomeBrands.CHROME,    COLOR_MANUAL);
+        manualStopIcon = createIcon(FontAwesomeSolid.STOP,      COLOR_STOP);
 
-        // Assemble row
-        getChildren().add(infoBox);
+        // ---- 1. Start / Stop ----
+        startStopButton = createActionButton(running ? stopIcon : playIcon);
+        startStopButton.setOnAction(e -> handleStartStop());
 
-        // Apply initial status styling
+        // ---- 2. Browser slot (shared space for view + manual) ----
+        viewBrowserButton = createActionButton(eyeIcon);
+        viewBrowserButton.setOnAction(e -> handleViewBrowser());
+
+        manualBrowserButton = createActionButton(chromeIcon);
+        manualBrowserButton.setOnAction(e -> handleManualBrowser());
+
+        browserSlot = new StackPane();
+        browserSlot.setMinSize(32, 32);
+        browserSlot.setMaxSize(32, 32);
+        browserSlot.getChildren().addAll(manualBrowserButton, viewBrowserButton);
+
+        // ---- 3. Clone ----
+        cloneButton = createActionButton(createIcon(FontAwesomeSolid.CLONE, COLOR_CLONE));
+        cloneButton.setOnAction(e -> {
+            System.out.println("[TaskRow] Clone clicked — Task #" + taskId);
+            if (onClone != null) onClone.accept(taskId);
+        });
+
+        // ---- 4. Edit ----
+        editButton = createActionButton(createIcon(FontAwesomeSolid.EDIT, COLOR_EDIT));
+        editButton.setOnAction(e -> {
+            System.out.println("[TaskRow] Edit clicked — Task #" + taskId);
+            if (onEdit != null) onEdit.accept(taskId);
+        });
+
+        // ---- 5. Delete (with inline confirmation) ----
+        deleteButton = createActionButton(createIcon(FontAwesomeSolid.TRASH_ALT, COLOR_DELETE));
+        deleteButton.setOnAction(e -> showDeleteConfirmation());
+
+        deleteConfirmBox = buildDeleteConfirmBox();
+
+        deleteSlot = new StackPane();
+        deleteSlot.setMinWidth(90);
+        deleteSlot.setPrefWidth(90);
+        deleteSlot.setMaxWidth(90);
+        deleteSlot.setAlignment(Pos.CENTER_RIGHT);
+        deleteSlot.getChildren().addAll(deleteConfirmBox, deleteButton);
+        hideDeleteConfirmation();
+
+        // ---- Assemble button bar ----
+        HBox buttonBar = new HBox(8);
+        buttonBar.setAlignment(Pos.CENTER_RIGHT);
+        buttonBar.getChildren().addAll(
+                startStopButton,
+                browserSlot,
+                cloneButton,
+                editButton,
+                deleteSlot
+        );
+
+        // ---- Assemble row ----
+        getChildren().addAll(infoBox, buttonBar);
+
+        // Apply initial state
         applyStatusStyle(statusText);
+        updateButtonStates();
     }
 
-    // ==================== UI Building ====================
+    // ==================== UI Factory Methods ====================
 
-    private Label createNameLabel() {
-        Label label = new Label(taskName);
-        label.getStyleClass().add("task-row-name");
-        label.setMaxWidth(Double.MAX_VALUE);
+    /**
+     * Creates a styled label.
+     *
+     * @param text       the label text
+     * @param styleClass the CSS class to apply
+     * @return the configured label
+     */
+    private Label createLabel(String text, String styleClass) {
+        Label label = new Label(text);
+        label.getStyleClass().add(styleClass);
         return label;
     }
 
-    private Label createStatusLabel() {
-        Label label = new Label(statusText);
-        label.getStyleClass().add("task-row-status");
-        return label;
+    /**
+     * Creates a FontAwesome icon with a specific color.
+     *
+     * @param ikon     the FontAwesome enum value
+     * @param hexColor the hex color string (e.g., "#6aeb8a")
+     * @return the configured FontIcon
+     */
+    private FontIcon createIcon(Ikon ikon, String hexColor) {
+        FontIcon icon = new FontIcon(ikon);
+        icon.setIconSize(ICON_SIZE);
+        icon.setIconColor(Color.web(hexColor));
+        return icon;
     }
 
-    private Label createLogLabel() {
-        Label label = new Label("");
-        label.getStyleClass().add("task-row-log");
-        label.setMaxWidth(Double.MAX_VALUE);
-        return label;
+    /**
+     * Creates a small transparent action button with an icon.
+     *
+     * @param icon the FontIcon to display
+     * @return the configured button
+     */
+    private Button createActionButton(FontIcon icon) {
+        Button button = new Button();
+        button.setGraphic(icon);
+        button.getStyleClass().add("task-row-button");
+        button.setFocusTraversable(false);
+        return button;
+    }
+
+    /**
+     * Builds the inline delete confirmation box with Yes/No buttons.
+     *
+     * @return the confirmation HBox (starts hidden)
+     */
+    private HBox buildDeleteConfirmBox() {
+        Button confirmBtn = new Button("Yes");
+        confirmBtn.getStyleClass().add("confirm-delete-button");
+        confirmBtn.setFocusTraversable(false);
+        confirmBtn.setOnAction(e -> {
+            System.out.println("[TaskRow] Delete confirmed — Task #" + taskId);
+            hideDeleteConfirmation();
+            if (onDelete != null) onDelete.accept(taskId);
+        });
+
+        Button cancelBtn = new Button("No");
+        cancelBtn.getStyleClass().add("cancel-delete-button");
+        cancelBtn.setFocusTraversable(false);
+        cancelBtn.setOnAction(e -> hideDeleteConfirmation());
+
+        HBox box = new HBox(4);
+        box.setAlignment(Pos.CENTER_RIGHT);
+        box.getChildren().addAll(confirmBtn, cancelBtn);
+        return box;
+    }
+
+    // ==================== Delete Confirmation Flow ====================
+
+    /**
+     * Shows the inline delete confirmation (Yes / No), hiding the trash icon.
+     */
+    private void showDeleteConfirmation() {
+        deleteButton.setVisible(false);
+        deleteButton.setManaged(false);
+        deleteConfirmBox.setVisible(true);
+        deleteConfirmBox.setManaged(true);
+    }
+
+    /**
+     * Hides the delete confirmation and restores the trash icon.
+     */
+    private void hideDeleteConfirmation() {
+        deleteConfirmBox.setVisible(false);
+        deleteConfirmBox.setManaged(false);
+        deleteButton.setVisible(true);
+        deleteButton.setManaged(true);
+    }
+
+    // ==================== Button Click Handlers ====================
+
+    /**
+     * Handles Start/Stop toggle click.
+     *
+     * <p>When no callback is wired, auto-toggles the status between
+     * RUNNING and IDLE for UI testing.</p>
+     */
+    private void handleStartStop() {
+        if (running) {
+            System.out.println("[TaskRow] Stop clicked — Task #" + taskId);
+            if (onStop != null) {
+                onStop.accept(taskId);
+            } else {
+                setStatus("IDLE");
+            }
+        } else {
+            System.out.println("[TaskRow] Start clicked — Task #" + taskId);
+            if (onStart != null) {
+                onStart.accept(taskId);
+            } else {
+                setStatus("RUNNING");
+            }
+        }
+    }
+
+    /**
+     * Handles View Browser toggle click (visible only while running).
+     *
+     * <p>Toggles between eye (open view) and eye-slash (close view).
+     * Auto-toggles when no callback is wired.</p>
+     */
+    private void handleViewBrowser() {
+        if (viewBrowserActive) {
+            System.out.println("[TaskRow] Close view browser — Task #" + taskId);
+            if (onCloseViewBrowser != null) {
+                onCloseViewBrowser.accept(taskId);
+            } else {
+                setViewBrowserActive(false);
+            }
+        } else {
+            System.out.println("[TaskRow] Open view browser — Task #" + taskId);
+            if (onOpenViewBrowser != null) {
+                onOpenViewBrowser.accept(taskId);
+            } else {
+                setViewBrowserActive(true);
+            }
+        }
+    }
+
+    /**
+     * Handles Manual Browser toggle click (visible only while not running).
+     *
+     * <p>Toggles between Chrome (open browser) and stop (close browser).
+     * Auto-toggles when no callback is wired.</p>
+     */
+    private void handleManualBrowser() {
+        if (manualBrowserActive) {
+            System.out.println("[TaskRow] Close manual browser — Task #" + taskId);
+            if (onCloseManualBrowser != null) {
+                onCloseManualBrowser.accept(taskId);
+            } else {
+                setManualBrowserActive(false);
+            }
+        } else {
+            System.out.println("[TaskRow] Open manual browser — Task #" + taskId);
+            if (onOpenManualBrowser != null) {
+                onOpenManualBrowser.accept(taskId);
+            } else {
+                setManualBrowserActive(true);
+            }
+        }
     }
 
     // ==================== Status Styling ====================
 
     /**
      * Applies the appropriate CSS class based on the status string.
-     *
-     * <p>Status classes map to colors defined in the dark theme:</p>
-     * <ul>
-     *   <li>{@code status-idle} — muted/secondary text</li>
-     *   <li>{@code status-running} — green (success)</li>
-     *   <li>{@code status-completed} — green (success)</li>
-     *   <li>{@code status-failed} — red (error)</li>
-     *   <li>{@code status-stopped} — yellow (warning)</li>
-     * </ul>
      *
      * @param status the status string
      */
@@ -147,14 +423,46 @@ public class TaskRow extends HBox {
         );
 
         String styleClass = switch (status != null ? status : "") {
-            case "RUNNING" -> "status-running";
+            case "RUNNING"   -> "status-running";
             case "COMPLETED" -> "status-completed";
-            case "FAILED" -> "status-failed";
-            case "STOPPED" -> "status-stopped";
-            default -> "status-idle";
+            case "FAILED"    -> "status-failed";
+            case "STOPPED"   -> "status-stopped";
+            default          -> "status-idle";
         };
 
         statusLabel.getStyleClass().add(styleClass);
+    }
+
+    // ==================== Button State Management ====================
+
+    /**
+     * Updates all button states based on the current {@code running} flag.
+     *
+     * <p>Controls icon swaps, visibility toggling for the browser slot,
+     * and disabled states for Edit and Delete.</p>
+     */
+    private void updateButtonStates() {
+        // Start/Stop icon swap
+        startStopButton.setGraphic(running ? stopIcon : playIcon);
+
+        // Browser slot: view when running, manual when not
+        viewBrowserButton.setVisible(running);
+        viewBrowserButton.setManaged(running);
+        manualBrowserButton.setVisible(!running);
+        manualBrowserButton.setManaged(!running);
+
+        // Refresh browser icon states
+        viewBrowserButton.setGraphic(viewBrowserActive ? eyeSlashIcon : eyeIcon);
+        manualBrowserButton.setGraphic(manualBrowserActive ? manualStopIcon : chromeIcon);
+
+        // Disable edit and delete while running
+        editButton.setDisable(running);
+        deleteButton.setDisable(running);
+
+        // Collapse any open delete confirmation when task starts running
+        if (running) {
+            hideDeleteConfirmation();
+        }
     }
 
     // ==================== Data Updates ====================
@@ -170,26 +478,155 @@ public class TaskRow extends HBox {
     }
 
     /**
-     * Updates the status display and applies the corresponding style.
+     * Updates the status display, applies styling, and refreshes button states.
+     *
+     * <p>Automatically resets browser states on transitions:
+     * view browser resets when stopping, manual browser resets when starting.</p>
      *
      * @param status the new status string
      */
     public void setStatus(String status) {
+        boolean wasRunning = this.running;
         this.statusText = status;
+        this.running = "RUNNING".equals(status);
+
         statusLabel.setText(status);
         applyStatusStyle(status);
+
+        // Reset browser states on transitions
+        if (wasRunning && !running) {
+            this.viewBrowserActive = false;
+        }
+        if (!wasRunning && running) {
+            this.manualBrowserActive = false;
+        }
+
+        updateButtonStates();
     }
 
     /**
      * Updates the log text display.
      *
-     * <p>Typically shows the most recent log message from the task.
-     * Future: May be upgraded to support multi-line scrolling logs.</p>
-     *
      * @param text the log message to display
      */
     public void setLogText(String text) {
         logLabel.setText(text != null ? text : "");
+    }
+
+    /**
+     * Sets the view browser active state and updates the icon.
+     *
+     * <p>When active, shows the eye-slash icon (close view).
+     * When inactive, shows the eye icon (open view).
+     * Only visually meaningful while the task is running.</p>
+     *
+     * @param active true if the view browser window is open
+     */
+    public void setViewBrowserActive(boolean active) {
+        this.viewBrowserActive = active;
+        viewBrowserButton.setGraphic(active ? eyeSlashIcon : eyeIcon);
+    }
+
+    /**
+     * Sets the manual browser active state and updates the icon.
+     *
+     * <p>When active, shows the stop icon (close browser).
+     * When inactive, shows the Chrome icon (open browser).
+     * Only visually meaningful while the task is not running.</p>
+     *
+     * @param active true if the manual browser is open
+     */
+    public void setManualBrowserActive(boolean active) {
+        this.manualBrowserActive = active;
+        manualBrowserButton.setGraphic(active ? manualStopIcon : chromeIcon);
+    }
+
+    // ==================== Callback Setters ====================
+
+    /**
+     * Sets the callback invoked when the Start button is clicked.
+     *
+     * @param callback receives the task ID
+     */
+    public void setOnStart(Consumer<Long> callback) {
+        this.onStart = callback;
+    }
+
+    /**
+     * Sets the callback invoked when the Stop button is clicked.
+     *
+     * @param callback receives the task ID
+     */
+    public void setOnStop(Consumer<Long> callback) {
+        this.onStop = callback;
+    }
+
+    /**
+     * Sets the callback invoked when the View Browser button is clicked
+     * to open the view window.
+     *
+     * @param callback receives the task ID
+     */
+    public void setOnOpenViewBrowser(Consumer<Long> callback) {
+        this.onOpenViewBrowser = callback;
+    }
+
+    /**
+     * Sets the callback invoked when the View Browser button is clicked
+     * to close the view window.
+     *
+     * @param callback receives the task ID
+     */
+    public void setOnCloseViewBrowser(Consumer<Long> callback) {
+        this.onCloseViewBrowser = callback;
+    }
+
+    /**
+     * Sets the callback invoked when the Manual Browser button is clicked
+     * to open a headed browser session.
+     *
+     * @param callback receives the task ID
+     */
+    public void setOnOpenManualBrowser(Consumer<Long> callback) {
+        this.onOpenManualBrowser = callback;
+    }
+
+    /**
+     * Sets the callback invoked when the Manual Browser button is clicked
+     * to close the headed browser session.
+     *
+     * @param callback receives the task ID
+     */
+    public void setOnCloseManualBrowser(Consumer<Long> callback) {
+        this.onCloseManualBrowser = callback;
+    }
+
+    /**
+     * Sets the callback invoked when the Clone button is clicked.
+     *
+     * @param callback receives the task ID
+     */
+    public void setOnClone(Consumer<Long> callback) {
+        this.onClone = callback;
+    }
+
+    /**
+     * Sets the callback invoked when the Edit button is clicked.
+     *
+     * @param callback receives the task ID
+     */
+    public void setOnEdit(Consumer<Long> callback) {
+        this.onEdit = callback;
+    }
+
+    /**
+     * Sets the callback invoked when deletion is confirmed via the
+     * inline Yes/No prompt.
+     *
+     * @param callback receives the task ID
+     */
+    public void setOnDelete(Consumer<Long> callback) {
+        this.onDelete = callback;
     }
 
     // ==================== Getters ====================
@@ -219,5 +656,32 @@ public class TaskRow extends HBox {
      */
     public String statusText() {
         return statusText;
+    }
+
+    /**
+     * Checks if the task is currently in the RUNNING state.
+     *
+     * @return true if running
+     */
+    public boolean isRunning() {
+        return running;
+    }
+
+    /**
+     * Checks if the view browser window is currently active.
+     *
+     * @return true if the view browser is open
+     */
+    public boolean isViewBrowserActive() {
+        return viewBrowserActive;
+    }
+
+    /**
+     * Checks if the manual browser is currently active.
+     *
+     * @return true if the manual browser is open
+     */
+    public boolean isManualBrowserActive() {
+        return manualBrowserActive;
     }
 }
