@@ -535,12 +535,12 @@ public class TaskRepository implements Repository<TaskEntity> {
 
         String createdAtStr = rs.getString("created_at");
         if (createdAtStr != null) {
-            entity.createdAt(LocalDateTime.parse(createdAtStr, FORMATTER));
+            entity.createdAt(LocalDateTime.parse(createdAtStr.replace(' ', 'T'), FORMATTER));
         }
 
         String updatedAtStr = rs.getString("updated_at");
         if (updatedAtStr != null) {
-            entity.updatedAt(LocalDateTime.parse(updatedAtStr, FORMATTER));
+            entity.updatedAt(LocalDateTime.parse(updatedAtStr.replace(' ', 'T'), FORMATTER));
         }
 
         return entity;
