@@ -15,6 +15,7 @@ import org.nodriver4j.persistence.entity.TaskGroupEntity;
 import org.nodriver4j.persistence.repository.*;
 import org.nodriver4j.ui.components.TaskRow;
 import org.nodriver4j.ui.dialogs.CreateTaskDialog;
+import org.nodriver4j.ui.dialogs.EditTaskDialog;
 
 import java.net.URL;
 import java.util.*;
@@ -160,7 +161,73 @@ public class TaskGroupDetailController implements Initializable {
 
         row.setOnEdit(taskId -> {
             System.out.println("[TaskGroupDetailController] Edit task #" + taskId);
-            // TODO: Open edit dialog with single profile + proxy string
+
+            // Load current task state
+            Optional<TaskEntity> taskOpt = taskRepository.findById(taskId);
+            if (taskOpt.isEmpty()) {
+                System.err.println("[TaskGroupDetailController] Task not found: " + taskId);
+                return;
+            }
+
+            TaskEntity task = taskOpt.get();
+
+            // Resolve current proxy string for pre-population
+            String currentProxyString = null;
+            if (task.hasProxy()) {
+                Optional<ProxyEntity> proxyOpt = proxyRepository.findById(task.proxyId());
+                if (proxyOpt.isPresent()) {
+                    currentProxyString = proxyOpt.get().toProxyString();
+                }
+            }
+
+            // Open edit dialog
+            EditTaskDialog dialog = new EditTaskDialog(
+                    row.getScene().getWindow(),
+                    currentProxyString,
+                    task.customStatus()
+            );
+
+            dialog.showAndWait().ifPresent(result -> {
+                // --- Handle proxy change ---
+                Long oldProxyId = task.proxyId();
+                Long newProxyId;
+
+                if (result.proxyString() != null) {
+                    // Create a standalone proxy (null group)
+                    ProxyEntity newProxy = ProxyEntity.builder()
+                            .groupId(null)
+                            .fromProxyString(result.proxyString())
+                            .build();
+                    proxyRepository.save(newProxy);
+                    newProxyId = newProxy.id();
+                } else {
+                    newProxyId = null;
+                }
+
+                // Update task
+                task.proxyId(newProxyId);
+                task.customStatus(result.customStatus());
+                task.touchUpdatedAt();
+                taskRepository.save(task);
+
+                // Clean up old standalone proxy if it was replaced
+                cleanUpStandaloneProxy(oldProxyId);
+
+                // Refresh the row
+                findTaskRow(taskId).ifPresent(r -> {
+                    if (newProxyId != null) {
+                        proxyRepository.findById(newProxyId).ifPresent(
+                                p -> r.setProxyText(p.toDisplayString())
+                        );
+                    } else {
+                        r.setProxyText(null);
+                    }
+
+                    r.setStatus(task.displayStatus());
+                });
+
+                System.out.println("[TaskGroupDetailController] Task #" + taskId + " updated");
+            });
         });
 
         row.setOnDelete(taskId -> {
@@ -254,15 +321,18 @@ public class TaskGroupDetailController implements Initializable {
                 return;
             }
 
-            // Bulk-load profiles to avoid N+1 queries
+            // Bulk-load profiles and proxies to avoid N+1 queries
             Map<Long, ProfileEntity> profileMap = buildProfileMap(tasks);
+            Map<Long, ProxyEntity> proxyMap = buildProxyMap(tasks);
 
             // Create a TaskRow for each task
             for (TaskEntity task : tasks) {
                 String displayName = resolveDisplayName(task, profileMap);
+                String proxyDisplay = resolveProxyDisplay(task, proxyMap);
                 String statusText = task.displayStatus();
 
                 TaskRow row = new TaskRow(task.id(), displayName, statusText);
+                row.setProxyText(proxyDisplay);
                 wireRowCallbacks(row);
                 taskRows.add(row);
                 taskListContainer.getChildren().add(row);
@@ -316,6 +386,41 @@ public class TaskGroupDetailController implements Initializable {
     }
 
     /**
+     * Builds a map of proxy ID → ProxyEntity for the given tasks.
+     *
+     * <p>Only resolves proxies for tasks that have a non-null proxy ID.
+     * Follows the same pattern as {@link #buildProfileMap(List)}.</p>
+     *
+     * @param tasks the tasks to resolve proxies for
+     * @return map of proxy ID to entity
+     */
+    private Map<Long, ProxyEntity> buildProxyMap(List<TaskEntity> tasks) {
+        Map<Long, ProxyEntity> proxyMap = new HashMap<>();
+
+        Set<Long> proxyIds = new HashSet<>();
+        for (TaskEntity task : tasks) {
+            if (task.hasProxy()) {
+                proxyIds.add(task.proxyId());
+            }
+        }
+
+        for (long proxyId : proxyIds) {
+            try {
+                proxyRepository.findById(proxyId).ifPresent(
+                        proxy -> proxyMap.put(proxyId, proxy)
+                );
+            } catch (Database.DatabaseException e) {
+                System.err.println("[TaskGroupDetailController] Failed to load proxy "
+                        + proxyId + ": " + e.getMessage());
+            }
+        }
+
+        return proxyMap;
+    }
+
+
+
+    /**
      * Resolves a display name for a task based on its linked profile.
      *
      * <p>Format: {@code "Profile Name (email@example.com)"}</p>
@@ -341,6 +446,55 @@ public class TaskGroupDetailController implements Initializable {
         }
 
         return name;
+    }
+
+    /**
+     * Resolves a display string for a task's proxy.
+     *
+     * <p>Returns the masked proxy string (e.g., "host:8080:user:***")
+     * or null if the task has no proxy assigned.</p>
+     *
+     * @param task     the task entity
+     * @param proxyMap the pre-loaded proxy map
+     * @return the display string, or null if no proxy
+     */
+    private String resolveProxyDisplay(TaskEntity task, Map<Long, ProxyEntity> proxyMap) {
+        if (!task.hasProxy()) {
+            return null;
+        }
+
+        ProxyEntity proxy = proxyMap.get(task.proxyId());
+        if (proxy == null) {
+            return null;
+        }
+
+        return proxy.toDisplayString();
+    }
+
+    /**
+     * Deletes a standalone proxy if it is no longer referenced.
+     *
+     * <p>Only deletes proxies with a null group ID (standalone proxies
+     * created via the edit dialog). Group-assigned proxies are never
+     * touched by this method.</p>
+     *
+     * @param proxyId the proxy ID to check and potentially delete, or null
+     */
+    private void cleanUpStandaloneProxy(Long proxyId) {
+        if (proxyId == null) {
+            return;
+        }
+
+        try {
+            Optional<ProxyEntity> proxyOpt = proxyRepository.findById(proxyId);
+            if (proxyOpt.isPresent() && !proxyOpt.get().isGrouped()) {
+                proxyRepository.deleteById(proxyId);
+                System.out.println("[TaskGroupDetailController] Cleaned up standalone proxy #" + proxyId);
+            }
+        } catch (Database.DatabaseException e) {
+            System.err.println("[TaskGroupDetailController] Failed to clean up proxy "
+                    + proxyId + ": " + e.getMessage());
+        }
     }
 
     // ==================== Event Handlers ====================
@@ -398,13 +552,16 @@ public class TaskGroupDetailController implements Initializable {
             // Persist all tasks
             taskRepository.saveAll(tasks);
 
-            // Build profile map for display name resolution
+            // Build profile and proxy maps for display resolution
             Map<Long, ProfileEntity> profileMap = buildProfileMap(tasks);
+            Map<Long, ProxyEntity> proxyMap = buildProxyMap(tasks);
 
             // Create a TaskRow for each saved task
             for (TaskEntity task : tasks) {
                 String displayName = resolveDisplayName(task, profileMap);
+                String proxyDisplay = resolveProxyDisplay(task, proxyMap);
                 TaskRow row = new TaskRow(task.id(), displayName, task.displayStatus());
+                row.setProxyText(proxyDisplay);
                 wireRowCallbacks(row);
                 taskRows.add(row);
                 taskListContainer.getChildren().add(row);
