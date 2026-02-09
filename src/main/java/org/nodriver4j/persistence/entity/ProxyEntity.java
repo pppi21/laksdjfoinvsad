@@ -331,7 +331,7 @@ public class ProxyEntity {
      * @return the masked proxy string for display
      */
     public String toDisplayString() {
-        return String.format("%s:%d:%s:***", host, port, username);
+        return String.format("%s:%d:%s:%s", host, port, username, password);
     }
 
     // ==================== Utility ====================

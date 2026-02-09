@@ -519,8 +519,9 @@ public class TaskRow extends HBox {
     /**
      * Updates the proxy display text.
      *
-     * <p>Typically shows the masked proxy string (e.g., "proxy.example.com:8080:user:***")
-     * or "No Proxy" if none is assigned. Hidden when text is null or empty.</p>
+     * <p>Typically shows the full proxy string (e.g., "proxy.example.com:8080:user:pass123")
+     * or "No Proxy" if none is assigned. Truncated to 50 characters max.
+     * Hidden when text is null or empty.</p>
      *
      * @param text the proxy display text
      */
@@ -530,7 +531,8 @@ public class TaskRow extends HBox {
             proxyLabel.setVisible(false);
             proxyLabel.setManaged(false);
         } else {
-            proxyLabel.setText(text);
+            String display = text.length() > 50 ? text.substring(0, 50) + "..." : text;
+            proxyLabel.setText(display);
             proxyLabel.setVisible(true);
             proxyLabel.setManaged(true);
         }
