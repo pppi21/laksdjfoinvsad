@@ -27,18 +27,38 @@ made for this page.
 ### Task Container
     This represents a single task in the Task Group page. They will appear
     in rows (1 per row) and span the entire width of the available space in the UI.
-    They will display the task name, status (custom per script), and real time logs
+    They will display the task name, status (custom per script), and live log
     on the left and action buttons on the right.
 
+#### Live Log Display
+    Each TaskRow has a log label on the left side (below the task name,
+    status, and proxy info) that displays live log messages from the
+    backend. As automation events unfold during a browser session, the
+    script pushes short log messages to the UI. Only the most recent
+    message is shown at any time — there is no scrollback or history.
+
+    The font size should be comparable to the task name/email for easy
+    readability. Log messages support three color states:
+    - **Default (white):** Normal informational messages
+      (e.g., "Navigating to checkout...", "Entering payment info...")
+    - **Red (#c20000):** Errors or bad outcomes
+      (e.g., "Payment declined", "Session expired")
+    - **Green (#0e8f00):** Final success message
+      (e.g., "Order confirmed", "Account created")
+
+    The log label is cleared when a task transitions to IDLE. When a
+    task is not running, the last log message from the previous run
+    remains visible until the task is started again.
+
     Button order (left to right):
-    1. Start/Stop — Toggles between play and stop icons. Start launches the
+    1. Start/Stop â€” Toggles between play and stop icons. Start launches the
        automation script; stop terminates it.
-    2. View Browser / Manual Browser — These share the same slot:
+    2. View Browser / Manual Browser â€” These share the same slot:
        - View Browser (eye icon): Only visible while a task is running. Opens a
          read-only window that streams the headless browser's visual output so the
          user can observe what the automation is doing without making the browser
          headed. The user cannot interact with the page or close the browser through
-         this window — it is purely a visual debugging/monitoring tool. The icon
+         this window â€” it is purely a visual debugging/monitoring tool. The icon
          toggles to a crossed-out eye while the view window is open.
        - Manual Browser (Chrome icon): Only visible while the task is NOT running.
          Opens a fully headed browser session with all the same characteristics as
@@ -46,11 +66,11 @@ made for this page.
          automation script running. Sets the task status to MANUAL, which greys
          out the Chrome icon and shows the Stop button to close the session.
          Closing the manual browser returns the task to STOPPED status.
-    3. Clone — Makes an identical copy of the task and appends it to the task list.
-    4. Edit — Triggers a popup similar to the task creation dialog, but only allows
+    3. Clone â€” Makes an identical copy of the task and appends it to the task list.
+    4. Edit â€” Triggers a popup similar to the task creation dialog, but only allows
        a single profile to be selected and lets the user enter a new proxy as a
        string. The user can also set a custom status string.
-    5. Delete — Removes the task with an inline confirmation (Yes/No).
+    5. Delete â€” Removes the task with an inline confirmation (Yes/No).
 
     One key feature that we need to adjust our backend to support is preserving the
     browser userdata until a task is deleted. The user should be able to stop a browser
@@ -154,7 +174,7 @@ depending on the task's status.
 - Active icon: EYE_SLASH (shown while the view window is open)
 - Color: #389deb (blue) for both icons
 - Action: Opens a read-only window that streams the headless browser's
-  visual output in real time. This is a monitoring/debugging tool — the
+  visual output in real time. This is a monitoring/debugging tool â€” the
   user can see exactly what the automation script is doing on the page.
   The window does NOT make the browser headed. The user cannot click any
   elements on the page, interact with form fields, or close the browser
@@ -170,12 +190,12 @@ depending on the task's status.
 - Action: Opens a fully headed (visible) browser session using the same
   proxy, fingerprint, and userdata directory as the scripted task, but
   without the automation script running. This lets the user manually
-  interact with sites using the task's identity — useful for manual
+  interact with sites using the task's identity â€” useful for manual
   account setup, debugging login issues, or verifying cookies. On click
   the task status changes to MANUAL.
 - Enabled: Only while the task is NOT running and NOT already in manual
   mode. Hidden when the task status is RUNNING. Visible but disabled
-  (greyed out) when the task status is MANUAL — the Chrome icon stays
+  (greyed out) when the task status is MANUAL â€” the Chrome icon stays
   visible to indicate a manual session is active, but cannot be clicked.
   The Stop button (slot 1) is used to close the manual browser instead.
 
@@ -186,10 +206,10 @@ depending on the task's status.
 - When a task transitions to MANUAL: the View Browser button stays hidden,
   the Manual Browser button remains visible but is disabled (greyed out),
   and the Start/Stop button shows the Stop icon.
-- When a task transitions from RUNNING → STOPPED: the View Browser button
+- When a task transitions from RUNNING â†’ STOPPED: the View Browser button
   is hidden, the Manual Browser button becomes visible and enabled, and
   any active view browser state is reset.
-- When a task transitions from MANUAL → STOPPED: the Manual Browser button
+- When a task transitions from MANUAL â†’ STOPPED: the Manual Browser button
   is re-enabled (no longer greyed out) and the Start/Stop button shows the
   Play icon.
 
@@ -203,7 +223,7 @@ depending on the task's status.
   directory, and no custom status. It is effectively a new task that
   shares the same configuration.
 - Enabled: Always, regardless of task status. Cloning a running task
-  does not clone the running state — the new task starts idle.
+  does not clone the running state â€” the new task starts idle.
 
 ## 4. Edit
 - Icon: EDIT
@@ -216,7 +236,7 @@ depending on the task's status.
   2. Set a custom status string (max 20 characters) that displays to the
      right of the task name/email in the row. Useful for tagging tasks
      with notes like "OTP needed" or "Verified".
-  The edit dialog does NOT allow changing the profile — that is fixed at
+  The edit dialog does NOT allow changing the profile â€” that is fixed at
   task creation time.
 - Enabled: Only while the task is NOT running or in manual mode. Disabled
   (greyed out at 30% opacity) while the task is running or in manual mode
