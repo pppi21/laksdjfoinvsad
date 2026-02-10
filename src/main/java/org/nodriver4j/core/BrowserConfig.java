@@ -2,6 +2,7 @@ package org.nodriver4j.core;
 
 import org.nodriver4j.services.AutoSolveAIService;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -11,7 +12,7 @@ import java.util.List;
  *
  * <p>This class is the single source of truth for all browser-specific settings.
  * It holds everything needed to configure how a browser should behave, but does NOT
- * hold runtime allocations like port numbers or user data directories.</p>
+ * hold runtime allocations like port numbers.</p>
  *
  * <p>Instances are immutable and created via the {@link Builder} pattern:</p>
  * <pre>{@code
@@ -21,6 +22,15 @@ import java.util.List;
  *     .fingerprintEnabled(true)
  *     .resourceBlocking(true)
  *     .interactionOptions(InteractionOptions.fast())
+ *     .build();
+ * }</pre>
+ *
+ * <p>For persistent browser sessions (e.g., tasks), provide a {@code userDataDir}
+ * to reuse cookies and localStorage across runs:</p>
+ * <pre>{@code
+ * BrowserConfig config = BrowserConfig.builder()
+ *     .executablePath("/path/to/chrome")
+ *     .userDataDir(Path.of("/data/task-42"))
  *     .build();
  * }</pre>
  *
@@ -53,6 +63,9 @@ public class BrowserConfig {
     private final ProxyConfig proxyConfig;
     private final AutoSolveAIService autoSolveAIService;
 
+    // Optional persistent user data directory
+    private final Path userDataDir;
+
     private BrowserConfig(Builder builder) {
         this.executablePath = builder.executablePath;
         this.headless = builder.headless;
@@ -64,6 +77,7 @@ public class BrowserConfig {
         this.interactionOptions = builder.interactionOptions;
         this.proxyConfig = builder.proxyConfig;
         this.autoSolveAIService = builder.autoSolveAIService;
+        this.userDataDir = builder.userDataDir;
     }
 
     // ==================== Getters ====================
@@ -169,6 +183,19 @@ public class BrowserConfig {
     }
 
     /**
+     * Gets the user data directory for persistent browser sessions.
+     *
+     * <p>When set, Browser.launch() uses this directory instead of generating
+     * a temporary one, and preserves it on close. This allows cookies,
+     * localStorage, and other session data to persist across runs.</p>
+     *
+     * @return the user data directory path, or null if not set (temp dir will be generated)
+     */
+    public Path userDataDir() {
+        return userDataDir;
+    }
+
+    /**
      * Checks if a proxy is configured.
      *
      * @return true if proxy configuration is present
@@ -184,6 +211,15 @@ public class BrowserConfig {
      */
     public boolean hasAutoSolveAI() {
         return autoSolveAIService != null;
+    }
+
+    /**
+     * Checks if a persistent user data directory is configured.
+     *
+     * @return true if a user data directory path is set
+     */
+    public boolean hasUserDataDir() {
+        return userDataDir != null;
     }
 
     /**
@@ -204,6 +240,7 @@ public class BrowserConfig {
         builder.interactionOptions = this.interactionOptions;
         builder.proxyConfig = this.proxyConfig;
         builder.autoSolveAIService = this.autoSolveAIService;
+        builder.userDataDir = this.userDataDir;
         return builder;
     }
 
@@ -219,13 +256,14 @@ public class BrowserConfig {
     @Override
     public String toString() {
         return String.format(
-                "BrowserConfig{executable=%s, headless=%s, fingerprint=%s, resourceBlocking=%s, proxy=%s, autoSolve=%s}",
+                "BrowserConfig{executable=%s, headless=%s, fingerprint=%s, resourceBlocking=%s, proxy=%s, autoSolve=%s, userDataDir=%s}",
                 executablePath,
                 headless,
                 fingerprintEnabled ? "enabled" : "disabled",
                 resourceBlocking ? "enabled" : "disabled",
                 proxyConfig != null ? proxyConfig.host() : "none",
-                autoSolveAIService != null ? "configured" : "none"
+                autoSolveAIService != null ? "configured" : "none",
+                userDataDir != null ? userDataDir : "auto"
         );
     }
 
@@ -260,6 +298,7 @@ public class BrowserConfig {
         private InteractionOptions interactionOptions = InteractionOptions.defaults();
         private ProxyConfig proxyConfig;
         private AutoSolveAIService autoSolveAIService;
+        private Path userDataDir;
 
         private Builder() {}
 
@@ -448,6 +487,26 @@ public class BrowserConfig {
             if (apiKey != null && !apiKey.isBlank()) {
                 this.autoSolveAIService = new AutoSolveAIService(apiKey);
             }
+            return this;
+        }
+
+        /**
+         * Sets a persistent user data directory for the browser.
+         *
+         * <p>When set, the browser will use this directory for its profile data
+         * (cookies, localStorage, etc.) and will NOT delete it on close.
+         * This allows sessions to persist across browser restarts.</p>
+         *
+         * <p>When not set (null), a temporary directory is generated and
+         * automatically cleaned up when the browser closes.</p>
+         *
+         * <p>Default: null (auto-generated temp directory)</p>
+         *
+         * @param userDataDir path to the persistent user data directory, or null for temp
+         * @return this builder
+         */
+        public Builder userDataDir(Path userDataDir) {
+            this.userDataDir = userDataDir;
             return this;
         }
 

@@ -99,6 +99,9 @@ public class TaskEntity {
     /** Task was manually stopped by the user. */
     public static final String STATUS_STOPPED = "STOPPED";
 
+    /** Task is in manual browser mode (headed, no script). */
+    public static final String STATUS_MANUAL = "MANUAL";
+
     // ==================== Log Color Constants ====================
 
     /** Default log color — white text. */
@@ -626,6 +629,10 @@ public class TaskEntity {
         return STATUS_STOPPED.equals(status);
     }
 
+    public boolean isManual() {
+        return STATUS_MANUAL.equals(status);
+    }
+
     /**
      * Checks if the task has finished (completed, failed, or stopped).
      *
@@ -633,6 +640,7 @@ public class TaskEntity {
      */
     public boolean isFinished() {
         return isCompleted() || isFailed() || isStopped();
+        // MANUAL is NOT finished — it's an active session
     }
 
     /**

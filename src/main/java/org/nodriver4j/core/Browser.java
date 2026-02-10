@@ -129,6 +129,7 @@ public class Browser implements AutoCloseable {
     private final IntConsumer portReleaser;
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private final AtomicBoolean warmed = new AtomicBoolean(false);
+    private final boolean ownsUserDataDir;
 
     // Resource blocking counter
     private final AtomicInteger blockedResourceCount = new AtomicInteger(0);
@@ -139,7 +140,7 @@ public class Browser implements AutoCloseable {
 
     private Browser(BrowserConfig config, Process process, CDPClient cdpClient,
                     CDPClient browserCdpClient, Fingerprint fingerprint, Path userDataDir,
-                    int port, IntConsumer portReleaser) {
+                    int port, IntConsumer portReleaser, boolean ownsUserDataDir) {
         this.config = config;
         this.process = process;
         this.cdpClient = cdpClient;
@@ -148,6 +149,7 @@ public class Browser implements AutoCloseable {
         this.userDataDir = userDataDir;
         this.port = port;
         this.portReleaser = portReleaser;
+        this.ownsUserDataDir = ownsUserDataDir;
     }
 
     // ==================== Launch Methods ====================
@@ -185,8 +187,25 @@ public class Browser implements AutoCloseable {
             portReleaser = p -> {}; // No-op if not provided
         }
 
-        // Generate temporary user data directory
-        Path userDataDir = generateUserDataDir();
+        // Use provided userdata dir (persistent) or generate a temp one
+        boolean ownsUserDataDir;
+        Path userDataDir;
+
+        if (config.hasUserDataDir()) {
+            userDataDir = config.userDataDir();
+            ownsUserDataDir = false;
+            try {
+                if (!Files.exists(userDataDir)) {
+                    Files.createDirectories(userDataDir);
+                }
+            } catch (IOException e) {
+                throw new IOException("Failed to create user data directory: " + userDataDir, e);
+            }
+            System.out.println("[Browser] Using persistent userdata: " + userDataDir);
+        } else {
+            userDataDir = generateUserDataDir();
+            ownsUserDataDir = true;
+        }
 
         // Load fingerprint if enabled
         Fingerprint fingerprint = null;
@@ -214,7 +233,7 @@ public class Browser implements AutoCloseable {
         CDPClient cdpClient = connectWithRetry(port);
 
         Browser browser = new Browser(config, process, cdpClient, browserCdpClient,
-                fingerprint, userDataDir, port, portReleaser);
+                fingerprint, userDataDir, port, portReleaser, ownsUserDataDir);
 
         // Setup Fetch interception (proxy auth and/or resource blocking)
         if (browser.needsFetchInterception()) {
@@ -272,7 +291,7 @@ public class Browser implements AutoCloseable {
      * @return the warming result containing collected cookies and any warnings
      * @throws IllegalStateException if the browser has been closed
      */
-    SessionWarmer.WarmingResult warm() {
+    public SessionWarmer.WarmingResult warm() {
         ensureOpen();
 
         // Only warm once
@@ -996,8 +1015,12 @@ public class Browser implements AutoCloseable {
                 }
             }
 
-            // Delete user data directory
-            deleteUserDataDir();
+            // Only delete userdata if we generated it (not externally provided)
+            if (ownsUserDataDir) {
+                deleteUserDataDir();
+            } else {
+                System.out.println("[Browser] Preserving persistent userdata: " + userDataDir);
+            }
 
         } catch (Exception e) {
             System.err.println("[Browser] Error during cleanup: " + e.getMessage());

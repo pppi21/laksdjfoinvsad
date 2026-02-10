@@ -9,6 +9,7 @@ import org.nodriver4j.profiles.ProfilePool;
 import org.nodriver4j.scripts.SandwichGen;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Scanner;
@@ -44,7 +45,8 @@ public class ManualBrowser {
                 .headless(false)
                 //.webrtcPolicy("default")
                 .headlessGpuAcceleration(false)
-                .resourceBlocking(true)
+                .resourceBlocking(false)
+                .userDataDir(Path.of("C:/Users/leofo/Documents/NoDriver4j/ue-cookies/nodriver4j-e7ad1adb"))
                 .build();
 
         BrowserManager.Builder managerBuilder = BrowserManager.builder()
