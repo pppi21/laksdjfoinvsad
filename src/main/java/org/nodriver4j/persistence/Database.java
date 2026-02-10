@@ -47,7 +47,7 @@ public final class Database {
 
     private static final String DATA_DIRECTORY = "nodriver4j-data";
     private static final String DATABASE_FILE = "data.db";
-    private static final int CURRENT_SCHEMA_VERSION = 3;
+    private static final int CURRENT_SCHEMA_VERSION = 4;
     private static final AtomicBoolean initialized = new AtomicBoolean(false);
     private static String connectionUrl;
 
@@ -218,6 +218,7 @@ public final class Database {
             case 1 -> migrateV1(conn);
             case 2 -> migrateV2(conn);
             case 3 -> migrateV3(conn);
+            case 4 -> migrateV4(conn);
             default -> throw new DatabaseException("Unknown migration version: " + version);
         }
     }
@@ -381,6 +382,20 @@ public final class Database {
             stmt.execute("DROP TABLE proxies");
             stmt.execute("ALTER TABLE proxies_new RENAME TO proxies");
             stmt.execute("CREATE INDEX idx_proxies_group_id ON proxies(group_id)");
+        }
+    }
+
+    /**
+     * V4: Add log_message and log_color columns to tasks table.
+     *
+     * <p>These columns persist the most recent live log message and its
+     * color class so that log state survives UI navigation. Both columns
+     * are nullable — a null log_message means no log has been set.</p>
+     */
+    private static void migrateV4(Connection conn) throws SQLException {
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute("ALTER TABLE tasks ADD COLUMN log_message TEXT");
+            stmt.execute("ALTER TABLE tasks ADD COLUMN log_color TEXT");
         }
     }
 

@@ -12,7 +12,9 @@ import org.kordamp.ikonli.Ikon;
 import org.kordamp.ikonli.fontawesome5.FontAwesomeBrands;
 import org.kordamp.ikonli.fontawesome5.FontAwesomeSolid;
 import org.kordamp.ikonli.javafx.FontIcon;
+import org.nodriver4j.persistence.entity.TaskEntity;
 
+import java.util.List;
 import java.util.function.Consumer;
 
 /**
@@ -89,6 +91,14 @@ public class TaskRow extends HBox {
     private static final String COLOR_DELETE  = "#d15252";
 
     private static final int ICON_SIZE = 14;
+
+    // ==================== Log Color Classes ====================
+
+    private static final List<String> LOG_STYLE_CLASSES = List.of(
+            TaskEntity.LOG_ERROR, TaskEntity.LOG_SUCCESS
+    );
+
+
 
     // ==================== UI Components — Info ====================
 
@@ -504,16 +514,57 @@ public class TaskRow extends HBox {
             this.manualBrowserActive = false;
         }
 
+        // Clear log when task returns to idle
+        if ("IDLE".equals(status)) {
+            clearLog();
+        }
+
         updateButtonStates();
     }
 
     /**
-     * Updates the log text display.
+     * Updates the log text display with the default (white) color.
      *
      * @param text the log message to display
      */
     public void setLogText(String text) {
+        setLogText(text, TaskEntity.LOG_DEFAULT);
+    }
+
+    /**
+     * Updates the log text display with a specific color style.
+     *
+     * <p>Accepts one of the {@code LOG_*} constants from {@link TaskEntity}:
+     * {@link TaskEntity#LOG_DEFAULT} (white), {@link TaskEntity#LOG_ERROR} (red),
+     * {@link TaskEntity#LOG_SUCCESS} (green).</p>
+     *
+     * @param text       the log message to display
+     * @param colorClass one of LOG_DEFAULT, LOG_ERROR, LOG_SUCCESS
+     */
+    public void setLogText(String text, String colorClass) {
         logLabel.setText(text != null ? text : "");
+        applyLogStyle(colorClass);
+
+    }
+
+    /**
+     * Clears the log label text and resets to default styling.
+     */
+    public void clearLog() {
+        logLabel.setText("");
+        applyLogStyle(TaskEntity.LOG_DEFAULT);
+    }
+
+    /**
+     * Applies a log color CSS class, removing any previous log color class.
+     *
+     * @param colorClass the CSS class to apply, or LOG_DEFAULT to reset
+     */
+    private void applyLogStyle(String colorClass) {
+        logLabel.getStyleClass().removeAll(LOG_STYLE_CLASSES);
+        if (colorClass != null && !TaskEntity.LOG_DEFAULT.equals(colorClass)) {
+            logLabel.getStyleClass().add(colorClass);
+        }
     }
 
     /**

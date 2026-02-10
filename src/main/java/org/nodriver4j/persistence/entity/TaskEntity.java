@@ -23,6 +23,8 @@ import java.time.format.DateTimeFormatter;
  *     userdata_path TEXT,
  *     notes TEXT,
  *     custom_status TEXT,
+ *     log_message TEXT,
+ *     log_color TEXT,
  *     created_at TEXT NOT NULL,
  *     updated_at TEXT NOT NULL,
  *     FOREIGN KEY (group_id) REFERENCES task_groups(id) ON DELETE CASCADE,
@@ -49,13 +51,18 @@ import java.time.format.DateTimeFormatter;
  * // Scripts can set custom status
  * task.customStatus("Entering OTP...");
  * repository.save(task);
+ *
+ * // Scripts can push log messages with color
+ * task.logMessage("Navigating to checkout...");
+ * task.logColor(TaskEntity.LOG_DEFAULT);
+ * repository.save(task);
  * }</pre>
  *
  * <h2>Responsibilities</h2>
  * <ul>
  *   <li>Hold task data fields</li>
  *   <li>Represent a row in the tasks table</li>
- *   <li>Define standard status constants</li>
+ *   <li>Define standard status and log color constants</li>
  *   <li>Provide convenience methods for status checks</li>
  * </ul>
  *
@@ -92,6 +99,17 @@ public class TaskEntity {
     /** Task was manually stopped by the user. */
     public static final String STATUS_STOPPED = "STOPPED";
 
+    // ==================== Log Color Constants ====================
+
+    /** Default log color — white text. */
+    public static final String LOG_DEFAULT = "log-default";
+
+    /** Error/bad outcome log color — red (#c20000). */
+    public static final String LOG_ERROR = "log-error";
+
+    /** Final success log color — green (#0e8f00). */
+    public static final String LOG_SUCCESS = "log-success";
+
     // ==================== Identity ====================
 
     private long id;
@@ -106,6 +124,11 @@ public class TaskEntity {
 
     private String status;
     private String customStatus;
+
+    // ==================== Live Log ====================
+
+    private String logMessage;
+    private String logColor;
 
     // ==================== Paths ====================
 
@@ -142,6 +165,8 @@ public class TaskEntity {
         this.proxyId = builder.proxyId;
         this.status = builder.status;
         this.customStatus = builder.customStatus;
+        this.logMessage = builder.logMessage;
+        this.logColor = builder.logColor;
         this.userdataPath = builder.userdataPath;
         this.warmSession = builder.warmSession;
         this.notes = builder.notes;
@@ -173,6 +198,8 @@ public class TaskEntity {
                 .proxyId(proxyId)
                 .status(status)
                 .customStatus(customStatus)
+                .logMessage(logMessage)
+                .logColor(logColor)
                 .userdataPath(userdataPath)
                 .warmSession(warmSession)
                 .notes(notes)
@@ -238,6 +265,32 @@ public class TaskEntity {
      */
     public String customStatus() {
         return customStatus;
+    }
+
+    /**
+     * Gets the most recent log message from the automation script.
+     *
+     * <p>This is a short message pushed by the script to indicate
+     * what the task is currently doing. Only the most recent message
+     * is stored — there is no history.</p>
+     *
+     * @return the log message, or null if not set
+     */
+    public String logMessage() {
+        return logMessage;
+    }
+
+    /**
+     * Gets the CSS color class for the current log message.
+     *
+     * <p>One of {@link #LOG_DEFAULT} (white), {@link #LOG_ERROR} (red),
+     * or {@link #LOG_SUCCESS} (green). Null is treated as LOG_DEFAULT
+     * by the UI layer.</p>
+     *
+     * @return the log color class, or null
+     */
+    public String logColor() {
+        return logColor;
     }
 
     /**
@@ -375,6 +428,42 @@ public class TaskEntity {
     }
 
     /**
+     * Sets the most recent log message.
+     *
+     * @param logMessage the log message, or null to clear
+     * @return this entity for chaining
+     */
+    public TaskEntity logMessage(String logMessage) {
+        this.logMessage = logMessage;
+        return this;
+    }
+
+    /**
+     * Sets the CSS color class for the log message.
+     *
+     * @param logColor one of LOG_DEFAULT, LOG_ERROR, LOG_SUCCESS, or null
+     * @return this entity for chaining
+     */
+    public TaskEntity logColor(String logColor) {
+        this.logColor = logColor;
+        return this;
+    }
+
+    /**
+     * Clears the log message and resets the color to default.
+     *
+     * <p>Convenience method for clearing the log when a task
+     * transitions to IDLE.</p>
+     *
+     * @return this entity for chaining
+     */
+    public TaskEntity clearLog() {
+        this.logMessage = null;
+        this.logColor = null;
+        return this;
+    }
+
+    /**
      * Sets the browser userdata directory path.
      *
      * @param userdataPath the userdata path, or null to clear
@@ -481,6 +570,15 @@ public class TaskEntity {
      */
     public boolean hasUserdataPath() {
         return userdataPath != null && !userdataPath.isBlank();
+    }
+
+    /**
+     * Checks if a log message is present.
+     *
+     * @return true if a log message is set and non-blank
+     */
+    public boolean hasLogMessage() {
+        return logMessage != null && !logMessage.isBlank();
     }
 
     /**
@@ -594,6 +692,8 @@ public class TaskEntity {
         private Long proxyId;
         private String status = STATUS_IDLE;
         private String customStatus;
+        private String logMessage;
+        private String logColor;
         private String userdataPath;
         private boolean warmSession = false;
         private String notes;
@@ -629,6 +729,16 @@ public class TaskEntity {
 
         public Builder customStatus(String customStatus) {
             this.customStatus = customStatus;
+            return this;
+        }
+
+        public Builder logMessage(String logMessage) {
+            this.logMessage = logMessage;
+            return this;
+        }
+
+        public Builder logColor(String logColor) {
+            this.logColor = logColor;
             return this;
         }
 

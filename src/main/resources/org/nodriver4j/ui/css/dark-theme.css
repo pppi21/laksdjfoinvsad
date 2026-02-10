@@ -784,9 +784,27 @@
 }
 
 .task-row-log {
-    -fx-font-size: 12px;
-    -fx-text-fill: -fx-text-secondary;
+    -fx-font-size: 14px;
+    -fx-text-fill: -fx-text-primary;
     -fx-padding: 2px 0 0 0;
+}
+
+/* ==================== Task Row Log Colors ==================== */
+.log-error {
+    -fx-text-fill: #c20000;
+}
+
+.log-success {
+    -fx-text-fill: #0e8f00;
+}
+
+/* ==================== Task Row Log Colors ==================== */
+.log-error {
+    -fx-text-fill: #c20000;
+}
+
+.log-success {
+    -fx-text-fill: #0e8f00;
 }
 
 /* ==================== Task Row Status Colors ==================== */

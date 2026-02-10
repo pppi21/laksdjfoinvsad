@@ -81,29 +81,39 @@ public class TaskRepository implements Repository<TaskEntity> {
     // ==================== SQL Statements ====================
 
     private static final String INSERT_SQL = """
-        INSERT INTO tasks (
-            group_id, profile_id, proxy_id, status, userdata_path,
-            notes, custom_status, warm_session, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """;
+    INSERT INTO tasks (
+        group_id, profile_id, proxy_id, status, userdata_path,
+        notes, custom_status, log_message, log_color, warm_session,
+        created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """;
+
 
     private static final String UPDATE_SQL = """
-        UPDATE tasks SET
-            group_id = ?, profile_id = ?, proxy_id = ?, status = ?,
-            userdata_path = ?, notes = ?, custom_status = ?, warm_session = ?,
-            updated_at = datetime('now')
-        WHERE id = ?
-        """;
+    UPDATE tasks SET
+        group_id = ?, profile_id = ?, proxy_id = ?, status = ?,
+        userdata_path = ?, notes = ?, custom_status = ?,
+        log_message = ?, log_color = ?, warm_session = ?,
+        updated_at = datetime('now')
+    WHERE id = ?
+    """;
+
 
     private static final String UPDATE_STATUS_SQL = """
             UPDATE tasks SET status = ?, updated_at = datetime('now')
             WHERE id = ?
             """;
 
-    private static final String SELECT_COLUMNS = """
-        id, group_id, profile_id, proxy_id, status, userdata_path,
-        notes, custom_status, warm_session, created_at, updated_at
+    private static final String UPDATE_LOG_SQL = """
+        UPDATE tasks SET log_message = ?, log_color = ?, updated_at = datetime('now')
+        WHERE id = ?
         """;
+
+    private static final String SELECT_COLUMNS = """
+    id, group_id, profile_id, proxy_id, status, userdata_path,
+    notes, custom_status, log_message, log_color, warm_session,
+    created_at, updated_at
+    """;
 
     private static final String SELECT_BY_ID_SQL =
             "SELECT " + SELECT_COLUMNS + " FROM tasks WHERE id = ?";
@@ -254,6 +264,36 @@ public class TaskRepository implements Repository<TaskEntity> {
 
         } catch (SQLException e) {
             throw new Database.DatabaseException("Failed to update task status: " + id, e);
+        }
+    }
+
+    /**
+     * Updates only the log message and color of a task.
+     *
+     * <p>This is a convenience method for the common case of pushing
+     * a live log message during script execution without loading and
+     * saving the entire entity. The {@code updated_at} timestamp is
+     * automatically set to the current time.</p>
+     *
+     * @param id       the task ID
+     * @param message  the log message, or null to clear
+     * @param color    the log color class (e.g., {@link TaskEntity#LOG_ERROR}), or null for default
+     * @return true if the task was found and updated, false if not found
+     * @throws Database.DatabaseException if the operation fails
+     */
+    public boolean updateLog(long id, String message, String color) {
+        try (Connection conn = Database.connection();
+             PreparedStatement stmt = conn.prepareStatement(UPDATE_LOG_SQL)) {
+
+            stmt.setString(1, message);
+            stmt.setString(2, color);
+            stmt.setLong(3, id);
+
+            int affected = stmt.executeUpdate();
+            return affected > 0;
+
+        } catch (SQLException e) {
+            throw new Database.DatabaseException("Failed to update task log: " + id, e);
         }
     }
 
@@ -474,6 +514,8 @@ public class TaskRepository implements Repository<TaskEntity> {
         stmt.setString(i++, e.userdataPath());
         stmt.setString(i++, e.notes());
         stmt.setString(i++, e.customStatus());
+        stmt.setString(i++, e.logMessage());
+        stmt.setString(i++, e.logColor());
         stmt.setInt(i++, e.warmSession() ? 1 : 0);
         stmt.setString(i++, e.createdAtString());
         stmt.setString(i, e.updatedAtString());
@@ -497,6 +539,8 @@ public class TaskRepository implements Repository<TaskEntity> {
         stmt.setString(i++, e.userdataPath());
         stmt.setString(i++, e.notes());
         stmt.setString(i++, e.customStatus());
+        stmt.setString(i++, e.logMessage());
+        stmt.setString(i++, e.logColor());
         stmt.setInt(i++, e.warmSession() ? 1 : 0);
         // updated_at is set via datetime('now') in SQL
         // WHERE id = ?
@@ -530,6 +574,8 @@ public class TaskRepository implements Repository<TaskEntity> {
                 .userdataPath(rs.getString("userdata_path"))
                 .notes(rs.getString("notes"))
                 .customStatus(rs.getString("custom_status"))
+                .logMessage(rs.getString("log_message"))
+                .logColor(rs.getString("log_color"))
                 .warmSession(rs.getInt("warm_session") == 1)
                 .build();
 

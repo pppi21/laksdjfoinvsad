@@ -137,7 +137,8 @@ public class TaskGroupDetailController implements Initializable {
         long id = row.taskId();
 
         row.setOnStart(taskId ->
-                System.out.println("[TaskGroupDetailController] Start task #" + taskId));
+                row.setLogText(String.format("Starting task #%d", id), TaskEntity.LOG_SUCCESS));
+                //System.out.println("[TaskGroupDetailController] Start task #" + taskId));
 
         row.setOnStop(taskId ->
                 System.out.println("[TaskGroupDetailController] Stop task #" + taskId));
@@ -333,6 +334,13 @@ public class TaskGroupDetailController implements Initializable {
 
                 TaskRow row = new TaskRow(task.id(), displayName, statusText);
                 row.setProxyText(proxyDisplay);
+
+                // Restore persisted log state
+                if (task.hasLogMessage()) {
+                    System.out.println("IT DOES HAVE A LOG MESSAGE");
+                    row.setLogText(task.logMessage(), task.logColor());
+                }
+
                 wireRowCallbacks(row);
                 taskRows.add(row);
                 taskListContainer.getChildren().add(row);
@@ -562,6 +570,13 @@ public class TaskGroupDetailController implements Initializable {
                 String proxyDisplay = resolveProxyDisplay(task, proxyMap);
                 TaskRow row = new TaskRow(task.id(), displayName, task.displayStatus());
                 row.setProxyText(proxyDisplay);
+
+                // Restore persisted log state (newly created tasks won't have one,
+                // but this keeps the pattern consistent)
+                if (task.hasLogMessage()) {
+                    row.setLogText(task.logMessage(), task.logColor());
+                }
+
                 wireRowCallbacks(row);
                 taskRows.add(row);
                 taskListContainer.getChildren().add(row);
