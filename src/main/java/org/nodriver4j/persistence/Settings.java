@@ -82,7 +82,7 @@ public final class Settings {
      */
     public Settings() {
         // Browser defaults
-        this.chromePath = "";
+        this.chromePath = System.getenv("chromepath");
         this.defaultHeadless = false;
         this.defaultFingerprintEnabled = true;
         this.defaultResourceBlocking = true;

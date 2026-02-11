@@ -188,7 +188,7 @@ public class UberGen implements AutomationScript {
                 logger.log("Sign up attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
             }
         }
-        throw new RuntimeException("signUpWithEmail failed: Maximum " + ATTEMPTS + " attempts reached");
+        throw new RuntimeException("signUpWitfhEmail failed: Maximum " + ATTEMPTS + " attempts reached");
     }
 
     // ==================== Email OTP ====================
