@@ -4,25 +4,32 @@ import org.nodriver4j.core.Browser;
 import org.nodriver4j.core.BrowserConfig;
 import org.nodriver4j.core.ProxyConfig;
 import org.nodriver4j.persistence.Settings;
+import org.nodriver4j.persistence.entity.ProfileEntity;
 import org.nodriver4j.persistence.entity.ProxyEntity;
 import org.nodriver4j.persistence.entity.TaskEntity;
+import org.nodriver4j.persistence.entity.TaskGroupEntity;
+import org.nodriver4j.persistence.repository.ProfileRepository;
 import org.nodriver4j.persistence.repository.ProxyRepository;
+import org.nodriver4j.persistence.repository.TaskGroupRepository;
 import org.nodriver4j.persistence.repository.TaskRepository;
+import org.nodriver4j.scripts.AutomationScript;
+import org.nodriver4j.scripts.ScriptRegistry;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 /**
- * Singleton service that manages browser lifecycle for tasks.
+ * Singleton service that manages browser lifecycle and script execution for tasks.
  *
  * <p>This is the bridge between the UI layer and {@link Browser#launch}.
  * It handles:</p>
@@ -32,10 +39,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *   <li>Port pool allocation for CDP connections</li>
  *   <li>Tracking running {@link Browser} instances by task ID</li>
  *   <li>Starting manual browser sessions (headed, no script)</li>
+ *   <li>Starting scripted task execution on background threads</li>
  *   <li>Stopping browsers gracefully while preserving userdata</li>
+ *   <li>Interrupting script threads on user-initiated stop</li>
  *   <li>Assigning persistent userdata directories on first launch</li>
  *   <li>Session warming when configured on the task</li>
  *   <li>Updating task status in the database on lifecycle transitions</li>
+ *   <li>Appending completion notes to profiles on script success</li>
  *   <li>Emergency cleanup via JVM shutdown hook</li>
  * </ul>
  *
@@ -43,31 +53,52 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <pre>{@code
  * TaskExecutionService service = TaskExecutionService.instance();
  *
+ * // Launch a scripted task (headless browser + automation script)
+ * service.startTask(taskId,
+ *     (msg, color) -> Platform.runLater(() -> row.setLogText(msg, color)),
+ *     status -> Platform.runLater(() -> row.setStatus(status)));
+ *
  * // Launch a manual (headed) browser for a task
  * Browser browser = service.startManualBrowser(taskId);
  *
- * // Check if a task has an active browser
- * boolean running = service.isRunning(taskId);
+ * // Check if a task has an active browser or script thread
+ * boolean active = service.isActive(taskId);
  *
- * // Stop the browser, preserving userdata
+ * // Stop the browser (and interrupt script thread if running)
  * service.stopBrowser(taskId);
  *
  * // Shutdown all browsers on app exit
  * service.shutdown();
  * }</pre>
  *
+ * <h2>Script Execution Flow</h2>
+ * <ol>
+ *   <li>{@link #startTask} validates preconditions and spawns a background thread</li>
+ *   <li>The thread loads the task, group, and profile from the database</li>
+ *   <li>A headless browser is launched with the correct config</li>
+ *   <li>The script is created via {@link ScriptRegistry} and executed</li>
+ *   <li>On success: profile notes are updated, status → COMPLETED</li>
+ *   <li>On failure: error is logged, status → FAILED</li>
+ *   <li>On cancellation (thread interrupted): status → STOPPED</li>
+ *   <li>Browser is always closed in the finally block</li>
+ * </ol>
+ *
  * <h2>Responsibilities</h2>
  * <ul>
  *   <li>Browser lifecycle management (launch, stop, track)</li>
+ *   <li>Script thread management (spawn, interrupt, track)</li>
  *   <li>Port pool management</li>
  *   <li>BrowserConfig construction from entities + settings</li>
  *   <li>Userdata path assignment and persistence</li>
  *   <li>Task status updates on lifecycle transitions</li>
+ *   <li>Profile note updates on script success</li>
  * </ul>
  *
  * <h2>NOT Responsible For</h2>
  * <ul>
- *   <li>Script execution (handled by script layer in Stage 3B)</li>
+ *   <li>Script logic (implemented by {@link AutomationScript} classes)</li>
+ *   <li>Script name resolution (delegated to {@link ScriptRegistry})</li>
+ *   <li>Log persistence and UI notification (delegated to {@link TaskLogger})</li>
  *   <li>Screencast / view browser (Stage 3C)</li>
  *   <li>UI concerns (called by UI controllers but has no JavaFX dependency)</li>
  *   <li>Managing proxy groups, profile groups, or task groups</li>
@@ -76,6 +107,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *
  * @see Browser
  * @see BrowserConfig
+ * @see AutomationScript
+ * @see TaskLogger
+ * @see ScriptRegistry
  * @see TaskEntity
  * @see Settings
  */
@@ -84,6 +118,9 @@ public class TaskExecutionService {
     private static final int PORT_RANGE_START = 9222;
     private static final int PORT_RANGE_END = 9621;
     private static final int PORT_TIMEOUT_SECONDS = 30;
+    private static final int THREAD_JOIN_TIMEOUT_MS = 3000;
+    private static final DateTimeFormatter NOTE_FORMATTER =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     // ==================== Singleton ====================
 
@@ -108,20 +145,26 @@ public class TaskExecutionService {
     // ==================== Instance Fields ====================
 
     private final ConcurrentHashMap<Long, Browser> runningBrowsers;
+    private final ConcurrentHashMap<Long, Thread> scriptThreads;
     private final BlockingQueue<Integer> availablePorts;
     private final AtomicBoolean isShutdown;
     private final Thread shutdownHook;
 
     // Repositories
     private final TaskRepository taskRepository;
+    private final TaskGroupRepository taskGroupRepository;
+    private final ProfileRepository profileRepository;
     private final ProxyRepository proxyRepository;
 
     // ==================== Constructor ====================
 
     private TaskExecutionService() {
         this.runningBrowsers = new ConcurrentHashMap<>();
+        this.scriptThreads = new ConcurrentHashMap<>();
         this.isShutdown = new AtomicBoolean(false);
         this.taskRepository = new TaskRepository();
+        this.taskGroupRepository = new TaskGroupRepository();
+        this.profileRepository = new ProfileRepository();
         this.proxyRepository = new ProxyRepository();
 
         // Initialize port pool
@@ -138,7 +181,149 @@ public class TaskExecutionService {
                 availablePorts.size() + " ports available");
     }
 
-    // ==================== Browser Lifecycle ====================
+    // ==================== Scripted Task Execution ====================
+
+    /**
+     * Starts a scripted task: launches a headless browser and runs the
+     * automation script on a background thread.
+     *
+     * <p>This method returns immediately after spawning the background thread.
+     * All heavy work (browser launch, script execution, cleanup) happens
+     * asynchronously. The caller is notified of progress via callbacks.</p>
+     *
+     * <p>The background thread handles the full lifecycle:</p>
+     * <ol>
+     *   <li>Load task, group, and profile entities from the database</li>
+     *   <li>Launch a headless browser with the correct config</li>
+     *   <li>Resolve and execute the automation script</li>
+     *   <li>On success: append a completion note to the profile, set COMPLETED</li>
+     *   <li>On failure: log the error, set FAILED</li>
+     *   <li>On cancellation: set STOPPED (via thread interruption from
+     *       {@link #stopBrowser(long)})</li>
+     *   <li>Always: close the browser and release resources</li>
+     * </ol>
+     *
+     * @param onLogUpdate    callback for live log messages from the script;
+     *                       receives {@code (message, colorClass)} — the caller
+     *                       is responsible for marshalling to the JavaFX thread;
+     *                       may be null to disable UI log updates
+     * @param onStatusChange callback for task status transitions; receives the
+     *                       new status string (e.g., {@link TaskEntity#STATUS_RUNNING});
+     *                       the caller is responsible for marshalling to the JavaFX
+     *                       thread; may be null to disable UI status updates
+     * @param taskId         the ID of the task to start
+     * @throws IllegalStateException if the service is shutdown, the task is already
+     *                               active, or Settings is misconfigured
+     */
+    public void startTask(long taskId,
+                          BiConsumer<String, String> onLogUpdate,
+                          Consumer<String> onStatusChange) {
+        ensureNotShutdown();
+        ensureNotActive(taskId);
+        validateSettings();
+
+        Thread scriptThread = new Thread(
+                () -> executeTask(taskId, onLogUpdate, onStatusChange),
+                "Task-" + taskId
+        );
+        scriptThread.setDaemon(true);
+
+        // Reserve the slot before starting to prevent race conditions
+        scriptThreads.put(taskId, scriptThread);
+        scriptThread.start();
+
+        System.out.println("[TaskExecutionService] Spawned script thread for task " + taskId);
+    }
+
+    /**
+     * Executes the full task lifecycle on a background thread.
+     *
+     * <p>This method is the main body of the script thread spawned by
+     * {@link #startTask}. It handles entity loading, browser launch,
+     * script execution, success/failure handling, and cleanup.</p>
+     *
+     * @param taskId         the task ID
+     * @param onLogUpdate    UI callback for log messages, or null
+     * @param onStatusChange UI callback for status transitions, or null
+     */
+    private void executeTask(long taskId,
+                             BiConsumer<String, String> onLogUpdate,
+                             Consumer<String> onStatusChange) {
+
+        TaskLogger logger = new TaskLogger(taskId, taskRepository);
+        logger.setOnLogUpdate(onLogUpdate);
+
+        try {
+            // Load entities from database
+            TaskEntity task = taskRepository.findById(taskId)
+                    .orElseThrow(() -> new IllegalStateException("Task not found: " + taskId));
+
+            TaskGroupEntity group = taskGroupRepository.findById(task.groupId())
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Task group not found: " + task.groupId()));
+
+            ProfileEntity profile = profileRepository.findById(task.profileId())
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Profile not found: " + task.profileId()));
+
+            // Launch headless browser
+            logger.log("Launching browser...");
+            Browser browser = launchBrowser(taskId, true, TaskEntity.STATUS_RUNNING);
+            notifyStatusChange(onStatusChange, TaskEntity.STATUS_RUNNING);
+
+            // Check for interruption after browser launch (user may have
+            // clicked stop while the browser was starting)
+            if (Thread.currentThread().isInterrupted()) {
+                throw new InterruptedException("Cancelled before script execution");
+            }
+
+            // Create and execute the automation script
+            AutomationScript script = ScriptRegistry.create(group.scriptName());
+            logger.log("Running " + group.scriptName() + "...");
+            script.run(browser.page(), profile, logger);
+
+            // Script completed successfully — update profile notes
+            appendCompletionNote(profile, group.scriptName());
+            profileRepository.save(profile);
+
+            logger.success(group.scriptName() + " completed");
+            updateTaskStatus(taskId, TaskEntity.STATUS_COMPLETED);
+            notifyStatusChange(onStatusChange, TaskEntity.STATUS_COMPLETED);
+
+        } catch (InterruptedException e) {
+            // User cancelled via stopBrowser — re-set the interrupt flag
+            // and let the finally block handle cleanup. stopBrowser already
+            // sets STOPPED status, but we set it here too for robustness
+            // in case the interruption came from elsewhere.
+            Thread.currentThread().interrupt();
+            updateTaskStatus(taskId, TaskEntity.STATUS_STOPPED);
+            notifyStatusChange(onStatusChange, TaskEntity.STATUS_STOPPED);
+
+        } catch (Exception e) {
+            System.err.println("[TaskExecutionService] Task " + taskId +
+                    " failed: " + e.getMessage());
+            logger.error("Failed: " + e.getMessage());
+            updateTaskStatus(taskId, TaskEntity.STATUS_FAILED);
+            notifyStatusChange(onStatusChange, TaskEntity.STATUS_FAILED);
+
+        } finally {
+            // Close the browser if stopBrowser hasn't already done so.
+            // ConcurrentHashMap.remove() is atomic, so only one of
+            // executeTask or stopBrowser will get the reference.
+            Browser browser = runningBrowsers.remove(taskId);
+            if (browser != null) {
+                try {
+                    browser.close();
+                } catch (Exception e) {
+                    System.err.println("[TaskExecutionService] Error closing browser " +
+                            "in cleanup for task " + taskId + ": " + e.getMessage());
+                }
+            }
+            scriptThreads.remove(taskId);
+        }
+    }
+
+    // ==================== Manual Browser ====================
 
     /**
      * Launches a manual (headed) browser session for a task.
@@ -161,17 +346,22 @@ public class TaskExecutionService {
      * @throws IOException           if the browser fails to launch
      * @throws InterruptedException  if interrupted while waiting for a port
      * @throws IllegalStateException if the service is shutdown, the task is
-     *                               already running, or Settings is misconfigured
+     *                               already active, or Settings is misconfigured
      */
     public Browser startManualBrowser(long taskId) throws IOException, InterruptedException {
+        ensureNotActive(taskId);
+        validateSettings();
         return launchBrowser(taskId, false, TaskEntity.STATUS_MANUAL);
     }
+
+    // ==================== Stop ====================
 
     /**
      * Stops the browser for a task and preserves userdata.
      *
-     * <p>The browser is closed gracefully, the userdata directory is preserved
-     * for future runs, and the task status is updated to
+     * <p>If a script thread is running for this task, it is interrupted
+     * first. The browser is then closed gracefully, the userdata directory
+     * is preserved for future runs, and the task status is updated to
      * {@link TaskEntity#STATUS_STOPPED}. The allocated port is returned
      * to the pool.</p>
      *
@@ -184,12 +374,19 @@ public class TaskExecutionService {
     public void stopBrowser(long taskId) {
         ensureNotShutdown();
 
-        Browser browser = runningBrowsers.remove(taskId);
+        // Interrupt script thread if present. The thread's finally block
+        // will handle its own cleanup, but we also close the browser here
+        // to ensure the Chrome process is terminated promptly.
+        Thread thread = scriptThreads.remove(taskId);
+        if (thread != null) {
+            thread.interrupt();
+            System.out.println("[TaskExecutionService] Interrupted script thread for task " + taskId);
+        }
 
+        Browser browser = runningBrowsers.remove(taskId);
         if (browser != null) {
             System.out.println("[TaskExecutionService] Stopping browser for task " + taskId +
                     " (port " + browser.port() + ")");
-
             try {
                 browser.close();
             } catch (Exception e) {
@@ -204,15 +401,19 @@ public class TaskExecutionService {
     }
 
     /**
-     * Stops all currently running browsers.
+     * Stops all currently active tasks and browsers.
      *
-     * <p>Each browser is stopped gracefully and its userdata is preserved.
-     * Task statuses are updated to {@link TaskEntity#STATUS_STOPPED}.</p>
+     * <p>Each browser is stopped gracefully, script threads are interrupted,
+     * and userdata is preserved. Task statuses are updated to
+     * {@link TaskEntity#STATUS_STOPPED}.</p>
      */
     public void stopAll() {
-        List<Long> taskIds = new ArrayList<>(runningBrowsers.keySet());
+        // Collect from both maps to cover tasks where the browser hasn't
+        // launched yet (script thread exists but browser doesn't)
+        Set<Long> taskIds = new HashSet<>(runningBrowsers.keySet());
+        taskIds.addAll(scriptThreads.keySet());
 
-        System.out.println("[TaskExecutionService] Stopping " + taskIds.size() + " browser(s)...");
+        System.out.println("[TaskExecutionService] Stopping " + taskIds.size() + " task(s)...");
 
         for (long taskId : taskIds) {
             try {
@@ -244,8 +445,6 @@ public class TaskExecutionService {
             throws IOException, InterruptedException {
 
         ensureNotShutdown();
-        ensureNotRunning(taskId);
-        validateSettings();
 
         // Load task from database
         TaskEntity task = taskRepository.findById(taskId)
@@ -302,6 +501,53 @@ public class TaskExecutionService {
         }
     }
 
+    // ==================== Profile Notes ====================
+
+    /**
+     * Appends a completion note to a profile entity.
+     *
+     * <p>Format: {@code "<ScriptName> Account created on 2025-07-15 14:30"}</p>
+     * <p>If existing notes are present, the new note is appended with a
+     * {@code " | "} separator.</p>
+     *
+     * @param profile    the profile to update (modified in place)
+     * @param scriptName the name of the script that completed
+     */
+    private void appendCompletionNote(ProfileEntity profile, String scriptName) {
+        String note = scriptName + " Account created on " +
+                LocalDateTime.now().format(NOTE_FORMATTER);
+
+        String existing = profile.notes();
+        if (existing != null && !existing.isBlank()) {
+            profile.notes(existing + " | " + note);
+        } else {
+            profile.notes(note);
+        }
+    }
+
+    // ==================== UI Callbacks ====================
+
+    /**
+     * Safely invokes a status change callback.
+     *
+     * <p>Catches and logs any exceptions thrown by the callback to prevent
+     * UI errors from crashing the script thread.</p>
+     *
+     * @param callback the callback to invoke, or null
+     * @param status   the new status string
+     */
+    private void notifyStatusChange(Consumer<String> callback, String status) {
+        if (callback == null) {
+            return;
+        }
+        try {
+            callback.accept(status);
+        } catch (Exception e) {
+            System.err.println("[TaskExecutionService] Status change callback failed: " +
+                    e.getMessage());
+        }
+    }
+
     // ==================== Config Building ====================
 
     /**
@@ -313,7 +559,7 @@ public class TaskExecutionService {
      *   <li>Proxy → {@link ProxyEntity} referenced by the task (if any)</li>
      *   <li>Userdata directory → {@link TaskEntity#userdataPath()}</li>
      *   <li>AutoSolve AI → API key from {@link Settings} (if configured)</li>
-     *   <li>Headless mode → determined by caller (manual=false, scripted=from settings)</li>
+     *   <li>Headless mode → determined by caller (manual=false, scripted=true)</li>
      * </ul>
      *
      * @param task     the task entity
@@ -405,6 +651,21 @@ public class TaskExecutionService {
     }
 
     /**
+     * Checks if a task has any active session — either a running browser
+     * or a script thread that hasn't finished yet.
+     *
+     * <p>Use this to determine if a task can be started. A task may have
+     * a script thread but no browser yet (during the launch phase), so
+     * checking only {@link #isRunning(long)} is insufficient.</p>
+     *
+     * @param taskId the task ID to check
+     * @return true if the task has an active browser or script thread
+     */
+    public boolean isActive(long taskId) {
+        return isRunning(taskId) || scriptThreads.containsKey(taskId);
+    }
+
+    /**
      * Gets the active browser for a task.
      *
      * @param taskId the task ID
@@ -433,6 +694,15 @@ public class TaskExecutionService {
     }
 
     /**
+     * Gets the number of currently running script threads.
+     *
+     * @return the count of active script threads
+     */
+    public int activeScriptCount() {
+        return scriptThreads.size();
+    }
+
+    /**
      * Gets the number of available ports in the pool.
      *
      * @return the count of ports not currently in use
@@ -453,9 +723,10 @@ public class TaskExecutionService {
     // ==================== Shutdown ====================
 
     /**
-     * Shuts down the service, stopping all active browsers.
+     * Shuts down the service, stopping all active browsers and script threads.
      *
      * <p>All browsers are stopped gracefully with userdata preserved.
+     * Script threads are interrupted and given a brief period to terminate.
      * Task statuses are updated to {@link TaskEntity#STATUS_STOPPED}.
      * After shutdown, no new browsers can be launched.</p>
      *
@@ -468,7 +739,7 @@ public class TaskExecutionService {
 
         System.out.println("[TaskExecutionService] Shutting down...");
 
-        // Stop all running browsers
+        // Stop all running browsers and script threads
         stopAllInternal();
 
         // Remove shutdown hook (not needed if we're shutting down normally)
@@ -484,13 +755,23 @@ public class TaskExecutionService {
     /**
      * Emergency shutdown called by JVM shutdown hook.
      *
-     * <p>Closes all browsers without status updates to minimize
-     * work during JVM teardown.</p>
+     * <p>Interrupts all script threads and closes all browsers without
+     * status updates to minimize work during JVM teardown.</p>
      */
     private void emergencyShutdown() {
         System.out.println("[TaskExecutionService] Emergency shutdown triggered...");
         isShutdown.set(true);
 
+        // Interrupt all script threads
+        for (Thread thread : scriptThreads.values()) {
+            try {
+                thread.interrupt();
+            } catch (Exception e) {
+                // Ignore during emergency shutdown
+            }
+        }
+
+        // Close all browsers
         for (Map.Entry<Long, Browser> entry : runningBrowsers.entrySet()) {
             try {
                 entry.getValue().close();
@@ -501,16 +782,31 @@ public class TaskExecutionService {
         }
 
         runningBrowsers.clear();
+        scriptThreads.clear();
     }
 
     /**
-     * Stops all browsers with status updates.
+     * Stops all browsers and script threads with status updates.
      *
-     * <p>Used during normal shutdown (not emergency).</p>
+     * <p>Used during normal shutdown (not emergency). Interrupts all
+     * script threads, closes all browsers, updates statuses to STOPPED,
+     * and waits briefly for threads to terminate.</p>
      */
     private void stopAllInternal() {
-        List<Long> taskIds = new ArrayList<>(runningBrowsers.keySet());
+        // Collect all active task IDs from both maps
+        Set<Long> taskIds = new HashSet<>(runningBrowsers.keySet());
+        taskIds.addAll(scriptThreads.keySet());
 
+        // Interrupt all script threads first so they can begin cleanup
+        for (Thread thread : scriptThreads.values()) {
+            try {
+                thread.interrupt();
+            } catch (Exception e) {
+                // Continue with other threads
+            }
+        }
+
+        // Close all browsers and update statuses
         for (long taskId : taskIds) {
             Browser browser = runningBrowsers.remove(taskId);
             if (browser != null) {
@@ -523,6 +819,18 @@ public class TaskExecutionService {
             }
             updateTaskStatus(taskId, TaskEntity.STATUS_STOPPED);
         }
+
+        // Wait briefly for script threads to finish their cleanup
+        for (Map.Entry<Long, Thread> entry : scriptThreads.entrySet()) {
+            try {
+                entry.getValue().join(THREAD_JOIN_TIMEOUT_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+
+        scriptThreads.clear();
     }
 
     // ==================== Validation ====================
@@ -539,14 +847,18 @@ public class TaskExecutionService {
     }
 
     /**
-     * Ensures a task does not already have an active browser.
+     * Ensures a task does not already have an active browser or script thread.
+     *
+     * <p>Checks both {@link #runningBrowsers} and {@link #scriptThreads}
+     * to cover the window between thread spawn and browser launch.</p>
      *
      * @param taskId the task ID to check
-     * @throws IllegalStateException if the task is already running
+     * @throws IllegalStateException if the task is already active
      */
-    private void ensureNotRunning(long taskId) {
-        if (isRunning(taskId)) {
-            throw new IllegalStateException("Task " + taskId + " already has an active browser session");
+    private void ensureNotActive(long taskId) {
+        if (isRunning(taskId) || scriptThreads.containsKey(taskId)) {
+            throw new IllegalStateException(
+                    "Task " + taskId + " already has an active session");
         }
     }
 
