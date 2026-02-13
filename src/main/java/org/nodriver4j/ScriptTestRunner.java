@@ -1,6 +1,10 @@
 package org.nodriver4j;
 
+import javafx.application.Platform;
+import org.nodriver4j.core.Browser;
+import org.nodriver4j.core.BrowserConfig;
 import org.nodriver4j.persistence.Database;
+import org.nodriver4j.persistence.Settings;
 import org.nodriver4j.persistence.entity.ProfileEntity;
 import org.nodriver4j.persistence.entity.TaskEntity;
 import org.nodriver4j.persistence.entity.TaskGroupEntity;
@@ -8,7 +12,9 @@ import org.nodriver4j.persistence.repository.ProfileRepository;
 import org.nodriver4j.persistence.repository.TaskGroupRepository;
 import org.nodriver4j.persistence.repository.TaskRepository;
 import org.nodriver4j.scripts.ScriptRegistry;
+import org.nodriver4j.services.ScreencastService;
 import org.nodriver4j.services.TaskExecutionService;
+import org.nodriver4j.ui.windows.ViewBrowserWindow;
 
 import java.io.IOException;
 import java.util.List;
@@ -43,11 +49,15 @@ public class ScriptTestRunner {
     private static final ProfileRepository profileRepository = new ProfileRepository();
     public static void main(String[] args) {
         System.out.println("==========================================");
-        System.out.println("  NoDriver4j - Script Test Runner");
+        System.out.println("  NoDriver4j - Screencast Test Runner");
         System.out.println("==========================================");
         System.out.println();
 
         Database.initialize();
+
+        // Initialize JavaFX toolkit (needed for ViewBrowserWindow)
+        Platform.startup(() -> {});
+        Platform.setImplicitExit(false);
 
         // Resolve task ID
         long taskId;
@@ -73,114 +83,87 @@ public class ScriptTestRunner {
         System.out.println("--- Task Details ---");
         System.out.println("  Task ID:    " + task.id());
         System.out.println("  Group:      " + (group != null ? group.name() : "Unknown"));
-        System.out.println("  Script:     " + (group != null ? group.scriptName() : "Unknown"));
         System.out.println("  Profile:    " + (profile != null ? profile.displayName() : "Unknown"));
         System.out.println("  Email:      " + (profile != null ? profile.emailAddress() : "Unknown"));
-        System.out.println("  Status:     " + task.status());
-        System.out.println("  Warm:       " + task.warmSession());
-        System.out.println("  Proxy:      " + (task.hasProxy() ? "ID " + task.proxyId() : "none"));
-        System.out.println("  Userdata:   " + (task.hasUserdataPath() ? task.userdataPath() : "not assigned yet"));
         System.out.println();
 
-        // Validate script registration
-        String scriptName = group != null ? group.scriptName() : null;
-        if (scriptName == null || !ScriptRegistry.isRegistered(scriptName)) {
-            System.err.println("Script not registered: " + scriptName);
-            System.err.println("Registered scripts: " + ScriptRegistry.scriptNames());
+        // Validate settings
+        Settings settings = Settings.get();
+        if (!settings.hasChromePath()) {
+            System.err.println("Chrome path not configured in Settings.");
             return;
         }
 
-        // Latch to wait for completion
-        CountDownLatch completionLatch = new CountDownLatch(1);
+        // Build headless config (no userdata dir — temp dir auto-generated and cleaned up)
+        BrowserConfig config = BrowserConfig.builder()
+                .executablePath(settings.chromePath())
+                .headless(true)
+                .headlessGpuAcceleration(true)
+                .fingerprintEnabled(false)
+                .resourceBlocking(false)
+                .build();
 
-        // Start the task with console callbacks
-        TaskExecutionService service = TaskExecutionService.instance();
+        int port = 9222;
 
-        System.out.println("==========================================");
-        System.out.println("  Starting task " + taskId + " (" + scriptName + ")");
-        System.out.println("==========================================");
-        System.out.println();
+        System.out.println("Launching headless browser on port " + port + "...");
 
+        Browser browser;
         try {
-            service.startManualBrowser(taskId);
-//            service.startTask(
-//                    taskId,
-//                    // Log callback — print to console with color indicator
-//                    (message, color) -> {
-//                        String prefix = switch (color) {
-//                            case "log-error" -> "  [ERROR] ";
-//                            case "log-success" -> "  [SUCCESS] ";
-//                            default -> "  [LOG] ";
-//                        };
-//                        System.out.println(prefix + (message != null ? message : "(cleared)"));
-//                    },
-//                    // Status callback — print transitions and release latch on terminal states
-//                    status -> {
-//                        System.out.println("  [STATUS] → " + status);
-//                        if (isTerminal(status)) {
-//                            completionLatch.countDown();
-//                        }
-//                    }
-//            );
-        } catch (IllegalStateException e) {
-            System.err.println("Failed to start task: " + e.getMessage());
-            return;
+            browser = Browser.launch(config, port, p -> {});
         } catch (IOException e) {
-            throw new RuntimeException(e);
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
+            System.err.println("Failed to launch browser: " + e.getMessage());
+            return;
         }
 
+        System.out.println("Browser launched. Navigating to test page...");
+
         try {
-            Thread.sleep(100000);
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
+            browser.page().navigate("https://www.google.com");
+            Thread.sleep(3000); // Wait for page to render
+        } catch (Exception e) {
+            System.err.println("Navigation failed: " + e.getMessage());
+            browser.close();
+            return;
         }
 
-        // Register shutdown hook for Ctrl+C
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            System.out.println();
-            System.out.println("Shutting down...");
-            service.shutdown();
-        }, "TestRunner-ShutdownHook"));
+        // Create screencast service (page-level CDP client)
+        ScreencastService screencast = new ScreencastService(browser.cdpClient());
 
-        // Wait for the task to finish
-        System.out.println("Task is running. Press Ctrl+C to abort, or wait for completion...");
-        System.out.println();
+        // Latch to keep main thread alive until the view window is closed
+        CountDownLatch windowClosed = new CountDownLatch(1);
 
+        // Open view window on the JavaFX Application Thread
+        Platform.runLater(() -> {
+            ViewBrowserWindow window = new ViewBrowserWindow(
+                    "Screencast Test — Task #" + taskId);
+
+            window.setOnClose(() -> {
+                System.out.println("View window closed. Cleaning up...");
+                screencast.stop();
+                browser.close();
+                windowClosed.countDown();
+            });
+
+            // Start streaming — frames arrive on WebSocket thread, marshal to FX
+            screencast.start(frameBytes ->
+                    Platform.runLater(() -> window.updateFrame(frameBytes))
+            );
+
+            window.show();
+            System.out.println("Screencast window opened. Close it to exit.");
+        });
+
+        // Block main thread until the user closes the view window
         try {
-            boolean completed = completionLatch.await(10, TimeUnit.MINUTES);
-            if (!completed) {
-                System.err.println("Task did not complete within 10 minutes. Stopping...");
-                service.stopBrowser(taskId);
-            }
+            windowClosed.await();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            System.err.println("Interrupted while waiting for task.");
-            service.stopBrowser(taskId);
+            screencast.stop();
+            browser.close();
         }
 
-        // Reload task to show final state
-        System.out.println();
-        System.out.println("==========================================");
-        System.out.println("  Final State");
-        System.out.println("==========================================");
-
-        TaskEntity finalTask = taskRepository.findById(taskId).orElse(null);
-        if (finalTask != null) {
-            System.out.println("  Status:  " + finalTask.status());
-            System.out.println("  Log:     " + (finalTask.hasLogMessage() ? finalTask.logMessage() : "(none)"));
-        }
-
-        ProfileEntity finalProfile = profileRepository.findById(task.profileId()).orElse(null);
-        if (finalProfile != null) {
-            System.out.println("  Notes:   " + (finalProfile.notes() != null ? finalProfile.notes() : "(none)"));
-        }
-
-        System.out.println();
+        Platform.exit();
         System.out.println("Done. Goodbye!");
-
-        service.shutdown();
     }
 
     /**

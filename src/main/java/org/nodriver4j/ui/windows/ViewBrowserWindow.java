@@ -18,12 +18,11 @@ import java.io.ByteArrayInputStream;
  * headed. The user cannot interact with the page — they can only observe and
  * close the window.</p>
  *
- * <h2>Aspect Ratio Enforcement</h2>
- * <p>The window's aspect ratio is locked to match the screencast output. The
- * ratio is determined by the <b>first frame</b> received via {@link #updateFrame(byte[])}.
- * During resize, listeners on the stage's width and height properties enforce
- * the ratio by adjusting the opposite dimension. A guard flag prevents recursive
- * listener invocations.</p>
+ * <h2>Resizing</h2>
+ * <p>The window uses standard OS resize behavior. The {@link ImageView} has
+ * {@code preserveRatio} enabled, so the displayed image scales to fit the
+ * window without distortion. Black bars appear if the window proportions
+ * differ from the frame proportions.</p>
  *
  * <h2>Window Behavior</h2>
  * <ul>
@@ -94,39 +93,6 @@ public class ViewBrowserWindow {
     private final Stage stage;
     private final ImageView imageView;
 
-    // ==================== Aspect Ratio State ====================
-
-    /**
-     * The locked aspect ratio (width / height) of the <b>content area</b>.
-     * Set from the first received frame. Zero until the first frame arrives.
-     */
-    private double aspectRatio;
-
-    /**
-     * Whether the aspect ratio has been determined from the first frame.
-     */
-    private boolean aspectRatioLocked;
-
-    /**
-     * Horizontal inset: the difference between stage width and scene (content) width.
-     * Accounts for window border decorations on the left and right.
-     */
-    private double insetH;
-
-    /**
-     * Vertical inset: the difference between stage height and scene (content) height.
-     * Accounts for the title bar and any bottom border.
-     */
-    private double insetV;
-
-    /**
-     * Guard flag to prevent recursive listener invocations during resize.
-     *
-     * <p>When a width change triggers a height adjustment, the height listener
-     * would fire and try to adjust width again. This flag breaks the cycle.</p>
-     */
-    private boolean adjusting;
-
     // ==================== Callbacks ====================
 
     private Runnable onClose;
@@ -173,9 +139,6 @@ public class ViewBrowserWindow {
                 onClose.run();
             }
         });
-
-        // Aspect ratio enforcement listeners
-        attachResizeListeners();
     }
 
     // ==================== Public API ====================
@@ -204,8 +167,8 @@ public class ViewBrowserWindow {
      * Updates the displayed frame.
      *
      * <p>Converts the raw image bytes to a JavaFX {@link Image} and displays
-     * it in the image view. On the first frame, the aspect ratio is locked
-     * based on the image dimensions.</p>
+     * it in the image view. The image scales to fit the window while
+     * preserving its aspect ratio (via {@code ImageView.preserveRatio}).</p>
      *
      * <p><b>Must be called on the JavaFX Application Thread.</b></p>
      *
@@ -215,15 +178,7 @@ public class ViewBrowserWindow {
         if (imageBytes == null || imageBytes.length == 0) {
             return;
         }
-
-        Image image = new Image(new ByteArrayInputStream(imageBytes));
-
-        // Lock aspect ratio from the first valid frame
-        if (!aspectRatioLocked && image.getWidth() > 0 && image.getHeight() > 0) {
-            lockAspectRatio(image.getWidth(), image.getHeight());
-        }
-
-        imageView.setImage(image);
+        imageView.setImage(new Image(new ByteArrayInputStream(imageBytes)));
     }
 
     /**
@@ -248,89 +203,4 @@ public class ViewBrowserWindow {
         return stage.isShowing();
     }
 
-    // ==================== Aspect Ratio Enforcement ====================
-
-    /**
-     * Locks the aspect ratio based on the first frame's dimensions.
-     *
-     * <p>After this is called, all resize operations will maintain this
-     * aspect ratio on the <b>content area</b>. Window decoration insets
-     * (title bar, borders) are computed once and factored into all
-     * subsequent resize calculations.</p>
-     *
-     * @param frameWidth  the frame width in pixels
-     * @param frameHeight the frame height in pixels
-     */
-    private void lockAspectRatio(double frameWidth, double frameHeight) {
-        aspectRatio = frameWidth / frameHeight;
-
-        // Compute window decoration insets (title bar + borders).
-        // These are the differences between stage size and scene (content) size.
-        insetH = stage.getWidth() - stage.getScene().getWidth();
-        insetV = stage.getHeight() - stage.getScene().getHeight();
-
-        aspectRatioLocked = true;
-
-        // Adjust minimum dimensions to respect the aspect ratio.
-        // Minimums apply to content area, then add insets for stage minimums.
-        double minContentW = MIN_WIDTH;
-        double minContentH = MIN_WIDTH / aspectRatio;
-        if (minContentH < MIN_HEIGHT) {
-            minContentH = MIN_HEIGHT;
-            minContentW = MIN_HEIGHT * aspectRatio;
-        }
-        stage.setMinWidth(minContentW + insetH);
-        stage.setMinHeight(minContentH + insetV);
-
-        // Snap current window size to the aspect ratio
-        adjusting = true;
-        double contentWidth = stage.getWidth() - insetH;
-        stage.setHeight(contentWidth / aspectRatio + insetV);
-        adjusting = false;
-
-        System.out.println("[ViewBrowserWindow] Aspect ratio locked: " +
-                String.format("%.4f", aspectRatio) +
-                " (frame: " + (int) frameWidth + "×" + (int) frameHeight +
-                ", insets: " + (int) insetH + "×" + (int) insetV + ")");
-    }
-
-    /**
-     * Attaches resize listeners that enforce the locked aspect ratio on
-     * the <b>content area</b> (excluding window decoration insets).
-     *
-     * <p>Two listeners are registered:</p>
-     * <ul>
-     *   <li><b>Width listener:</b> When stage width changes, computes the
-     *       content width (stage width − horizontal inset), then sets
-     *       stage height to {@code (contentWidth / aspectRatio) + verticalInset}</li>
-     *   <li><b>Height listener:</b> When stage height changes, computes the
-     *       content height (stage height − vertical inset), then sets
-     *       stage width to {@code (contentHeight × aspectRatio) + horizontalInset}</li>
-     * </ul>
-     *
-     * <p>The {@code adjusting} guard flag prevents recursive invocations.
-     * Whichever listener fires first adjusts the other dimension, and the
-     * resulting change is ignored by the second listener.</p>
-     */
-    private void attachResizeListeners() {
-        stage.widthProperty().addListener((obs, oldVal, newVal) -> {
-            if (!aspectRatioLocked || adjusting) {
-                return;
-            }
-            adjusting = true;
-            double contentWidth = newVal.doubleValue() - insetH;
-            stage.setHeight(contentWidth / aspectRatio + insetV);
-            adjusting = false;
-        });
-
-        stage.heightProperty().addListener((obs, oldVal, newVal) -> {
-            if (!aspectRatioLocked || adjusting) {
-                return;
-            }
-            adjusting = true;
-            double contentHeight = newVal.doubleValue() - insetV;
-            stage.setWidth(contentHeight * aspectRatio + insetH);
-            adjusting = false;
-        });
-    }
 }
