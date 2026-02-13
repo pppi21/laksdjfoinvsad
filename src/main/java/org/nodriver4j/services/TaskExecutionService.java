@@ -269,7 +269,7 @@ public class TaskExecutionService {
 
             // Launch headless browser
             logger.log("Launching browser...");
-            Browser browser = launchBrowser(taskId, false, TaskEntity.STATUS_RUNNING);
+            Browser browser = launchBrowser(taskId, true, TaskEntity.STATUS_RUNNING);
             notifyStatusChange(onStatusChange, TaskEntity.STATUS_RUNNING);
 
             // Check for interruption after browser launch (user may have
