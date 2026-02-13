@@ -14,6 +14,7 @@ import org.nodriver4j.persistence.repository.TaskGroupRepository;
 import org.nodriver4j.persistence.repository.TaskRepository;
 import org.nodriver4j.scripts.AutomationScript;
 import org.nodriver4j.scripts.ScriptRegistry;
+import org.nodriver4j.ui.windows.ViewBrowserWindow;
 
 import java.io.IOException;
 import java.nio.file.Path;

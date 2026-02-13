@@ -1,5 +1,6 @@
 package org.nodriver4j.ui.controllers;
 
+import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.fxml.Initializable;
 import javafx.scene.control.Alert;
@@ -7,15 +8,19 @@ import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.layout.VBox;
+import org.nodriver4j.core.Browser;
 import org.nodriver4j.persistence.Database;
 import org.nodriver4j.persistence.entity.ProfileEntity;
 import org.nodriver4j.persistence.entity.ProxyEntity;
 import org.nodriver4j.persistence.entity.TaskEntity;
 import org.nodriver4j.persistence.entity.TaskGroupEntity;
 import org.nodriver4j.persistence.repository.*;
+import org.nodriver4j.services.ScreencastService;
+import org.nodriver4j.services.TaskExecutionService;
 import org.nodriver4j.ui.components.TaskRow;
 import org.nodriver4j.ui.dialogs.CreateTaskDialog;
 import org.nodriver4j.ui.dialogs.EditTaskDialog;
+import org.nodriver4j.ui.windows.ViewBrowserWindow;
 
 import java.net.URL;
 import java.util.*;
@@ -116,6 +121,12 @@ public class TaskGroupDetailController implements Initializable {
      */
     private final List<TaskRow> taskRows = new ArrayList<>();
 
+    /**
+     * Active screencast sessions mapped by task ID.
+     * Each entry represents an open view browser window streaming from a running task.
+     */
+    private final Map<Long, ScreencastSession> screencastSessions = new HashMap<>();
+
     // ==================== Callbacks ====================
 
     /**
@@ -140,14 +151,48 @@ public class TaskGroupDetailController implements Initializable {
                 row.setLogText(String.format("Starting task #%d", id), TaskEntity.LOG_SUCCESS));
                 //System.out.println("[TaskGroupDetailController] Start task #" + taskId));
 
-        row.setOnStop(taskId ->
-                System.out.println("[TaskGroupDetailController] Stop task #" + taskId));
+        row.setOnStop(taskId -> {
+            System.out.println("[TaskGroupDetailController] Stop task #" + taskId);
+            closeScreencastSession(taskId);
+            // TODO: Stop browser via TaskExecutionService and update row status
+        });
 
-        row.setOnOpenViewBrowser(taskId ->
-                System.out.println("[TaskGroupDetailController] Open view browser — Task #" + taskId));
+        row.setOnOpenViewBrowser(taskId -> {
+            System.out.println("[TaskGroupDetailController] Open view browser — Task #" + taskId);
 
-        row.setOnCloseViewBrowser(taskId ->
-                System.out.println("[TaskGroupDetailController] Close view browser — Task #" + taskId));
+            Browser browser = TaskExecutionService.instance().browser(taskId);
+            if (browser == null || !browser.isOpen()) {
+                System.err.println("[TaskGroupDetailController] No active browser for task " + taskId);
+                return;
+            }
+
+            // Create screencast service and view window
+            ScreencastService service = new ScreencastService(browser.cdpClient());
+            ViewBrowserWindow window = new ViewBrowserWindow("View Browser — Task #" + taskId);
+
+            // Wire window close (user clicks X) to clean up
+            window.setOnClose(() -> {
+                closeScreencastSession(taskId);
+                findTaskRow(taskId).ifPresent(r -> r.setViewBrowserActive(false));
+            });
+
+            // Track the session before starting
+            screencastSessions.put(taskId, new ScreencastSession(service, window));
+
+            // Start streaming — frames arrive on WebSocket thread, marshal to FX thread
+            service.start(frameBytes ->
+                    Platform.runLater(() -> window.updateFrame(frameBytes))
+            );
+
+            window.show();
+            row.setViewBrowserActive(true);
+        });
+
+        row.setOnCloseViewBrowser(taskId -> {
+            System.out.println("[TaskGroupDetailController] Close view browser — Task #" + taskId);
+            closeScreencastSession(taskId);
+            row.setViewBrowserActive(false);
+        });
 
         row.setOnOpenManualBrowser(taskId ->
                 System.out.println("[TaskGroupDetailController] Open manual browser — Task #" + taskId));
@@ -606,6 +651,35 @@ public class TaskGroupDetailController implements Initializable {
         // TODO: Open proxy group selection dialog and reassign proxies
     }
 
+    /**
+     * Closes and cleans up a screencast session for a task.
+     *
+     * <p>Stops the screencast service and closes the view window.
+     * Safe to call even if no session exists for the given task.</p>
+     *
+     * @param taskId the task ID
+     */
+    private void closeScreencastSession(long taskId) {
+        ScreencastSession session = screencastSessions.remove(taskId);
+        if (session == null) {
+            return;
+        }
+
+        try {
+            session.service().stop();
+        } catch (Exception e) {
+            System.err.println("[TaskGroupDetailController] Error stopping screencast for task "
+                    + taskId + ": " + e.getMessage());
+        }
+
+        try {
+            session.window().close();
+        } catch (Exception e) {
+            System.err.println("[TaskGroupDetailController] Error closing view window for task "
+                    + taskId + ": " + e.getMessage());
+        }
+    }
+
     // ==================== View State Management ====================
 
     /**
@@ -628,6 +702,11 @@ public class TaskGroupDetailController implements Initializable {
      * clean state before populating with new data.</p>
      */
     private void clearPage() {
+        // Close all active screencast sessions
+        for (long taskId : new ArrayList<>(screencastSessions.keySet())) {
+            closeScreencastSession(taskId);
+        }
+
         taskRows.clear();
         taskListContainer.getChildren().clear();
 
@@ -719,4 +798,11 @@ public class TaskGroupDetailController implements Initializable {
                 .filter(row -> row.taskId() == taskId)
                 .findFirst();
     }
+
+
+    /**
+     * Bundles the screencast service and view window for an active session.
+     * Used to track and clean up view browser sessions per task.
+     */
+    private record ScreencastSession(ScreencastService service, ViewBrowserWindow window) {}
 }
