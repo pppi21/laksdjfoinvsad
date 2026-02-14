@@ -250,8 +250,6 @@ public class ProfileGroupDetailController implements Initializable {
             Optional<String> updatedNotes = ProfileDetailDialog.show(
                     backButton.getScene().getWindow(), profile);
             updatedNotes.ifPresent(notes -> saveProfileNotes(profile, notes));
-            System.out.println("[ProfileGroupDetailController] Detail dialog not yet implemented for: "
-                    + profile.displayName());
 
         } catch (Database.DatabaseException e) {
             System.err.println("[ProfileGroupDetailController] Failed to load profile: "

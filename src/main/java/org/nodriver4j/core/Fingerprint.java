@@ -22,7 +22,7 @@ import java.util.regex.Pattern;
  */
 public class Fingerprint {
 
-    private static final String PROFILES_RESOURCE_PATH = "C:\\Users\\leofo\\Documents\\NoDriver4j\\data\\fingerprints.jsonl";
+    private static final String PROFILES_RESOURCE_PATH = System.getenv("fingerprint_profiles");
     private static final Gson GSON = new Gson();
     private static final Random RANDOM = new Random();
 
