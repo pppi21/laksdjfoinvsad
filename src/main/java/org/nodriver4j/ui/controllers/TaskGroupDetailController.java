@@ -138,24 +138,25 @@ public class TaskGroupDetailController implements Initializable {
     /**
      * Wires all action button callbacks on a TaskRow.
      *
-     * <p>All callbacks are stubs for now — they log the action and task ID.
-     * Execution logic will be wired in a future stage when the service
-     * layer is implemented.</p>
+     * <p>Lifecycle callbacks (start, stop, manual browser) delegate to
+     * helper methods that coordinate with {@link TaskExecutionService}.
+     * View browser callbacks manage screencast sessions directly.
+     * Clone, edit, and delete callbacks are wired in Stage 4B.</p>
      *
      * @param row the task row to wire
      */
     private void wireRowCallbacks(TaskRow row) {
         long id = row.taskId();
 
-        row.setOnStart(taskId ->
-                row.setLogText(String.format("Starting task #%d", id), TaskEntity.LOG_SUCCESS));
-                //System.out.println("[TaskGroupDetailController] Start task #" + taskId));
+        // ---- Lifecycle callbacks (Stage 4A) ----
 
-        row.setOnStop(taskId -> {
-            System.out.println("[TaskGroupDetailController] Stop task #" + taskId);
-            closeScreencastSession(taskId);
-            // TODO: Stop browser via TaskExecutionService and update row status
-        });
+        row.setOnStart(taskId -> requestStart(row));
+
+        row.setOnStop(taskId -> requestStop(row));
+
+        row.setOnOpenManualBrowser(taskId -> openManualBrowser(row));
+
+        // ---- View browser callbacks (already functional) ----
 
         row.setOnOpenViewBrowser(taskId -> {
             System.out.println("[TaskGroupDetailController] Open view browser — Task #" + taskId);
@@ -194,15 +195,11 @@ public class TaskGroupDetailController implements Initializable {
             row.setViewBrowserActive(false);
         });
 
-        row.setOnOpenManualBrowser(taskId ->
-                System.out.println("[TaskGroupDetailController] Open manual browser — Task #" + taskId));
-
-        row.setOnCloseManualBrowser(taskId ->
-                System.out.println("[TaskGroupDetailController] Close manual browser — Task #" + taskId));
+        // ---- Data callbacks (Stage 4B stubs) ----
 
         row.setOnClone(taskId -> {
             System.out.println("[TaskGroupDetailController] Clone task #" + taskId);
-            // TODO: Duplicate task entity and append new row
+            // TODO: Stage 4B — duplicate task entity and append new row
         });
 
         row.setOnEdit(taskId -> {
@@ -278,8 +275,104 @@ public class TaskGroupDetailController implements Initializable {
 
         row.setOnDelete(taskId -> {
             System.out.println("[TaskGroupDetailController] Delete task #" + taskId);
-            // TODO: Delete from DB, remove userdata, remove row from list
+            // TODO: Stage 4B — delete from DB, remove userdata, remove row
         });
+    }
+
+    // ==================== Task Lifecycle Helpers ====================
+
+    /**
+     * Requests a scripted task start for the given row.
+     *
+     * <p>Sets the row to a transitional "STARTING..." state immediately, then
+     * calls {@link TaskExecutionService#startTask(long, java.util.function.BiConsumer,
+     * java.util.function.Consumer)} which spawns its own daemon thread and returns
+     * immediately. Log and status callbacks are wrapped with {@code Platform.runLater}
+     * to marshal updates back to the FX thread.</p>
+     *
+     * <p>If the service rejects the start (e.g., task already active, service
+     * shutdown, missing settings), the row is set to FAILED with an error log.</p>
+     *
+     * @param row the task row to start
+     */
+    private void requestStart(TaskRow row) {
+        long taskId = row.taskId();
+        row.setStatus("STARTING...");
+
+        try {
+            TaskExecutionService.instance().startTask(taskId,
+                    // Log callback — invoked on script thread, marshalled to FX
+                    (msg, color) -> Platform.runLater(() -> row.setLogText(msg, color)),
+                    // Status callback — invoked on script thread, marshalled to FX
+                    status -> Platform.runLater(() -> row.setStatus(status))
+            );
+        } catch (IllegalStateException e) {
+            System.err.println("[TaskGroupDetailController] Failed to start task #"
+                    + taskId + ": " + e.getMessage());
+            row.setStatus(TaskEntity.STATUS_FAILED);
+            row.setLogText("Failed to start: " + e.getMessage(), TaskEntity.LOG_ERROR);
+        }
+    }
+
+    /**
+     * Requests a task stop for the given row (handles both RUNNING and MANUAL).
+     *
+     * <p>Closes any active screencast session on the FX thread first, then
+     * calls {@link TaskExecutionService#stopBrowser(long)} on a background
+     * thread since it may block briefly while terminating the Chrome process.
+     * The row status is set to STOPPED on the FX thread after the browser
+     * is closed.</p>
+     *
+     * <p>For RUNNING tasks that were started via {@link #requestStart(TaskRow)},
+     * the script thread's status callback will also fire STOPPED. The duplicate
+     * UI update is harmless.</p>
+     *
+     * @param row the task row to stop
+     */
+    private void requestStop(TaskRow row) {
+        long taskId = row.taskId();
+
+        // Close screencast on FX thread (window.close() requires FX thread)
+        closeScreencastSession(taskId);
+
+        Thread thread = new Thread(() -> {
+            TaskExecutionService.instance().stopBrowser(taskId);
+            Platform.runLater(() -> row.setStatus(TaskEntity.STATUS_STOPPED));
+        }, "Stop-" + taskId);
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    /**
+     * Opens a manual (headed) browser session for the given row.
+     *
+     * <p>Sets the row to a transitional "STARTING..." state immediately, then
+     * launches the browser on a background thread since
+     * {@link TaskExecutionService#startManualBrowser(long)} blocks until the
+     * browser is fully initialized. On success the row transitions to MANUAL;
+     * on failure it transitions to FAILED with an error log.</p>
+     *
+     * @param row the task row to open a manual browser for
+     */
+    private void openManualBrowser(TaskRow row) {
+        long taskId = row.taskId();
+        row.setStatus("STARTING...");
+
+        Thread thread = new Thread(() -> {
+            try {
+                TaskExecutionService.instance().startManualBrowser(taskId);
+                Platform.runLater(() -> row.setStatus(TaskEntity.STATUS_MANUAL));
+            } catch (Exception e) {
+                System.err.println("[TaskGroupDetailController] Manual browser failed for task #"
+                        + taskId + ": " + e.getMessage());
+                Platform.runLater(() -> {
+                    row.setStatus(TaskEntity.STATUS_FAILED);
+                    row.setLogText("Manual browser failed: " + e.getMessage(), TaskEntity.LOG_ERROR);
+                });
+            }
+        }, "Manual-" + taskId);
+        thread.setDaemon(true);
+        thread.start();
     }
 
     // ==================== Initialization ====================
@@ -636,13 +729,28 @@ public class TaskGroupDetailController implements Initializable {
     @FXML
     private void onStartAllClicked() {
         System.out.println("[TaskGroupDetailController] Start All clicked for group " + currentGroupId);
-        // TODO: Iterate taskRows and start each task via service layer
+
+        TaskExecutionService service = TaskExecutionService.instance();
+
+        for (TaskRow row : taskRows) {
+            if (service.isActive(row.taskId())) {
+                continue; // Skip tasks that already have a browser or script thread
+            }
+            requestStart(row);
+        }
     }
 
     @FXML
     private void onStopAllClicked() {
         System.out.println("[TaskGroupDetailController] Stop All clicked for group " + currentGroupId);
-        // TODO: Iterate taskRows and stop each running task via service layer
+
+        TaskExecutionService service = TaskExecutionService.instance();
+
+        for (TaskRow row : taskRows) {
+            if (service.isActive(row.taskId())) {
+                requestStop(row);
+            }
+        }
     }
 
     @FXML

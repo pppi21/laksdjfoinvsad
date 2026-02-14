@@ -21,40 +21,44 @@ import java.util.function.Consumer;
  * A full-width row component that displays a single task's information
  * and action buttons.
  *
- * <p>Each row shows task info on the left (name, status, log) and
+ * <p>Each row shows task info on the left (name, status, proxy, log) and
  * action buttons on the right. Button order (left to right):
  * Start/Stop, View/Manual Browser, Clone, Edit, Delete.</p>
  *
- * <h2>Button Behavior</h2>
+ * <h2>Button State Table</h2>
  * <table>
- *   <tr><th>Button</th><th>Idle</th><th>Running</th><th>Finished</th></tr>
- *   <tr><td>Start/Stop</td><td>PLAY</td><td>STOP</td><td>PLAY</td></tr>
- *   <tr><td>Browser slot</td><td>CHROME (manual)</td><td>EYE (view)</td><td>CHROME (manual)</td></tr>
- *   <tr><td>Clone</td><td>enabled</td><td>enabled</td><td>enabled</td></tr>
- *   <tr><td>Edit</td><td>enabled</td><td>disabled</td><td>enabled</td></tr>
- *   <tr><td>Delete</td><td>enabled</td><td>disabled</td><td>enabled</td></tr>
+ *   <tr><th>Button</th><th>IDLE</th><th>STARTING</th><th>RUNNING</th><th>MANUAL</th><th>COMPLETED</th><th>FAILED</th><th>STOPPED</th></tr>
+ *   <tr><td>Start/Stop</td><td>PLAY</td><td>disabled</td><td>STOP</td><td>STOP</td><td>PLAY</td><td>PLAY</td><td>PLAY</td></tr>
+ *   <tr><td>View Browser</td><td>hidden</td><td>hidden</td><td>EYE</td><td>hidden</td><td>hidden</td><td>hidden</td><td>hidden</td></tr>
+ *   <tr><td>Manual Browser</td><td>CHROME</td><td>disabled</td><td>hidden</td><td>disabled</td><td>CHROME</td><td>CHROME</td><td>CHROME</td></tr>
+ *   <tr><td>Clone</td><td>enabled</td><td>enabled</td><td>enabled</td><td>enabled</td><td>enabled</td><td>enabled</td><td>enabled</td></tr>
+ *   <tr><td>Edit</td><td>enabled</td><td>disabled</td><td>disabled</td><td>disabled</td><td>enabled</td><td>enabled</td><td>enabled</td></tr>
+ *   <tr><td>Delete</td><td>enabled</td><td>disabled</td><td>disabled</td><td>disabled</td><td>enabled</td><td>enabled</td><td>enabled</td></tr>
  * </table>
  *
- * <p>The browser slot is a shared space: when the task is running,
- * the View Browser button (eye icon) is shown; when not running,
- * the Manual Browser button (Chrome icon) is shown instead.</p>
+ * <h2>Browser Slot</h2>
+ * <p>The View Browser and Manual Browser buttons share a single physical slot.
+ * View Browser (eye icon) is visible only while running. Manual Browser (Chrome
+ * icon) is visible at all other times — enabled when startable, disabled when
+ * in MANUAL or STARTING state. Manual sessions are closed via the Stop button
+ * (slot 1), not by re-clicking the Chrome icon.</p>
  *
  * <h2>Delete Confirmation</h2>
- * <p>Clicking the trash icon reveals inline "Yes" / "No" buttons.
- * The delete area has a fixed width to prevent layout shifts.</p>
+ * <p>Clicking the trash icon reveals inline "Yes" / "No" buttons. The delete
+ * area has a fixed width (90px) to prevent layout shifts. The confirmation is
+ * automatically collapsed when the task enters a non-modifiable state.</p>
  *
  * <h2>Test Mode</h2>
- * <p>When no callback is wired for a button, clicking it will
- * auto-toggle the visual state so the UI can be verified without
- * a controller. Once callbacks are set, state management is
- * deferred to the controller.</p>
+ * <p>When no callback is wired for a button, clicking it auto-toggles the
+ * visual state so the UI can be verified without a controller. Once callbacks
+ * are set, state management is deferred to the controller.</p>
  *
  * <h2>Responsibilities</h2>
  * <ul>
- *   <li>Render 6 action buttons with FontAwesome5 icons</li>
- *   <li>Toggle icons based on state (play↔stop, eye↔eye_slash, chrome↔stop)</li>
+ *   <li>Render info labels and 5 action buttons with FontAwesome5 icons</li>
+ *   <li>Toggle icons based on state (play↔stop, eye↔eye_slash)</li>
  *   <li>Inline delete confirmation flow</li>
- *   <li>Disable/hide buttons based on task status</li>
+ *   <li>Disable/hide buttons per the state table above</li>
  *   <li>Hold {@code Consumer<Long>} callbacks — invoke them, define no behavior</li>
  * </ul>
  *
@@ -98,7 +102,13 @@ public class TaskRow extends HBox {
             TaskEntity.LOG_ERROR, TaskEntity.LOG_SUCCESS
     );
 
+    // ==================== Status Style Classes ====================
 
+    private static final List<String> STATUS_STYLE_CLASSES = List.of(
+            "status-idle", "status-running", "status-completed",
+            "status-failed", "status-stopped", "status-manual",
+            "status-starting"
+    );
 
     // ==================== UI Components — Info ====================
 
@@ -126,7 +136,6 @@ public class TaskRow extends HBox {
     private final FontIcon eyeIcon;
     private final FontIcon eyeSlashIcon;
     private final FontIcon chromeIcon;
-    private final FontIcon manualStopIcon;
 
     // ==================== Data ====================
 
@@ -136,9 +145,14 @@ public class TaskRow extends HBox {
 
     // ==================== Button State ====================
 
+    /** True when the task status is RUNNING. */
     private boolean running;
+
+    /** True when the task status is MANUAL (headed browser, no script). */
+    private boolean manualMode;
+
+    /** True when the view browser window is currently open. */
     private boolean viewBrowserActive;
-    private boolean manualBrowserActive;
 
     // ==================== Callbacks ====================
 
@@ -147,7 +161,6 @@ public class TaskRow extends HBox {
     private Consumer<Long> onOpenViewBrowser;
     private Consumer<Long> onCloseViewBrowser;
     private Consumer<Long> onOpenManualBrowser;
-    private Consumer<Long> onCloseManualBrowser;
     private Consumer<Long> onClone;
     private Consumer<Long> onEdit;
     private Consumer<Long> onDelete;
@@ -165,7 +178,8 @@ public class TaskRow extends HBox {
         this.taskId = taskId;
         this.taskName = taskName;
         this.statusText = statusText;
-        this.running = "RUNNING".equals(statusText);
+        this.running = TaskEntity.STATUS_RUNNING.equals(statusText);
+        this.manualMode = TaskEntity.STATUS_MANUAL.equals(statusText);
 
         // Row styling — CENTER aligns children vertically
         getStyleClass().add("task-row");
@@ -173,10 +187,10 @@ public class TaskRow extends HBox {
         setMaxWidth(Double.MAX_VALUE);
 
         // ---- Left side: info ----
-        nameLabel  = createLabel(taskName, "task-row-name");
+        nameLabel   = createLabel(taskName, "task-row-name");
         statusLabel = createLabel(statusText, "task-row-status");
-        proxyLabel = createLabel("", "task-row-proxy");
-        logLabel   = createLabel("", "task-row-log");
+        proxyLabel  = createLabel("", "task-row-proxy");
+        logLabel    = createLabel("", "task-row-log");
         nameLabel.setMaxWidth(Double.MAX_VALUE);
         logLabel.setMaxWidth(Double.MAX_VALUE);
 
@@ -185,17 +199,15 @@ public class TaskRow extends HBox {
         infoBox.getChildren().addAll(nameLabel, statusLabel, proxyLabel, logLabel);
         HBox.setHgrow(infoBox, Priority.ALWAYS);
 
-
         // ---- Create swappable icons ----
-        playIcon       = createIcon(FontAwesomeSolid.PLAY,      COLOR_START);
-        stopIcon       = createIcon(FontAwesomeSolid.STOP,      COLOR_STOP);
-        eyeIcon        = createIcon(FontAwesomeSolid.EYE,       COLOR_VIEW);
-        eyeSlashIcon   = createIcon(FontAwesomeSolid.EYE_SLASH, COLOR_VIEW);
-        chromeIcon     = createIcon(FontAwesomeBrands.CHROME,    COLOR_MANUAL);
-        manualStopIcon = createIcon(FontAwesomeSolid.STOP,      COLOR_STOP);
+        playIcon     = createIcon(FontAwesomeSolid.PLAY,      COLOR_START);
+        stopIcon     = createIcon(FontAwesomeSolid.STOP,      COLOR_STOP);
+        eyeIcon      = createIcon(FontAwesomeSolid.EYE,       COLOR_VIEW);
+        eyeSlashIcon = createIcon(FontAwesomeSolid.EYE_SLASH, COLOR_VIEW);
+        chromeIcon   = createIcon(FontAwesomeBrands.CHROME,   COLOR_MANUAL);
 
         // ---- 1. Start / Stop ----
-        startStopButton = createActionButton(running ? stopIcon : playIcon);
+        startStopButton = createActionButton(running || manualMode ? stopIcon : playIcon);
         startStopButton.setOnAction(e -> handleStartStop());
 
         // ---- 2. Browser slot (shared space for view + manual) ----
@@ -353,23 +365,24 @@ public class TaskRow extends HBox {
     /**
      * Handles Start/Stop toggle click.
      *
-     * <p>When no callback is wired, auto-toggles the status between
-     * RUNNING and IDLE for UI testing.</p>
+     * <p>When the task is active (running or manual), clicking triggers a stop.
+     * When the task is inactive and startable, clicking triggers a start.
+     * When no callback is wired, auto-toggles the status for UI testing.</p>
      */
     private void handleStartStop() {
-        if (running) {
+        if (running || manualMode) {
             System.out.println("[TaskRow] Stop clicked — Task #" + taskId);
             if (onStop != null) {
                 onStop.accept(taskId);
             } else {
-                setStatus("IDLE");
+                setStatus(TaskEntity.STATUS_IDLE);
             }
-        } else {
+        } else if (isStartableStatus()) {
             System.out.println("[TaskRow] Start clicked — Task #" + taskId);
             if (onStart != null) {
                 onStart.accept(taskId);
             } else {
-                setStatus("RUNNING");
+                setStatus(TaskEntity.STATUS_RUNNING);
             }
         }
     }
@@ -399,27 +412,43 @@ public class TaskRow extends HBox {
     }
 
     /**
-     * Handles Manual Browser toggle click (visible only while not running).
+     * Handles Manual Browser click (visible while not running).
      *
-     * <p>Toggles between Chrome (open browser) and stop (close browser).
-     * Auto-toggles when no callback is wired.</p>
+     * <p>Opens a manual browser session. This is open-only — closing a manual
+     * session is done via the Stop button ({@link #handleStartStop()}).
+     * Auto-sets MANUAL status when no callback is wired (test mode).</p>
      */
     private void handleManualBrowser() {
-        if (manualBrowserActive) {
-            System.out.println("[TaskRow] Close manual browser — Task #" + taskId);
-            if (onCloseManualBrowser != null) {
-                onCloseManualBrowser.accept(taskId);
-            } else {
-                setManualBrowserActive(false);
-            }
-        } else {
-            System.out.println("[TaskRow] Open manual browser — Task #" + taskId);
-            if (onOpenManualBrowser != null) {
-                onOpenManualBrowser.accept(taskId);
-            } else {
-                setManualBrowserActive(true);
-            }
+        if (!isStartableStatus()) {
+            return; // Guard — button should be disabled, but defensive
         }
+
+        System.out.println("[TaskRow] Open manual browser — Task #" + taskId);
+        if (onOpenManualBrowser != null) {
+            onOpenManualBrowser.accept(taskId);
+        } else {
+            setStatus(TaskEntity.STATUS_MANUAL);
+        }
+    }
+
+    // ==================== Status Helpers ====================
+
+    /**
+     * Checks if the current status allows starting a task or modifying it.
+     *
+     * <p>A task is startable when it is in a terminal or idle state.
+     * Transitional states (STARTING, RUNNING, MANUAL) are not startable.</p>
+     *
+     * @return true if the task can be started or edited
+     */
+    private boolean isStartableStatus() {
+        return switch (statusText != null ? statusText : "") {
+            case TaskEntity.STATUS_IDLE,
+                 TaskEntity.STATUS_COMPLETED,
+                 TaskEntity.STATUS_FAILED,
+                 TaskEntity.STATUS_STOPPED -> true;
+            default -> false;
+        };
     }
 
     // ==================== Status Styling ====================
@@ -430,17 +459,16 @@ public class TaskRow extends HBox {
      * @param status the status string
      */
     private void applyStatusStyle(String status) {
-        statusLabel.getStyleClass().removeAll(
-                "status-idle", "status-running", "status-completed",
-                "status-failed", "status-stopped"
-        );
+        statusLabel.getStyleClass().removeAll(STATUS_STYLE_CLASSES);
 
         String styleClass = switch (status != null ? status : "") {
-            case "RUNNING"   -> "status-running";
-            case "COMPLETED" -> "status-completed";
-            case "FAILED"    -> "status-failed";
-            case "STOPPED"   -> "status-stopped";
-            default          -> "status-idle";
+            case "RUNNING"     -> "status-running";
+            case "COMPLETED"   -> "status-completed";
+            case "FAILED"      -> "status-failed";
+            case "STOPPED"     -> "status-stopped";
+            case "MANUAL"      -> "status-manual";
+            case "STARTING..." -> "status-starting";
+            default            -> "status-idle";
         };
 
         statusLabel.getStyleClass().add(styleClass);
@@ -449,31 +477,53 @@ public class TaskRow extends HBox {
     // ==================== Button State Management ====================
 
     /**
-     * Updates all button states based on the current {@code running} flag.
+     * Updates all button states based on the current status.
      *
-     * <p>Controls icon swaps, visibility toggling for the browser slot,
-     * and disabled states for Edit and Delete.</p>
+     * <p>Uses two derived flags:
+     * <ul>
+     *   <li>{@code active} — the task has a browser session (running or manual)</li>
+     *   <li>{@code startable} — the task can be started or modified
+     *       (idle, completed, failed, stopped)</li>
+     * </ul>
+     *
+     * <p>This covers all states including the transitional STARTING state,
+     * where the task is neither active nor startable — all buttons that
+     * launch or modify are disabled.</p>
      */
     private void updateButtonStates() {
-        // Start/Stop icon swap
-        startStopButton.setGraphic(running ? stopIcon : playIcon);
+        boolean active = running || manualMode;
+        boolean startable = isStartableStatus();
 
-        // Browser slot: view when running, manual when not
+        // ---- 1. Start / Stop ----
+        // Active → stop icon. Otherwise → play icon.
+        // Disabled during transitional states (not active AND not startable, e.g. STARTING).
+        startStopButton.setGraphic(active ? stopIcon : playIcon);
+        startStopButton.setDisable(!active && !startable);
+
+        // ---- 2. Browser slot ----
+        // View browser: only visible while running
         viewBrowserButton.setVisible(running);
         viewBrowserButton.setManaged(running);
+        viewBrowserButton.setGraphic(viewBrowserActive ? eyeSlashIcon : eyeIcon);
+
+        // Manual browser: visible when not running, disabled when not startable
+        // (covers MANUAL state where Chrome icon stays visible but greyed out,
+        //  and STARTING state where it's also disabled)
         manualBrowserButton.setVisible(!running);
         manualBrowserButton.setManaged(!running);
+        manualBrowserButton.setDisable(!startable);
 
-        // Refresh browser icon states
-        viewBrowserButton.setGraphic(viewBrowserActive ? eyeSlashIcon : eyeIcon);
-        manualBrowserButton.setGraphic(manualBrowserActive ? manualStopIcon : chromeIcon);
+        // ---- 3. Clone — always enabled ----
+        // Cloning a running task doesn't clone the running state
 
-        // Disable edit and delete while running
-        editButton.setDisable(running);
-        deleteButton.setDisable(running);
+        // ---- 4. Edit — disabled when not startable ----
+        editButton.setDisable(!startable);
 
-        // Collapse any open delete confirmation when task starts running
-        if (running) {
+        // ---- 5. Delete — disabled when not startable ----
+        deleteButton.setDisable(!startable);
+
+        // Collapse any open delete confirmation when task becomes non-modifiable
+        if (!startable) {
             hideDeleteConfirmation();
         }
     }
@@ -493,29 +543,28 @@ public class TaskRow extends HBox {
     /**
      * Updates the status display, applies styling, and refreshes button states.
      *
-     * <p>Automatically resets browser states on transitions:
-     * view browser resets when stopping, manual browser resets when starting.</p>
+     * <p>Automatically resets browser view state when transitioning out of
+     * RUNNING (view browser closes when the task stops). Log is cleared
+     * when transitioning to IDLE.</p>
      *
      * @param status the new status string
      */
     public void setStatus(String status) {
         boolean wasRunning = this.running;
         this.statusText = status;
-        this.running = "RUNNING".equals(status);
+        this.running = TaskEntity.STATUS_RUNNING.equals(status);
+        this.manualMode = TaskEntity.STATUS_MANUAL.equals(status);
 
         statusLabel.setText(status);
         applyStatusStyle(status);
 
-        // Reset browser states on transitions
+        // Reset view browser state when leaving RUNNING
         if (wasRunning && !running) {
             this.viewBrowserActive = false;
         }
-        if (!wasRunning && running) {
-            this.manualBrowserActive = false;
-        }
 
         // Clear log when task returns to idle
-        if ("IDLE".equals(status)) {
+        if (TaskEntity.STATUS_IDLE.equals(status)) {
             clearLog();
         }
 
@@ -544,7 +593,6 @@ public class TaskRow extends HBox {
     public void setLogText(String text, String colorClass) {
         logLabel.setText(text != null ? text : "");
         applyLogStyle(colorClass);
-
     }
 
     /**
@@ -603,20 +651,6 @@ public class TaskRow extends HBox {
         viewBrowserButton.setGraphic(active ? eyeSlashIcon : eyeIcon);
     }
 
-    /**
-     * Sets the manual browser active state and updates the icon.
-     *
-     * <p>When active, shows the stop icon (close browser).
-     * When inactive, shows the Chrome icon (open browser).
-     * Only visually meaningful while the task is not running.</p>
-     *
-     * @param active true if the manual browser is open
-     */
-    public void setManualBrowserActive(boolean active) {
-        this.manualBrowserActive = active;
-        manualBrowserButton.setGraphic(active ? manualStopIcon : chromeIcon);
-    }
-
     // ==================== Callback Setters ====================
 
     /**
@@ -630,6 +664,10 @@ public class TaskRow extends HBox {
 
     /**
      * Sets the callback invoked when the Stop button is clicked.
+     *
+     * <p>This is invoked for both RUNNING and MANUAL stops. The controller
+     * can check {@link #isRunning()} or {@link #isManualMode()} to
+     * differentiate if needed.</p>
      *
      * @param callback receives the task ID
      */
@@ -661,20 +699,13 @@ public class TaskRow extends HBox {
      * Sets the callback invoked when the Manual Browser button is clicked
      * to open a headed browser session.
      *
+     * <p>Manual sessions are closed via the Stop button, not by re-clicking
+     * the Chrome icon. Use {@link #setOnStop(Consumer)} for close handling.</p>
+     *
      * @param callback receives the task ID
      */
     public void setOnOpenManualBrowser(Consumer<Long> callback) {
         this.onOpenManualBrowser = callback;
-    }
-
-    /**
-     * Sets the callback invoked when the Manual Browser button is clicked
-     * to close the headed browser session.
-     *
-     * @param callback receives the task ID
-     */
-    public void setOnCloseManualBrowser(Consumer<Long> callback) {
-        this.onCloseManualBrowser = callback;
     }
 
     /**
@@ -744,20 +775,20 @@ public class TaskRow extends HBox {
     }
 
     /**
+     * Checks if the task is currently in the MANUAL state.
+     *
+     * @return true if a manual browser session is active
+     */
+    public boolean isManualMode() {
+        return manualMode;
+    }
+
+    /**
      * Checks if the view browser window is currently active.
      *
      * @return true if the view browser is open
      */
     public boolean isViewBrowserActive() {
         return viewBrowserActive;
-    }
-
-    /**
-     * Checks if the manual browser is currently active.
-     *
-     * @return true if the manual browser is open
-     */
-    public boolean isManualBrowserActive() {
-        return manualBrowserActive;
     }
 }

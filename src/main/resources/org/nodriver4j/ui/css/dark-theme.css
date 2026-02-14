@@ -798,15 +798,6 @@
     -fx-text-fill: #0e8f00;
 }
 
-/* ==================== Task Row Log Colors ==================== */
-.log-error {
-    -fx-text-fill: #c20000;
-}
-
-.log-success {
-    -fx-text-fill: #0e8f00;
-}
-
 /* ==================== Task Row Status Colors ==================== */
 .status-idle {
     -fx-text-fill: -fx-text-muted;
@@ -826,6 +817,14 @@
 
 .status-stopped {
     -fx-text-fill: -fx-warning;
+}
+
+.status-manual {
+    -fx-text-fill: -fx-accent-light;
+}
+
+.status-starting {
+    -fx-text-fill: -fx-text-secondary;
 }
 
 /* ==================== Profile Cards (ID-card style) ==================== */
