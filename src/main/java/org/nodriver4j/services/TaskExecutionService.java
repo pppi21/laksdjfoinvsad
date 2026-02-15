@@ -17,6 +17,7 @@ import org.nodriver4j.scripts.ScriptRegistry;
 import org.nodriver4j.ui.windows.ViewBrowserWindow;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -901,5 +902,83 @@ public class TaskExecutionService {
             System.err.println("[TaskExecutionService] Failed to update status for task " +
                     taskId + " to " + status + ": " + e.getMessage());
         }
+    }
+
+    // ==================== Directory Utilities ====================
+
+    /**
+     * Attempts to delete a directory and all its contents.
+     *
+     * <p>Walks the file tree in reverse order (deepest files first) and
+     * deletes each entry. Returns false if any file could not be deleted
+     * (e.g., locked by another process).</p>
+     *
+     * @param directory the directory to delete
+     * @return true if the directory was fully deleted, false otherwise
+     */
+    public static boolean tryDeleteDirectory(Path directory) {
+        if (directory == null || !Files.exists(directory)) {
+            return true;
+        }
+
+        final boolean[] success = {true};
+
+        try {
+            Files.walk(directory)
+                    .sorted(Comparator.reverseOrder())
+                    .forEach(path -> {
+                        try {
+                            Files.delete(path);
+                        } catch (IOException e) {
+                            success[0] = false;
+                        }
+                    });
+        } catch (IOException e) {
+            return false;
+        }
+
+        return success[0];
+    }
+
+    /**
+     * Deletes a directory with retry logic to handle lingering file locks.
+     *
+     * <p>After stopping a browser, Chrome may not release file locks on the
+     * userdata directory immediately. This method retries up to 5 times with
+     * a 500ms delay between attempts.</p>
+     *
+     * <p>If the directory does not exist, this method returns immediately.
+     * If deletion fails after all retries, a warning is logged but no
+     * exception is thrown — callers should proceed with cleanup regardless.</p>
+     *
+     * @param directory the directory to delete
+     */
+    public static void deleteDirectoryWithRetry(Path directory) {
+        if (directory == null || !Files.exists(directory)) {
+            return;
+        }
+
+        final int maxRetries = 5;
+        final int retryDelayMs = 500;
+
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            if (tryDeleteDirectory(directory)) {
+                System.out.println("[TaskExecutionService] Deleted directory: " + directory);
+                return;
+            }
+
+            if (attempt < maxRetries) {
+                try {
+                    Thread.sleep(retryDelayMs);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    System.err.println("[TaskExecutionService] Interrupted while retrying directory deletion: " + directory);
+                    return;
+                }
+            }
+        }
+
+        System.err.println("[TaskExecutionService] Failed to delete directory after " +
+                maxRetries + " attempts: " + directory);
     }
 }

@@ -443,11 +443,10 @@ public class TaskRow extends HBox {
      */
     private boolean isStartableStatus() {
         return switch (statusText != null ? statusText : "") {
-            case TaskEntity.STATUS_IDLE,
-                 TaskEntity.STATUS_COMPLETED,
-                 TaskEntity.STATUS_FAILED,
-                 TaskEntity.STATUS_STOPPED -> true;
-            default -> false;
+            case TaskEntity.STATUS_RUNNING,
+                 TaskEntity.STATUS_MANUAL,
+                 "STARTING..." -> false;
+            default -> true;
         };
     }
 

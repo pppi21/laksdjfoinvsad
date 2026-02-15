@@ -23,6 +23,7 @@ import org.nodriver4j.ui.dialogs.EditTaskDialog;
 import org.nodriver4j.ui.windows.ViewBrowserWindow;
 
 import java.net.URL;
+import java.nio.file.Path;
 import java.util.*;
 
 /**
@@ -199,7 +200,59 @@ public class TaskGroupDetailController implements Initializable {
 
         row.setOnClone(taskId -> {
             System.out.println("[TaskGroupDetailController] Clone task #" + taskId);
-            // TODO: Stage 4B — duplicate task entity and append new row
+
+            Optional<TaskEntity> taskOpt = taskRepository.findById(taskId);
+            if (taskOpt.isEmpty()) {
+                System.err.println("[TaskGroupDetailController] Task not found for clone: " + taskId);
+                return;
+            }
+
+            TaskEntity original = taskOpt.get();
+
+            // Build a fresh copy — keep profile, proxy, warmSession, notes
+            // Reset identity, status, userdata, custom status, and log
+            TaskEntity clone = original.toBuilder()
+                    .id(0)
+                    .status(TaskEntity.STATUS_IDLE)
+                    .userdataPath(null)
+                    .customStatus(null)
+                    .logMessage(null)
+                    .logColor(null)
+                    .createdAt(null)   // let builder default to now
+                    .updatedAt(null)   // let builder default to now
+                    .build();
+
+            taskRepository.save(clone);
+
+            // Resolve display name
+            String displayName = profileRepository.findById(clone.profileId())
+                    .map(profile -> {
+                        String name = profile.displayName();
+                        String email = profile.emailAddress();
+                        return (email != null && !email.isBlank())
+                                ? name + " (" + email + ")"
+                                : name;
+                    })
+                    .orElse("Unknown Profile (Task #" + clone.id() + ")");
+
+            // Resolve proxy display
+            String proxyDisplay = null;
+            if (clone.hasProxy()) {
+                proxyDisplay = proxyRepository.findById(clone.proxyId())
+                        .map(ProxyEntity::toDisplayString)
+                        .orElse(null);
+            }
+
+            // Create row and wire it up
+            TaskRow cloneRow = new TaskRow(clone.id(), displayName, clone.displayStatus());
+            cloneRow.setProxyText(proxyDisplay);
+
+            wireRowCallbacks(cloneRow);
+            taskRows.add(cloneRow);
+            taskListContainer.getChildren().add(cloneRow);
+
+            System.out.println("[TaskGroupDetailController] Cloned task #" + taskId
+                    + " → new task #" + clone.id());
         });
 
         row.setOnEdit(taskId -> {
@@ -275,7 +328,41 @@ public class TaskGroupDetailController implements Initializable {
 
         row.setOnDelete(taskId -> {
             System.out.println("[TaskGroupDetailController] Delete task #" + taskId);
-            // TODO: Stage 4B — delete from DB, remove userdata, remove row
+
+            // Defensive: stop browser if somehow still active
+            TaskExecutionService service = TaskExecutionService.instance();
+            if (service.isActive(taskId)) {
+                closeScreencastSession(taskId);
+                service.stopBrowser(taskId);
+            }
+
+            // Load task for userdata path and proxy info before deletion
+            Optional<TaskEntity> taskOpt = taskRepository.findById(taskId);
+            if (taskOpt.isPresent()) {
+                TaskEntity task = taskOpt.get();
+
+                // Delete userdata directory from disk
+                if (task.hasUserdataPath()) {
+                    TaskExecutionService.deleteDirectoryWithRetry(
+                            Path.of(task.userdataPath()));
+                }
+
+                // Delete task from database
+                taskRepository.deleteById(taskId);
+
+                // Clean up standalone proxy (null-group proxies created via edit)
+                cleanUpStandaloneProxy(task.proxyId());
+            }
+
+            // Remove row from UI
+            findTaskRow(taskId).ifPresent(r -> {
+                taskRows.remove(r);
+                taskListContainer.getChildren().remove(r);
+            });
+
+            updateViewState();
+
+            System.out.println("[TaskGroupDetailController] Deleted task #" + taskId);
         });
     }
 
