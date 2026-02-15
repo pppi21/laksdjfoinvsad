@@ -18,6 +18,7 @@ import org.nodriver4j.persistence.repository.*;
 import org.nodriver4j.services.ScreencastService;
 import org.nodriver4j.services.TaskExecutionService;
 import org.nodriver4j.ui.components.TaskRow;
+import org.nodriver4j.ui.dialogs.ChangeProxiesDialog;
 import org.nodriver4j.ui.dialogs.CreateTaskDialog;
 import org.nodriver4j.ui.dialogs.EditTaskDialog;
 import org.nodriver4j.ui.windows.ViewBrowserWindow;
@@ -562,7 +563,6 @@ public class TaskGroupDetailController implements Initializable {
 
                 // Restore persisted log state
                 if (task.hasLogMessage()) {
-                    System.out.println("IT DOES HAVE A LOG MESSAGE");
                     row.setLogText(task.logMessage(), task.logColor());
                 }
 
@@ -843,7 +843,60 @@ public class TaskGroupDetailController implements Initializable {
     @FXML
     private void onChangeProxiesClicked() {
         System.out.println("[TaskGroupDetailController] Change Proxies clicked for group " + currentGroupId);
-        // TODO: Open proxy group selection dialog and reassign proxies
+
+        ChangeProxiesDialog dialog = new ChangeProxiesDialog(
+                changeProxiesButton.getScene().getWindow(),
+                proxyGroupRepository,
+                proxyRepository,
+                taskRows.size()
+        );
+
+        dialog.showAndWait().ifPresent(result -> {
+            Long proxyGroupId = result.proxyGroupId();
+
+            // Load proxies from the selected group (empty list if "None")
+            List<ProxyEntity> proxies = (proxyGroupId != null)
+                    ? proxyRepository.findByGroupId(proxyGroupId)
+                    : List.of();
+
+            // Reassign proxies across tasks in row order
+            for (int i = 0; i < taskRows.size(); i++) {
+                TaskRow row = taskRows.get(i);
+
+                Optional<TaskEntity> taskOpt = taskRepository.findById(row.taskId());
+                if (taskOpt.isEmpty()) {
+                    continue;
+                }
+
+                TaskEntity task = taskOpt.get();
+                Long oldProxyId = task.proxyId();
+
+                if (i < proxies.size()) {
+                    // Assign proxy from the new group
+                    ProxyEntity proxy = proxies.get(i);
+                    task.proxyId(proxy.id());
+                    task.touchUpdatedAt();
+                    taskRepository.save(task);
+                    row.setProxyText(proxy.toDisplayString());
+                } else if (proxyGroupId == null) {
+                    // "None" selected — clear proxy from all tasks
+                    task.proxyId(null);
+                    task.touchUpdatedAt();
+                    taskRepository.save(task);
+                    row.setProxyText(null);
+                } else {
+                    // More tasks than proxies — leave remaining tasks unchanged
+                    continue;
+                }
+
+                // Clean up old standalone proxy (null-group proxies from edit dialog)
+                cleanUpStandaloneProxy(oldProxyId);
+            }
+
+            System.out.println("[TaskGroupDetailController] Proxies changed — group "
+                    + (proxyGroupId != null ? "#" + proxyGroupId : "None")
+                    + ", " + Math.min(proxies.size(), taskRows.size()) + " tasks updated");
+        });
     }
 
     /**
