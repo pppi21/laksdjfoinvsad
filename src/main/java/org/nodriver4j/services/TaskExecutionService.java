@@ -241,7 +241,8 @@ public class TaskExecutionService {
      *
      * <p>This method is the main body of the script thread spawned by
      * {@link #startTask}. It handles entity loading, browser launch,
-     * script execution, success/failure handling, and cleanup.</p>
+     * optional session warming, script execution, success/failure
+     * handling, and cleanup.</p>
      *
      * @param taskId         the task ID
      * @param onLogUpdate    UI callback for log messages, or null
@@ -272,8 +273,14 @@ public class TaskExecutionService {
             Browser browser = launchBrowser(taskId, true, TaskEntity.STATUS_RUNNING);
             notifyStatusChange(onStatusChange, TaskEntity.STATUS_RUNNING);
 
-            // Check for interruption after browser launch (user may have
-            // clicked stop while the browser was starting)
+            // Warm session if enabled — status is already RUNNING and the UI
+            // is notified, so the user sees live warming progress via the logger
+            if (task.warmSession()) {
+                browser.warm(logger);
+            }
+
+            // Check for interruption after browser launch + warming (user may
+            // have clicked stop while the browser was starting or warming)
             if (Thread.currentThread().isInterrupted()) {
                 throw new InterruptedException("Cancelled before script execution");
             }
@@ -432,7 +439,12 @@ public class TaskExecutionService {
      * Core browser launch method used by all entry points.
      *
      * <p>Handles port allocation, config building, userdata assignment,
-     * browser launching, optional warming, status updates, and tracking.</p>
+     * browser launching, status updates, and tracking.</p>
+     *
+     * <p>Session warming is NOT performed here — it is the caller's
+     * responsibility to warm after launch if needed. This ensures
+     * the task status is set to RUNNING and the UI is notified before
+     * the potentially long warming phase begins.</p>
      *
      * @param taskId   the task ID
      * @param headless true for headless mode, false for headed
@@ -455,7 +467,7 @@ public class TaskExecutionService {
         ensureUserdataPath(task);
         ensureFingerprintIndex(task);
 
-// Build config from task + settings
+        // Build config from task + settings
         BrowserConfig config = buildConfig(task, headless);
 
         // Allocate a port
@@ -474,12 +486,6 @@ public class TaskExecutionService {
 
             // Track the browser
             runningBrowsers.put(taskId, browser);
-
-            // Warm if requested
-            if (task.warmSession()) {
-                System.out.println("[TaskExecutionService] Warming session for task " + taskId + "...");
-                browser.warm();
-            }
 
             // Clear previous log and update status
             task.clearLog();

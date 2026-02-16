@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import org.nodriver4j.cdp.CDPClient;
 import org.nodriver4j.scripts.SessionWarmer;
 import org.nodriver4j.services.AutoSolveAIService;
+import org.nodriver4j.services.TaskLogger;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -298,6 +299,22 @@ public class Browser implements AutoCloseable {
      * @throws IllegalStateException if the browser has been closed
      */
     public SessionWarmer.WarmingResult warm() {
+        return warm(null);
+    }
+
+    /**
+     * Warms the browser profile with optional live UI logging.
+     *
+     * <p>Behaves identically to {@link #warm()}, but when a {@link TaskLogger}
+     * is provided, warming progress (site visits, cookie counts) is reported
+     * to the UI in real time via the logger's callbacks.</p>
+     *
+     * @param logger the TaskLogger for live UI updates, or null for stdout only
+     * @return the warming result containing collected cookies and any warnings
+     * @throws IllegalStateException if the browser has been closed
+     * @see SessionWarmer#SessionWarmer(Page, TaskLogger)
+     */
+    public SessionWarmer.WarmingResult warm(TaskLogger logger) {
         ensureOpen();
 
         // Only warm once
@@ -308,7 +325,7 @@ public class Browser implements AutoCloseable {
 
         System.out.println("[Browser] Starting profile warming (port " + port + ")...");
 
-        SessionWarmer warmer = new SessionWarmer(page());
+        SessionWarmer warmer = new SessionWarmer(page(), logger);
         SessionWarmer.WarmingResult result = warmer.warm();
 
         if (result.hasWarnings()) {
@@ -319,15 +336,6 @@ public class Browser implements AutoCloseable {
         }
 
         return result;
-    }
-
-    /**
-     * Checks if this browser has already been warmed.
-     *
-     * @return true if warming has been performed
-     */
-    public boolean isWarmed() {
-        return warmed.get();
     }
 
     // ==================== Target Discovery ====================

@@ -469,7 +469,7 @@ public class BrowserManager implements AutoCloseable {
 
         List<Future<?>> futures = new ArrayList<>();
         for (Browser browser : browsers) {
-            futures.add(executor.submit(browser::warm));
+            futures.add(executor.submit((Runnable) browser::warm));
         }
 
         int successCount = 0;
