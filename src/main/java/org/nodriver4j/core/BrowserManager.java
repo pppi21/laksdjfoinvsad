@@ -12,6 +12,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 
 /**
+ * <p>(For dev testing convenience. Not used in production.)</p>
+ *
+ *
  * Manages browser instances with automatic resource allocation and thread pool execution.
  *
  * <p>BrowserManager handles:</p>

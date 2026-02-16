@@ -140,6 +140,7 @@ public class TaskEntity {
     // ==================== Session Options ====================
 
     private boolean warmSession;
+    private Integer fingerprintIndex;
 
     // ==================== Metadata ====================
 
@@ -172,6 +173,7 @@ public class TaskEntity {
         this.logColor = builder.logColor;
         this.userdataPath = builder.userdataPath;
         this.warmSession = builder.warmSession;
+        this.fingerprintIndex = builder.fingerprintIndex;
         this.notes = builder.notes;
         this.createdAt = builder.createdAt != null ? builder.createdAt : LocalDateTime.now();
         this.updatedAt = builder.updatedAt != null ? builder.updatedAt : LocalDateTime.now();
@@ -205,6 +207,7 @@ public class TaskEntity {
                 .logColor(logColor)
                 .userdataPath(userdataPath)
                 .warmSession(warmSession)
+                .fingerprintIndex(fingerprintIndex)
                 .notes(notes)
                 .createdAt(createdAt)
                 .updatedAt(updatedAt);
@@ -315,6 +318,19 @@ public class TaskEntity {
      */
     public boolean warmSession() {
         return warmSession;
+    }
+
+    /**
+     * Gets the fingerprint line index for deterministic fingerprint loading.
+     *
+     * <p>This is the zero-based index into the fingerprints JSONL file.
+     * When set, the same fingerprint is reloaded on every browser launch
+     * for this task. Null means no fingerprint has been assigned yet.</p>
+     *
+     * @return the fingerprint index, or null if not yet assigned
+     */
+    public Integer fingerprintIndex() {
+        return fingerprintIndex;
     }
 
     /**
@@ -485,6 +501,17 @@ public class TaskEntity {
      */
     public TaskEntity warmSession(boolean warmSession) {
         this.warmSession = warmSession;
+        return this;
+    }
+
+    /**
+     * Sets the fingerprint line index.
+     *
+     * @param fingerprintIndex the index, or null to clear
+     * @return this entity for chaining
+     */
+    public TaskEntity fingerprintIndex(Integer fingerprintIndex) {
+        this.fingerprintIndex = fingerprintIndex;
         return this;
     }
 
@@ -670,8 +697,11 @@ public class TaskEntity {
 
     @Override
     public String toString() {
-        return String.format("TaskEntity{id=%d, groupId=%d, profileId=%d, proxyId=%s, status=%s}",
-                id, groupId, profileId, proxyId != null ? proxyId : "none", displayStatus());
+        return String.format("TaskEntity{id=%d, groupId=%d, profileId=%d, proxyId=%s, fingerprintIndex=%s, status=%s}",
+                id, groupId, profileId,
+                proxyId != null ? proxyId : "none",
+                fingerprintIndex != null ? fingerprintIndex : "none",
+                displayStatus());
     }
 
     @Override
@@ -704,6 +734,7 @@ public class TaskEntity {
         private String logColor;
         private String userdataPath;
         private boolean warmSession = false;
+        private Integer fingerprintIndex;
         private String notes;
         private LocalDateTime createdAt;
         private LocalDateTime updatedAt;
@@ -757,6 +788,12 @@ public class TaskEntity {
 
         public Builder warmSession(boolean warmSession) {
             this.warmSession = warmSession;
+            return this;
+        }
+
+        // Method
+        public Builder fingerprintIndex(Integer fingerprintIndex) {
+            this.fingerprintIndex = fingerprintIndex;
             return this;
         }
 

@@ -2,6 +2,7 @@ package org.nodriver4j.services;
 
 import org.nodriver4j.core.Browser;
 import org.nodriver4j.core.BrowserConfig;
+import org.nodriver4j.core.Fingerprint;
 import org.nodriver4j.persistence.Settings;
 import org.nodriver4j.persistence.entity.ProfileEntity;
 import org.nodriver4j.persistence.entity.ProxyEntity;
@@ -450,10 +451,11 @@ public class TaskExecutionService {
         TaskEntity task = taskRepository.findById(taskId)
                 .orElseThrow(() -> new IllegalStateException("Task not found: " + taskId));
 
-        // Assign userdata path if this is the first launch
+        // Assign userdata path and fingerprint index if this is the first launch
         ensureUserdataPath(task);
+        ensureFingerprintIndex(task);
 
-        // Build config from task + settings
+// Build config from task + settings
         BrowserConfig config = buildConfig(task, headless);
 
         // Allocate a port
@@ -575,7 +577,8 @@ public class TaskExecutionService {
                 .fingerprintEnabled(settings.defaultFingerprintEnabled())
                 .resourceBlocking(settings.defaultResourceBlocking())
                 .webrtcPolicy(settings.defaultWebrtcPolicy())
-                .userDataDir(Path.of(task.userdataPath()));
+                .userDataDir(Path.of(task.userdataPath()))
+                .fingerprintIndex(task.fingerprintIndex());
 
 
         if (headless){
@@ -623,6 +626,35 @@ public class TaskExecutionService {
 
         System.out.println("[TaskExecutionService] Assigned userdata path for task " +
                 task.id() + ": " + userdataPath);
+    }
+
+    /**
+     * Ensures the task has a fingerprint index assigned.
+     *
+     * <p>If the task does not yet have a fingerprint index (first launch),
+     * a random valid index is generated via {@link Fingerprint#totalCount()}
+     * and persisted to the database. This guarantees the same fingerprint
+     * is reloaded on every subsequent browser session for this task.</p>
+     *
+     * @param task the task entity (modified in place and saved if index is assigned)
+     */
+    private void ensureFingerprintIndex(TaskEntity task) {
+        if (task.fingerprintIndex() != null) {
+            return;
+        }
+
+        try {
+            int index = new Random().nextInt(Fingerprint.totalCount());
+            task.fingerprintIndex(index);
+            task.touchUpdatedAt();
+            taskRepository.save(task);
+
+            System.out.println("[TaskExecutionService] Assigned fingerprint index for task " +
+                    task.id() + ": " + index);
+        } catch (IOException e) {
+            System.err.println("[TaskExecutionService] Failed to assign fingerprint index for task " +
+                    task.id() + ": " + e.getMessage());
+        }
     }
 
     // ==================== Port Management ====================

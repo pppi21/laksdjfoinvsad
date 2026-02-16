@@ -47,7 +47,7 @@ public final class Database {
 
     private static final String DATA_DIRECTORY = "nodriver4j-data";
     private static final String DATABASE_FILE = "data.db";
-    private static final int CURRENT_SCHEMA_VERSION = 4;
+    private static final int CURRENT_SCHEMA_VERSION = 5;
     private static final AtomicBoolean initialized = new AtomicBoolean(false);
     private static String connectionUrl;
 
@@ -219,6 +219,7 @@ public final class Database {
             case 2 -> migrateV2(conn);
             case 3 -> migrateV3(conn);
             case 4 -> migrateV4(conn);
+            case 5 -> migrateV5(conn);
             default -> throw new DatabaseException("Unknown migration version: " + version);
         }
     }
@@ -396,6 +397,20 @@ public final class Database {
         try (Statement stmt = conn.createStatement()) {
             stmt.execute("ALTER TABLE tasks ADD COLUMN log_message TEXT");
             stmt.execute("ALTER TABLE tasks ADD COLUMN log_color TEXT");
+        }
+    }
+
+    /**
+     * V5: Add fingerprint_index column to tasks table.
+     *
+     * <p>Stores the zero-based line index into the fingerprints JSONL file
+     * so that the same fingerprint can be deterministically reloaded across
+     * browser sessions. Nullable — null means no fingerprint has been
+     * assigned yet (will be assigned on first launch).</p>
+     */
+    private static void migrateV5(Connection conn) throws SQLException {
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute("ALTER TABLE tasks ADD COLUMN fingerprint_index INTEGER");
         }
     }
 

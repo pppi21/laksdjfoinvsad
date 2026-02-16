@@ -56,6 +56,7 @@ public class BrowserConfig {
 
     // Features
     private final boolean fingerprintEnabled;
+    private final Integer fingerprintIndex;
     private final boolean resourceBlocking;
     private final InteractionOptions interactionOptions;
 
@@ -73,6 +74,7 @@ public class BrowserConfig {
         this.webrtcPolicy = builder.webrtcPolicy;
         this.arguments = Collections.unmodifiableList(new ArrayList<>(builder.arguments));
         this.fingerprintEnabled = builder.fingerprintEnabled;
+        this.fingerprintIndex = builder.fingerprintIndex;
         this.resourceBlocking = builder.resourceBlocking;
         this.interactionOptions = builder.interactionOptions;
         this.proxy = builder.proxy;
@@ -134,6 +136,22 @@ public class BrowserConfig {
      */
     public boolean fingerprintEnabled() {
         return fingerprintEnabled;
+    }
+
+    /**
+     * Gets the fingerprint line index for deterministic fingerprint loading.
+     *
+     * <p>When set, {@link Browser#launch} uses this index to load a specific
+     * fingerprint profile instead of picking a random one. This ensures the
+     * same task always gets the same fingerprint across browser sessions.</p>
+     *
+     * <p>When null and {@link #fingerprintEnabled()} is true, a random
+     * fingerprint is selected.</p>
+     *
+     * @return the fingerprint line index, or null for random selection
+     */
+    public Integer fingerprintIndex() {
+        return fingerprintIndex;
     }
 
     /**
@@ -236,6 +254,7 @@ public class BrowserConfig {
         builder.webrtcPolicy = this.webrtcPolicy;
         builder.arguments = new ArrayList<>(this.arguments);
         builder.fingerprintEnabled = this.fingerprintEnabled;
+        builder.fingerprintIndex = this.fingerprintIndex;
         builder.resourceBlocking = this.resourceBlocking;
         builder.interactionOptions = this.interactionOptions;
         builder.proxy = this.proxy;
@@ -294,6 +313,7 @@ public class BrowserConfig {
         private String webrtcPolicy = DEFAULT_WEBRTC_POLICY;
         private List<String> arguments = new ArrayList<>();
         private boolean fingerprintEnabled = true;
+        private Integer fingerprintIndex;
         private boolean resourceBlocking = false;
         private InteractionOptions interactionOptions = InteractionOptions.defaults();
         private Proxy proxy;
@@ -393,6 +413,21 @@ public class BrowserConfig {
          */
         public Builder fingerprintEnabled(boolean enabled) {
             this.fingerprintEnabled = enabled;
+            return this;
+        }
+
+        /**
+         * Sets the fingerprint line index for deterministic loading.
+         *
+         * <p>When set alongside {@link #fingerprintEnabled(boolean) fingerprintEnabled(true)},
+         * the browser will load the specific fingerprint profile at this index
+         * instead of picking a random one.</p>
+         *
+         * @param fingerprintIndex the zero-based index, or null for random
+         * @return this builder
+         */
+        public Builder fingerprintIndex(Integer fingerprintIndex) {
+            this.fingerprintIndex = fingerprintIndex;
             return this;
         }
 

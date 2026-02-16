@@ -84,8 +84,8 @@ public class TaskRepository implements Repository<TaskEntity> {
     INSERT INTO tasks (
         group_id, profile_id, proxy_id, status, userdata_path,
         notes, custom_status, log_message, log_color, warm_session,
-        created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        fingerprint_index, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """;
 
 
@@ -94,6 +94,7 @@ public class TaskRepository implements Repository<TaskEntity> {
         group_id = ?, profile_id = ?, proxy_id = ?, status = ?,
         userdata_path = ?, notes = ?, custom_status = ?,
         log_message = ?, log_color = ?, warm_session = ?,
+        fingerprint_index = ?,
         updated_at = datetime('now')
     WHERE id = ?
     """;
@@ -112,7 +113,7 @@ public class TaskRepository implements Repository<TaskEntity> {
     private static final String SELECT_COLUMNS = """
     id, group_id, profile_id, proxy_id, status, userdata_path,
     notes, custom_status, log_message, log_color, warm_session,
-    created_at, updated_at
+    fingerprint_index, created_at, updated_at
     """;
 
     private static final String SELECT_BY_ID_SQL =
@@ -517,6 +518,7 @@ public class TaskRepository implements Repository<TaskEntity> {
         stmt.setString(i++, e.logMessage());
         stmt.setString(i++, e.logColor());
         stmt.setInt(i++, e.warmSession() ? 1 : 0);
+        stmt.setObject(i++, e.fingerprintIndex(), Types.INTEGER);
         stmt.setString(i++, e.createdAtString());
         stmt.setString(i, e.updatedAtString());
     }
@@ -542,6 +544,7 @@ public class TaskRepository implements Repository<TaskEntity> {
         stmt.setString(i++, e.logMessage());
         stmt.setString(i++, e.logColor());
         stmt.setInt(i++, e.warmSession() ? 1 : 0);
+        stmt.setObject(i++, e.fingerprintIndex(), Types.INTEGER);
         // updated_at is set via datetime('now') in SQL
         // WHERE id = ?
         stmt.setLong(i, e.id());
@@ -565,6 +568,10 @@ public class TaskRepository implements Repository<TaskEntity> {
         long proxyIdRaw = rs.getLong("proxy_id");
         Long proxyId = rs.wasNull() ? null : proxyIdRaw;
 
+        // Handle nullable fingerprint_index
+        int fingerprintIndexRaw = rs.getInt("fingerprint_index");
+        Integer fingerprintIndex = rs.wasNull() ? null : fingerprintIndexRaw;
+
         TaskEntity entity = TaskEntity.builder()
                 .id(rs.getLong("id"))
                 .groupId(rs.getLong("group_id"))
@@ -577,6 +584,7 @@ public class TaskRepository implements Repository<TaskEntity> {
                 .logMessage(rs.getString("log_message"))
                 .logColor(rs.getString("log_color"))
                 .warmSession(rs.getInt("warm_session") == 1)
+                .fingerprintIndex(fingerprintIndex)
                 .build();
 
         String createdAtStr = rs.getString("created_at");

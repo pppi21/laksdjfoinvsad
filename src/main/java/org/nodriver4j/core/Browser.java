@@ -210,8 +210,14 @@ public class Browser implements AutoCloseable {
         // Load fingerprint if enabled
         Fingerprint fingerprint = null;
         if (config.fingerprintEnabled()) {
-            System.out.println("[Browser] Fingerprint mode enabled, loading profile...");
-            fingerprint = new Fingerprint();
+            if (config.fingerprintIndex() != null) {
+                System.out.println("[Browser] Loading persisted fingerprint (index " +
+                        config.fingerprintIndex() + ")...");
+                fingerprint = new Fingerprint(config.fingerprintIndex());
+            } else {
+                System.out.println("[Browser] Loading random fingerprint...");
+                fingerprint = new Fingerprint();
+            }
             System.out.println("[Browser] Loaded fingerprint: " + fingerprint);
         }
 
@@ -1178,15 +1184,14 @@ public class Browser implements AutoCloseable {
 
         // Fingerprint arguments
         if (fingerprint != null) {
-            args.add("--fingerprint=" + fingerprint.getSeed());
+            args.add("--fingerprint=" + fingerprint.seed());
+            args.add("--fingerprint-hardware-concurrency=" + fingerprint.hardwareConcurrency());
 
-            args.add("--fingerprint-hardware-concurrency=" + fingerprint.getHardwareConcurrency());
-
-            if (fingerprint.getGpuVendor() != null) {
-                args.add("--fingerprint-gpu-vendor=" + fingerprint.getGpuVendor());
+            if (fingerprint.gpuVendor() != null) {
+                args.add("--fingerprint-gpu-vendor=" + fingerprint.gpuVendor());
             }
-            if (fingerprint.getGpuRenderer() != null) {
-                args.add("\"--fingerprint-gpu-renderer=" + fingerprint.getGpuRenderer() + "\"");
+            if (fingerprint.gpuRenderer() != null) {
+                args.add("\"--fingerprint-gpu-renderer=" + fingerprint.gpuRenderer() + "\"");
             }
         }
 
