@@ -386,8 +386,8 @@ public class Fingerprint {
      */
     private static class UserAgentInfo {
         String platform = "windows";
-        String platformVersion = "10.0";
+        String platformVersion = "11.0";
         String brand = "Chrome";
-        String brandVersion = "120.0.0.0";
+        String brandVersion = "144";
     }
 }

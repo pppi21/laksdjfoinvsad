@@ -1179,11 +1179,6 @@ public class Browser implements AutoCloseable {
         // Fingerprint arguments
         if (fingerprint != null) {
             args.add("--fingerprint=" + fingerprint.getSeed());
-            args.add("--fingerprint-platform=" + fingerprint.getPlatform());
-
-            if (fingerprint.getPlatformVersion() != null) {
-                args.add("--fingerprint-platform-version=" + fingerprint.getPlatformVersion());
-            }
 
             args.add("--fingerprint-hardware-concurrency=" + fingerprint.getHardwareConcurrency());
 
