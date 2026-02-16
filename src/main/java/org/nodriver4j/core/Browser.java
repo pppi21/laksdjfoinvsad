@@ -557,7 +557,7 @@ public class Browser implements AutoCloseable {
      * Handles proxy authentication challenges from CDP.
      */
     private void handleProxyAuthRequired(JsonObject event) {
-        ProxyConfig proxy = config.proxyConfig();
+        Proxy proxy = config.proxyConfig();
         String requestId = event.get("requestId").getAsString();
 
         if (event.has("authChallenge")) {
@@ -846,9 +846,9 @@ public class Browser implements AutoCloseable {
     /**
      * Gets the proxy configuration for this browser, if any.
      *
-     * @return the ProxyConfig, or null if no proxy is configured
+     * @return the Proxy, or null if no proxy is configured
      */
-    public ProxyConfig proxyConfig() {
+    public Proxy proxyConfig() {
         return config.proxyConfig();
     }
 
@@ -940,7 +940,7 @@ public class Browser implements AutoCloseable {
      * @deprecated Use {@link #proxyConfig()} instead
      */
     @Deprecated
-    public ProxyConfig getProxyConfig() {
+    public Proxy getProxyConfig() {
         return proxyConfig();
     }
 
@@ -1142,7 +1142,7 @@ public class Browser implements AutoCloseable {
 
         // Proxy configuration
         if (config.hasProxy()) {
-            ProxyConfig proxy = config.proxyConfig();
+            Proxy proxy = config.proxyConfig();
             args.add("--proxy-server=" + proxy.toProxyServerArg());
             System.out.println("[Browser] Proxy configured: " + proxy);
         }

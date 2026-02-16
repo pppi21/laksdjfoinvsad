@@ -20,7 +20,7 @@ import java.util.List;
  * <p>This class supports thread-safe proxy consumption from a shared file,
  * allowing multiple browser instances to each get a unique proxy.</p>
  */
-public class ProxyConfig {
+public class Proxy {
 
     private static final String PROXIES_ENV_VAR = "proxies";
 
@@ -36,7 +36,7 @@ public class ProxyConfig {
     private final String password;
 
     /**
-     * Creates a ProxyConfig by consuming (reading and removing) the first proxy
+     * Creates a Proxy by consuming (reading and removing) the first proxy
      * from the file specified by the "proxies" environment variable.
      *
      * <p>This operation is atomic and thread-safe. The proxy line is permanently
@@ -45,17 +45,17 @@ public class ProxyConfig {
      * @throws IOException if the file cannot be read/written or has no valid proxies
      * @throws IllegalStateException if the environment variable is not set
      */
-    public ProxyConfig() throws IOException {
+    public Proxy() throws IOException {
         this(consumeFirstFromEnvFile());
     }
 
     /**
-     * Creates a ProxyConfig from a proxy string.
+     * Creates a Proxy from a proxy string.
      *
      * @param proxyString proxy in format host:port:username:password
      * @throws IllegalArgumentException if the format is invalid
      */
-    public ProxyConfig(String proxyString) {
+    public Proxy(String proxyString) {
         if (proxyString == null || proxyString.isBlank()) {
             throw new IllegalArgumentException("Proxy string cannot be null or blank");
         }
@@ -77,14 +77,14 @@ public class ProxyConfig {
     }
 
     /**
-     * Creates a ProxyConfig with explicit parameters.
+     * Creates a Proxy with explicit parameters.
      *
      * @param host     proxy hostname
      * @param port     proxy port
      * @param username authentication username
      * @param password authentication password
      */
-    public ProxyConfig(String host, int port, String username, String password) {
+    public Proxy(String host, int port, String username, String password) {
         this.host = host;
         this.port = port;
         this.username = username;
@@ -191,54 +191,6 @@ public class ProxyConfig {
         }
     }
 
-    /**
-     * Checks how many valid proxies remain in the file specified by the
-     * "proxies" environment variable.
-     *
-     * <p>This is a read-only operation that does not consume any proxies.</p>
-     *
-     * @return the count of valid (non-empty, non-comment) proxy lines
-     * @throws IOException if the file cannot be read
-     * @throws IllegalStateException if the environment variable is not set
-     */
-    public static int countRemainingProxies() throws IOException {
-        String filePath = System.getenv(PROXIES_ENV_VAR);
-
-        if (filePath == null || filePath.isBlank()) {
-            throw new IllegalStateException(
-                    "Environment variable '" + PROXIES_ENV_VAR + "' is not set.");
-        }
-
-        return countRemainingProxies(Path.of(filePath));
-    }
-
-    /**
-     * Checks how many valid proxies remain in the specified file.
-     *
-     * <p>This is a read-only operation that does not consume any proxies.</p>
-     *
-     * @param filePath path to the proxy file
-     * @return the count of valid (non-empty, non-comment) proxy lines
-     * @throws IOException if the file cannot be read
-     */
-    public static int countRemainingProxies(Path filePath) throws IOException {
-        if (!Files.exists(filePath)) {
-            return 0;
-        }
-
-        List<String> lines = Files.readAllLines(filePath, StandardCharsets.UTF_8);
-        int count = 0;
-
-        for (String line : lines) {
-            String trimmed = line.trim();
-            if (!trimmed.isEmpty() && !trimmed.startsWith("#")) {
-                count++;
-            }
-        }
-
-        return count;
-    }
-
     private int parsePort(String portString) {
         try {
             int port = Integer.parseInt(portString.trim());
@@ -326,7 +278,7 @@ public class ProxyConfig {
     @Override
     public String toString() {
         // Mask password for security in logs
-        return String.format("ProxyConfig{host=%s, port=%d, user=%s, pass=***}",
+        return String.format("Proxy{host=%s, port=%d, user=%s, pass=***}",
                 host, port, username);
     }
 }

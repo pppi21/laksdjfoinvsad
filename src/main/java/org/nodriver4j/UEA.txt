@@ -99,8 +99,8 @@ public class UEA {
                     System.out.println("  Fingerprint: disabled");
                 }
 
-                if (browser.proxyConfig() != null) {
-                    System.out.println("  Proxy:       " + browser.proxyConfig());
+                if (browser.proxy() != null) {
+                    System.out.println("  Proxy:       " + browser.proxy());
                 } else {
                     System.out.println("  Proxy:       disabled");
                 }

@@ -60,7 +60,7 @@ public class BrowserConfig {
     private final InteractionOptions interactionOptions;
 
     // Optional services/resources (can be set per-browser or shared)
-    private final ProxyConfig proxyConfig;
+    private final Proxy proxy;
     private final AutoSolveAIService autoSolveAIService;
 
     // Optional persistent user data directory
@@ -75,7 +75,7 @@ public class BrowserConfig {
         this.fingerprintEnabled = builder.fingerprintEnabled;
         this.resourceBlocking = builder.resourceBlocking;
         this.interactionOptions = builder.interactionOptions;
-        this.proxyConfig = builder.proxyConfig;
+        this.proxy = builder.proxy;
         this.autoSolveAIService = builder.autoSolveAIService;
         this.userDataDir = builder.userDataDir;
     }
@@ -169,8 +169,8 @@ public class BrowserConfig {
      *
      * @return the proxy config, or null if no proxy
      */
-    public ProxyConfig proxyConfig() {
-        return proxyConfig;
+    public Proxy proxyConfig() {
+        return proxy;
     }
 
     /**
@@ -201,7 +201,7 @@ public class BrowserConfig {
      * @return true if proxy configuration is present
      */
     public boolean hasProxy() {
-        return proxyConfig != null;
+        return proxy != null;
     }
 
     /**
@@ -238,7 +238,7 @@ public class BrowserConfig {
         builder.fingerprintEnabled = this.fingerprintEnabled;
         builder.resourceBlocking = this.resourceBlocking;
         builder.interactionOptions = this.interactionOptions;
-        builder.proxyConfig = this.proxyConfig;
+        builder.proxy = this.proxy;
         builder.autoSolveAIService = this.autoSolveAIService;
         builder.userDataDir = this.userDataDir;
         return builder;
@@ -261,7 +261,7 @@ public class BrowserConfig {
                 headless,
                 fingerprintEnabled ? "enabled" : "disabled",
                 resourceBlocking ? "enabled" : "disabled",
-                proxyConfig != null ? proxyConfig.host() : "none",
+                proxy != null ? proxy.host() : "none",
                 autoSolveAIService != null ? "configured" : "none",
                 userDataDir != null ? userDataDir : "auto"
         );
@@ -296,7 +296,7 @@ public class BrowserConfig {
         private boolean fingerprintEnabled = true;
         private boolean resourceBlocking = false;
         private InteractionOptions interactionOptions = InteractionOptions.defaults();
-        private ProxyConfig proxyConfig;
+        private Proxy proxy;
         private AutoSolveAIService autoSolveAIService;
         private Path userDataDir;
 
@@ -442,11 +442,11 @@ public class BrowserConfig {
         /**
          * Sets the proxy configuration.
          *
-         * @param proxyConfig the proxy configuration (null to disable proxy)
+         * @param proxy the proxy configuration (null to disable proxy)
          * @return this builder
          */
-        public Builder proxy(ProxyConfig proxyConfig) {
-            this.proxyConfig = proxyConfig;
+        public Builder proxy(Proxy proxy) {
+            this.proxy = proxy;
             return this;
         }
 
@@ -460,7 +460,7 @@ public class BrowserConfig {
          * @throws IllegalArgumentException if the proxy string format is invalid
          */
         public Builder proxy(String proxyString) {
-            this.proxyConfig = new ProxyConfig(proxyString);
+            this.proxy = new Proxy(proxyString);
             return this;
         }
 

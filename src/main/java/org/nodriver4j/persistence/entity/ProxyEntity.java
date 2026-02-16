@@ -1,6 +1,6 @@
 package org.nodriver4j.persistence.entity;
 
-import org.nodriver4j.core.ProxyConfig;
+import org.nodriver4j.core.Proxy;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -40,8 +40,8 @@ import java.time.format.DateTimeFormatter;
  *
  * proxy = repository.save(proxy);
  *
- * // Convert to ProxyConfig for browser use
- * ProxyConfig config = proxy.toProxyConfig();
+ * // Convert to Proxy for browser use
+ * Proxy config = proxy.toProxyConfig();
  * }</pre>
  *
  * <h2>Proxy String Format</h2>
@@ -52,18 +52,18 @@ import java.time.format.DateTimeFormatter;
  * <ul>
  *   <li>Hold proxy connection data</li>
  *   <li>Represent a row in the proxies table</li>
- *   <li>Convert to ProxyConfig for runtime use</li>
+ *   <li>Convert to Proxy for runtime use</li>
  * </ul>
  *
  * <h2>NOT Responsible For</h2>
  * <ul>
  *   <li>Database operations (use ProxyRepository)</li>
  *   <li>File-based proxy parsing (use ProxyImporter)</li>
- *   <li>Browser proxy authentication (use ProxyConfig)</li>
+ *   <li>Browser proxy authentication (use Proxy)</li>
  * </ul>
  *
  * @see ProxyGroupEntity
- * @see ProxyConfig
+ * @see Proxy
  */
 public class ProxyEntity {
 
@@ -301,15 +301,15 @@ public class ProxyEntity {
     // ==================== Conversion Methods ====================
 
     /**
-     * Converts this entity to a ProxyConfig for browser use.
+     * Converts this entity to a Proxy for browser use.
      *
-     * <p>ProxyConfig is the runtime configuration used by Browser
+     * <p>Proxy is the runtime configuration used by Browser
      * for proxy authentication via CDP.</p>
      *
-     * @return a new ProxyConfig instance
+     * @return a new Proxy instance
      */
-    public ProxyConfig toProxyConfig() {
-        return new ProxyConfig(host, port, username, password);
+    public Proxy toProxyConfig() {
+        return new Proxy(host, port, username, password);
     }
 
     /**

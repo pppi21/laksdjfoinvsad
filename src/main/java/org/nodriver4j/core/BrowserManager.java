@@ -439,7 +439,7 @@ public class BrowserManager implements AutoCloseable {
 
         // Consume proxy from file and add to config
         try {
-            ProxyConfig proxy = new ProxyConfig(); // Consumes from env file
+            Proxy proxy = new Proxy(); // Consumes from env file
             return templateConfig.toBuilder()
                     .proxy(proxy)
                     .build();

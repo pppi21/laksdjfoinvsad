@@ -54,7 +54,7 @@ import java.util.Optional;
  *   <li>Managing proxy groups (use ProxyGroupRepository)</li>
  *   <li>Proxy string parsing from files (use ProxyImporter)</li>
  *   <li>Connection lifecycle (uses Database.connection())</li>
- *   <li>Runtime proxy authentication (use ProxyConfig)</li>
+ *   <li>Runtime proxy authentication (use Proxy)</li>
  * </ul>
  *
  * @see ProxyEntity

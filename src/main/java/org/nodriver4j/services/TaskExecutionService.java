@@ -2,7 +2,6 @@ package org.nodriver4j.services;
 
 import org.nodriver4j.core.Browser;
 import org.nodriver4j.core.BrowserConfig;
-import org.nodriver4j.core.ProxyConfig;
 import org.nodriver4j.persistence.Settings;
 import org.nodriver4j.persistence.entity.ProfileEntity;
 import org.nodriver4j.persistence.entity.ProxyEntity;
@@ -14,7 +13,6 @@ import org.nodriver4j.persistence.repository.TaskGroupRepository;
 import org.nodriver4j.persistence.repository.TaskRepository;
 import org.nodriver4j.scripts.AutomationScript;
 import org.nodriver4j.scripts.ScriptRegistry;
-import org.nodriver4j.ui.windows.ViewBrowserWindow;
 
 import java.io.IOException;
 import java.nio.file.Files;
