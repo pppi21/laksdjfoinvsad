@@ -393,6 +393,44 @@
     -fx-padding: 0 0 16px 0;
 }
 
+/* ==================== Radio Buttons ==================== */
+.radio-button {
+    -fx-text-fill: -fx-text-primary;
+    -fx-font-size: 13px;
+}
+
+.radio-button .text {
+    -fx-fill: -fx-text-primary;
+}
+
+.radio-button > .radio {
+    -fx-background-color: -fx-primary-dark;
+    -fx-border-color: -fx-border;
+    -fx-border-width: 1px;
+    -fx-border-radius: 50%;
+    -fx-background-radius: 50%;
+    -fx-padding: 2px 3px 4px 3px;
+}
+
+.radio-button:selected > .radio {
+    -fx-background-color: -fx-primary-dark;
+    -fx-border-color: -fx-accent;
+}
+
+.radio-button > .radio > .dot {
+    -fx-background-color: transparent;
+    -fx-background-radius: 30%;
+    -fx-min-width: 5px;
+    -fx-min-height: 5px;
+    -fx-max-width: 5px;
+    -fx-max-height: 5px;
+}
+
+.radio-button:selected > .radio > .dot {
+    -fx-background-color: -fx-text-primary;
+    -fx-background-radius: 30%;
+}
+
 /* ==================== Scrollbars ==================== */
 .scroll-pane {
     -fx-background-color: transparent;
