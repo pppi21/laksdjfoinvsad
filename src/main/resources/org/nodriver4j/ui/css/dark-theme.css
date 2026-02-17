@@ -403,20 +403,6 @@
     -fx-background-color: transparent;
 }
 
-.scroll-bar > .track {
-    -fx-background-color: transparent;
-    -fx-border-color: transparent;
-}
-
-.scroll-bar > .thumb {
-    -fx-background-color: -fx-accent-dark;
-    -fx-background-radius: 4px;
-}
-
-.scroll-bar > .thumb:hover {
-    -fx-background-color: -fx-accent;
-}
-
 .scroll-bar:vertical {
     -fx-background-color: transparent;
     -fx-pref-width: 10px;
@@ -542,112 +528,8 @@
 .delete-button {
     -fx-background-color: transparent;
     -fx-background-radius: 50%;
-    -fx-min-width: 32px;
-    -fx-min-height: 32px;
-    -fx-max-width: 32px;
-    -fx-max-height: 32px;
-    -fx-padding: 0;
-    -fx-cursor: hand;
-    -fx-border-color: #d15252;
-    -fx-border-width: 1.5px;
-    -fx-border-radius: 50%;
-}
-
-.delete-button:hover {
-    -fx-background-color: rgba(209, 82, 82, 0.15);
-}
-
-.delete-button .label {
-    -fx-text-fill: #d15252;
-    -fx-font-size: 15px;
-}
-
-/* Confirm/Cancel button container */
-.delete-confirm-buttons {
-    -fx-spacing: 4px;
-    -fx-alignment: CENTER_RIGHT;
-    -fx-padding: 30px 0 0 0;
-}
-
-.confirm-delete-button {
-    -fx-background-color: #d15252;
-    -fx-background-radius: 4px;
-    -fx-text-fill: white;
-    -fx-font-size: 11px;
-    -fx-font-weight: bold;
-    -fx-padding: 5px 12px;
-    -fx-min-height: 26px;
-    -fx-pref-height: 26px;
-    -fx-max-height: 26px;
-    -fx-cursor: hand;
-}
-
-.confirm-delete-button:hover {
-    -fx-background-color: #b94444;
-}
-
-.confirm-delete-button:pressed {
-    -fx-background-color: #a33b3b;
-}
-
-.cancel-delete-button {
-    -fx-background-color: transparent;
-    -fx-background-radius: 4px;
-    -fx-border-color: -fx-border;
-    -fx-border-radius: 4px;
-    -fx-border-width: 1px;
-    -fx-text-fill: -fx-text-secondary;
-    -fx-font-size: 11px;
-    -fx-font-weight: bold;
-    -fx-padding: 5px 12px;
-    -fx-min-height: 26px;
-    -fx-pref-height: 26px;
-    -fx-max-height: 26px;
-    -fx-cursor: hand;
-}
-
-.cancel-delete-button:hover {
-    -fx-background-color: -fx-primary-light;
-    -fx-text-fill: -fx-text-primary;
-}
-
-.cancel-delete-button:pressed {
-    -fx-background-color: -fx-primary-dark;
-}
-
-/* ==================== Utility Classes ==================== */
-.spacer {
-    -fx-pref-height: 0;
-    -fx-pref-width: 0;
-}
-
-.h-spacer {
-    -fx-hgrow: ALWAYS;
-}
-
-.v-spacer {
-    -fx-vgrow: ALWAYS;
-}
-
-.divider {
-    -fx-background-color: -fx-border;
-    -fx-pref-height: 1px;
-    -fx-max-height: 1px;
-}
-
-.divider-vertical {
-    -fx-background-color: -fx-border;
-    -fx-pref-width: 1px;
-    -fx-max-width: 1px;
-}
-
-/* ==================== Task Group Card Delete Flow ==================== */
-.delete-button {
-    -fx-background-color: transparent;
-    -fx-background-radius: 50%;
-    -fx-border-color: #d15252;
-    -fx-border-width: 1.5px;
-    -fx-border-radius: 50%;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
     -fx-min-width: 28px;
     -fx-min-height: 28px;
     -fx-max-width: 28px;
@@ -667,6 +549,13 @@
 .delete-button .label {
     -fx-text-fill: #d15252;
     -fx-font-size: 14px;
+}
+
+/* Confirm/Cancel button container */
+.delete-confirm-buttons {
+    -fx-spacing: 4px;
+    -fx-alignment: CENTER_RIGHT;
+    -fx-padding: 30px 0 0 0;
 }
 
 .delete-confirm-container {
@@ -711,6 +600,32 @@
 
 .cancel-delete-button:pressed {
     -fx-background-color: #3a3a3a;
+}
+
+/* ==================== Utility Classes ==================== */
+.spacer {
+    -fx-pref-height: 0;
+    -fx-pref-width: 0;
+}
+
+.h-spacer {
+    -fx-hgrow: ALWAYS;
+}
+
+.v-spacer {
+    -fx-vgrow: ALWAYS;
+}
+
+.divider {
+    -fx-background-color: -fx-border;
+    -fx-pref-height: 1px;
+    -fx-max-height: 1px;
+}
+
+.divider-vertical {
+    -fx-background-color: -fx-border;
+    -fx-pref-width: 1px;
+    -fx-max-width: 1px;
 }
 
 /* ==================== Back Button ==================== */

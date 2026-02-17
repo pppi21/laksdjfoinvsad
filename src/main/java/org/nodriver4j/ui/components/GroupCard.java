@@ -231,6 +231,9 @@ public class GroupCard extends VBox {
     private StackPane buildDeleteContainer() {
         StackPane container = new StackPane();
         container.setAlignment(Pos.BOTTOM_RIGHT);
+        container.setMinWidth(140);
+        container.setPrefWidth(140);
+        container.setMaxWidth(140);
         container.getChildren().addAll(deleteButton, confirmCancelContainer);
         return container;
     }
