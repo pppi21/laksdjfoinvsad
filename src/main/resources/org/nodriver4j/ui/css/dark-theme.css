@@ -676,7 +676,8 @@
     -fx-border-radius: 10px;
     -fx-border-width: 1px;
     -fx-padding: 14px 18px;
-    -fx-min-height: 72px;
+    -fx-min-height: 100px;
+    -fx-pref-height: 100px;
 }
 
 .task-row:hover {
