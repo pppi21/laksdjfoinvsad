@@ -334,6 +334,10 @@
     -fx-background-color: -fx-primary-dark;
 }
 
+.text-area .content {
+    -fx-background-color: -fx-primary-dark;
+}
+
 .combo-box {
     -fx-background-color: -fx-primary-dark;
     -fx-border-color: -fx-border;
