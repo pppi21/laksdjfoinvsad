@@ -251,11 +251,11 @@ public final class CreateProxyGroupDialog extends Dialog<CreateProxyGroupDialog.
     // ==================== UI Building ====================
 
     /**
-     * Builds the main content layout.
+     * Builds the main content layout wrapped in a ScrollPane.
      *
-     * @return the content VBox
+     * @return the scrollable content container
      */
-    private VBox buildContent() {
+    private ScrollPane buildContent() {
         // Title
         String titleText = (dialogMode == Mode.CREATE) ? "Create Proxy Group" : "Add Proxies";
         Label titleLabel = new Label(titleText);
@@ -284,7 +284,16 @@ public final class CreateProxyGroupDialog extends Dialog<CreateProxyGroupDialog.
             content.getChildren().addAll(titleLabel, inputModeGroup, inputStack, formatHint);
         }
 
-        return content;
+        // Wrap in ScrollPane
+        ScrollPane scrollPane = new ScrollPane(content);
+        scrollPane.setFitToWidth(true);
+        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        scrollPane.setPrefViewportWidth(470);
+        scrollPane.setMaxHeight(400);
+        scrollPane.setStyle("-fx-background-color: transparent; -fx-background: transparent;");
+
+        return scrollPane;
     }
 
     /**
