@@ -171,8 +171,7 @@ public class MainController implements Initializable {
 
     @FXML
     private void onNavSettingsClicked() {
-        // Future: navigateTo(Page.SETTINGS, navSettings);
-        System.out.println("[MainController] Settings page not yet implemented");
+        navigateTo(Page.SETTINGS, navSettings);
     }
 
     // ==================== Navigation Logic ====================

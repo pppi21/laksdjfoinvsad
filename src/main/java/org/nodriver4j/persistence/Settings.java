@@ -75,6 +75,9 @@ public final class Settings {
     // Userdata management
     private String userdataBasePath;
 
+    // Fingerprint profiles
+    private String fingerprintsPath;
+
     // ==================== Constructor ====================
 
     /**
@@ -82,7 +85,7 @@ public final class Settings {
      */
     public Settings() {
         // Browser defaults
-        this.chromePath = System.getenv("chromepath");
+        this.chromePath = "";
         this.defaultHeadless = false;
         this.defaultFingerprintEnabled = true;
         this.defaultResourceBlocking = true;
@@ -96,6 +99,9 @@ public final class Settings {
 
         // Userdata - default to data directory
         this.userdataBasePath = Path.of(DATA_DIRECTORY, "userdata").toString();
+
+        // Fingerprints - default to data directory
+        this.fingerprintsPath = Path.of(DATA_DIRECTORY, "fingerprints.jsonl").toString();
     }
 
     // ==================== Static Access ====================
@@ -406,6 +412,37 @@ public final class Settings {
      */
     public Path userdataPathForTask(long taskId) {
         return Path.of(userdataBasePath, "task-" + taskId);
+    }
+
+    // ==================== Fingerprints ====================
+
+    /**
+     * Gets the path to the fingerprint profiles JSONL file.
+     *
+     * @return the fingerprints file path
+     */
+    public String fingerprintsPath() {
+        return fingerprintsPath;
+    }
+
+    /**
+     * Sets the path to the fingerprint profiles JSONL file.
+     *
+     * @param path the path to the JSONL file
+     * @return this Settings for chaining
+     */
+    public Settings fingerprintsPath(String path) {
+        this.fingerprintsPath = path != null ? path : Path.of(DATA_DIRECTORY, "fingerprints.jsonl").toString();
+        return this;
+    }
+
+    /**
+     * Checks if fingerprints path is configured.
+     *
+     * @return true if a non-empty path is set
+     */
+    public boolean hasFingerprintsPath() {
+        return fingerprintsPath != null && !fingerprintsPath.isBlank();
     }
 
     // ==================== Exception ====================

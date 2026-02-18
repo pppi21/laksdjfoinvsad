@@ -2,6 +2,7 @@ package org.nodriver4j.core;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
+import org.nodriver4j.persistence.Settings;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -56,7 +57,6 @@ import java.util.Random;
  */
 public class Fingerprint {
 
-    private static final String PROFILES_RESOURCE_PATH = System.getenv("fingerprint_profiles");
     private static final Gson GSON = new Gson();
     private static final Random RANDOM = new Random();
 
@@ -253,10 +253,15 @@ public class Fingerprint {
                 return cachedProfiles;
             }
 
-            Path profilesPath = Path.of(PROFILES_RESOURCE_PATH);
+            String fingerprintsPath = Settings.get().fingerprintsPath();
+            if (fingerprintsPath == null || fingerprintsPath.isBlank()) {
+                throw new IOException("Fingerprints path is not configured in Settings");
+            }
+
+            Path profilesPath = Path.of(fingerprintsPath);
 
             if (!Files.exists(profilesPath)) {
-                throw new IOException("Fingerprint profiles file not found: " + PROFILES_RESOURCE_PATH);
+                throw new IOException("Fingerprint profiles file not found: " + fingerprintsPath);
             }
 
             List<String> loaded = new ArrayList<>();
@@ -271,7 +276,7 @@ public class Fingerprint {
             }
 
             if (loaded.isEmpty()) {
-                throw new IOException("No profiles found in file: " + PROFILES_RESOURCE_PATH);
+                throw new IOException("No profiles found in file: " + fingerprintsPath);
             }
 
             cachedProfiles = Collections.unmodifiableList(loaded);
