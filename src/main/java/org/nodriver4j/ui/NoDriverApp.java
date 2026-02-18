@@ -8,6 +8,7 @@ import javafx.scene.layout.BorderPane;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 import org.nodriver4j.persistence.Database;
+import org.nodriver4j.services.TaskExecutionService;
 import org.nodriver4j.ui.components.WindowTitleBar;
 import org.nodriver4j.ui.util.WindowResizeHelper;
 
@@ -98,10 +99,17 @@ public class NoDriverApp extends Application {
         super.stop();
         System.out.println("[NoDriverApp] Application shutting down...");
 
+        // Stop all running browsers and update task statuses to STOPPED in the database.
+        // This must happen before Database.shutdown() so status writes succeed.
+        // The JVM shutdown hook in TaskExecutionService handles emergency cleanup
+        // (kill signal, task manager, etc.) where graceful DB writes aren't possible.
+        TaskExecutionService.instance().stopAll();
+        TaskExecutionService.instance().shutdown();
+
         // Shut down database cleanly
         Database.shutdown();
 
-        // Future: Clean up resources, save state, etc.
+        System.out.println("[NoDriverApp] Application shutdown complete");
     }
 
     // ==================== Resource Loading ====================

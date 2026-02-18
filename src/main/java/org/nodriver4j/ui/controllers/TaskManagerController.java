@@ -2,12 +2,16 @@ package org.nodriver4j.ui.controllers;
 
 import javafx.fxml.FXML;
 import org.nodriver4j.persistence.Database;
+import org.nodriver4j.persistence.entity.TaskEntity;
 import org.nodriver4j.persistence.entity.TaskGroupEntity;
+import org.nodriver4j.persistence.repository.ProxyRepository;
 import org.nodriver4j.persistence.repository.TaskGroupRepository;
 import org.nodriver4j.persistence.repository.TaskRepository;
+import org.nodriver4j.services.TaskExecutionService;
 import org.nodriver4j.ui.components.TaskGroupCard;
 import org.nodriver4j.ui.dialogs.CreateTaskGroupDialog;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.LongConsumer;
@@ -54,6 +58,7 @@ public class TaskManagerController extends GroupManagerController<TaskGroupCard>
 
     private final TaskGroupRepository taskGroupRepository = new TaskGroupRepository();
     private final TaskRepository taskRepository = new TaskRepository();
+    private final ProxyRepository proxyRepository = new ProxyRepository();
 
     // ==================== Callbacks ====================
 
@@ -193,18 +198,48 @@ public class TaskManagerController extends GroupManagerController<TaskGroupCard>
     /**
      * Handles a task group card being deleted.
      *
-     * <p>Deletes from the database first (CASCADE removes child tasks).
-     * If deletion succeeds, removes the card from the UI. If deletion
-     * fails, shows an error alert and leaves the card in place.</p>
+     * <p>Performs a full cascading cleanup before removing the group:</p>
+     * <ol>
+     *   <li>Stop all active browsers in the group</li>
+     *   <li>Delete userdata directories from disk</li>
+     *   <li>Clean up standalone proxies (null-group proxies from edit dialog)</li>
+     *   <li>Delete the group from the database (CASCADE removes child tasks)</li>
+     *   <li>Remove the card from the UI</li>
+     * </ol>
+     *
+     * <p>If the database deletion fails, an error alert is shown and the
+     * card remains in place. Browser and disk cleanup are best-effort —
+     * failures are logged but do not prevent group deletion.</p>
      *
      * @param card the card to delete
      */
     private void onTaskGroupDeleted(TaskGroupCard card) {
+        long groupId = card.groupId();
         System.out.println("[TaskManagerController] Deleting task group: "
-                + card.groupName() + " (ID: " + card.groupId() + ")");
+                + card.groupName() + " (ID: " + groupId + ")");
 
         try {
-            taskGroupRepository.deleteById(card.groupId());
+            List<TaskEntity> tasks = taskRepository.findByGroupId(groupId);
+            TaskExecutionService service = TaskExecutionService.instance();
+
+            // Stop all active browsers in the group
+            for (TaskEntity task : tasks) {
+                if (service.isActive(task.id())) {
+                    service.stopBrowser(task.id());
+                }
+            }
+
+            // Clean up userdata directories and standalone proxies
+            for (TaskEntity task : tasks) {
+                if (task.hasUserdataPath()) {
+                    TaskExecutionService.deleteDirectoryWithRetry(Path.of(task.userdataPath()));
+                }
+                proxyRepository.deleteIfStandalone(task.proxyId());
+            }
+
+            // Delete the group — CASCADE removes child task rows from the database
+            taskGroupRepository.deleteById(groupId);
+
         } catch (Database.DatabaseException e) {
             System.err.println("[TaskManagerController] Failed to delete task group: " + e.getMessage());
             showErrorAlert("Failed to Delete Task Group",
@@ -216,6 +251,42 @@ public class TaskManagerController extends GroupManagerController<TaskGroupCard>
         removeCard(card);
 
         System.out.println("[TaskManagerController] Task group deleted. Total groups: " + cardCount());
+    }
+
+    /**
+     * Refreshes task count and running count on all task group cards.
+     *
+     * <p>For each card, loads all tasks in the group and checks the active
+     * state via {@link TaskExecutionService#isActive(long)}. This gives an
+     * accurate count based on actual browser/thread state rather than
+     * potentially stale database status values.</p>
+     *
+     * <p>Intended to be called when navigating back to the Task Manager page
+     * so that cards reflect any changes made on the detail page.</p>
+     */
+    public void refreshCardStats() {
+        TaskExecutionService service = TaskExecutionService.instance();
+
+        for (TaskGroupCard card : cards()) {
+            long groupId = card.groupId();
+
+            try {
+                List<TaskEntity> tasks = taskRepository.findByGroupId(groupId);
+                card.setTaskCount(tasks.size());
+
+                int runningCount = 0;
+                for (TaskEntity task : tasks) {
+                    if (service.isActive(task.id())) {
+                        runningCount++;
+                    }
+                }
+                card.setRunningCount(runningCount);
+
+            } catch (Database.DatabaseException e) {
+                System.err.println("[TaskManagerController] Failed to refresh stats for group "
+                        + groupId + ": " + e.getMessage());
+            }
+        }
     }
 
     // ==================== Card Building ====================

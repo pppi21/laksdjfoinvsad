@@ -309,7 +309,7 @@ public class TaskGroupDetailController implements Initializable {
                 taskRepository.save(task);
 
                 // Clean up old standalone proxy if it was replaced
-                cleanUpStandaloneProxy(oldProxyId);
+                proxyRepository.deleteIfStandalone(oldProxyId);
 
                 // Refresh the row
                 findTaskRow(taskId).ifPresent(r -> {
@@ -353,7 +353,7 @@ public class TaskGroupDetailController implements Initializable {
                 taskRepository.deleteById(taskId);
 
                 // Clean up standalone proxy (null-group proxies created via edit)
-                cleanUpStandaloneProxy(task.proxyId());
+                proxyRepository.deleteIfStandalone(task.proxyId());
             }
 
             // Remove row from UI
@@ -704,32 +704,6 @@ public class TaskGroupDetailController implements Initializable {
         return proxy.toDisplayString();
     }
 
-    /**
-     * Deletes a standalone proxy if it is no longer referenced.
-     *
-     * <p>Only deletes proxies with a null group ID (standalone proxies
-     * created via the edit dialog). Group-assigned proxies are never
-     * touched by this method.</p>
-     *
-     * @param proxyId the proxy ID to check and potentially delete, or null
-     */
-    private void cleanUpStandaloneProxy(Long proxyId) {
-        if (proxyId == null) {
-            return;
-        }
-
-        try {
-            Optional<ProxyEntity> proxyOpt = proxyRepository.findById(proxyId);
-            if (proxyOpt.isPresent() && !proxyOpt.get().isGrouped()) {
-                proxyRepository.deleteById(proxyId);
-                System.out.println("[TaskGroupDetailController] Cleaned up standalone proxy #" + proxyId);
-            }
-        } catch (Database.DatabaseException e) {
-            System.err.println("[TaskGroupDetailController] Failed to clean up proxy "
-                    + proxyId + ": " + e.getMessage());
-        }
-    }
-
     // ==================== Event Handlers ====================
 
     /**
@@ -890,7 +864,7 @@ public class TaskGroupDetailController implements Initializable {
                 }
 
                 // Clean up old standalone proxy (null-group proxies from edit dialog)
-                cleanUpStandaloneProxy(oldProxyId);
+                proxyRepository.deleteIfStandalone(oldProxyId);
             }
 
             System.out.println("[TaskGroupDetailController] Proxies changed — group "

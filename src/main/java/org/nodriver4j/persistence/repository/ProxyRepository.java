@@ -403,6 +403,36 @@ public class ProxyRepository implements Repository<ProxyEntity> {
         }
     }
 
+    /**
+     * Deletes a proxy if it is standalone (null group ID) and exists.
+     *
+     * <p>Standalone proxies are created via the task edit dialog and are not
+     * part of any proxy group. This method is safe to call with any proxy ID —
+     * group-assigned proxies are never touched.</p>
+     *
+     * @param proxyId the proxy ID to check, or null (no-op)
+     * @return true if a proxy was deleted
+     */
+    public boolean deleteIfStandalone(Long proxyId) {
+        if (proxyId == null) {
+            return false;
+        }
+
+        try {
+            Optional<ProxyEntity> proxyOpt = findById(proxyId);
+            if (proxyOpt.isPresent() && !proxyOpt.get().isGrouped()) {
+                deleteById(proxyId);
+                return true;
+            }
+            return false;
+
+        } catch (Database.DatabaseException e) {
+            System.err.println("[ProxyRepository] Failed to delete standalone proxy "
+                    + proxyId + ": " + e.getMessage());
+            return false;
+        }
+    }
+
     // ==================== Parameter Setting ====================
 
     /**

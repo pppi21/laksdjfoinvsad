@@ -42,7 +42,6 @@ import java.time.format.DateTimeFormatter;
  *   <li>Proxy string parsing (use ProxyImporter)</li>
  * </ul>
  *
- * @see ProxyGroupRepository
  * @see ProxyEntity
  */
 public class ProxyGroupEntity {
