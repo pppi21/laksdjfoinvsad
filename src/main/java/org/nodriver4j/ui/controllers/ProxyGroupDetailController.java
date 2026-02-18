@@ -143,7 +143,7 @@ public class ProxyGroupDetailController implements Initializable {
     @Override
     public void initialize(URL location, ResourceBundle resources) {
         System.out.println("[ProxyGroupDetailController] Initialized");
-        SmoothScrollHelper.apply(scrollPane);
+        SmoothScrollHelper.apply(scrollPane, 0.2, 1.2);
     }
 
     // ==================== Public API ====================

@@ -293,7 +293,7 @@ public final class CreateProxyGroupDialog extends Dialog<CreateProxyGroupDialog.
         scrollPane.setPrefViewportWidth(470);
         scrollPane.setMaxHeight(400);
         scrollPane.setStyle("-fx-background-color: transparent; -fx-background: transparent;");
-        SmoothScrollHelper.apply(scrollPane);
+        SmoothScrollHelper.apply(scrollPane, 0.4, 0.8);
         return scrollPane;
     }
 
@@ -426,7 +426,7 @@ public final class CreateProxyGroupDialog extends Dialog<CreateProxyGroupDialog.
         area.setPromptText("Paste proxies here (one per line)...");
         area.setPrefRowCount(6);
         area.setWrapText(false);
-        SmoothScrollHelper.apply(area);
+        SmoothScrollHelper.apply(area, 0.4, 2.0);
         return area;
     }
 

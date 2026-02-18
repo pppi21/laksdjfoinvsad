@@ -332,7 +332,7 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
         scrollPane.setPrefViewportWidth(480);
         scrollPane.setMaxHeight(500);
         scrollPane.setStyle("-fx-background-color: transparent; -fx-background: transparent;");
-        SmoothScrollHelper.apply(scrollPane);
+        SmoothScrollHelper.apply(scrollPane, 0.4, 0.8);
         return scrollPane;
     }
 
@@ -434,7 +434,6 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
         groupScrollPane.setPrefViewportHeight(200);
         groupScrollPane.setMaxHeight(200);
         groupScrollPane.setStyle("-fx-background-color: transparent; -fx-background: transparent;");
-        SmoothScrollHelper.apply(groupScrollPane);
 
         StackPane panel = new StackPane();
         panel.getChildren().addAll(groupScrollPane, profileViewContainer);

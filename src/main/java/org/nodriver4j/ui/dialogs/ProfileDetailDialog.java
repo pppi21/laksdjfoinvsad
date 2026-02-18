@@ -406,7 +406,7 @@ public final class ProfileDetailDialog extends Dialog<String> {
             area.setText(existingNotes);
         }
 
-        SmoothScrollHelper.apply(area);
+        SmoothScrollHelper.apply(area, 0.4, 2.0);
         return area;
     }
 
