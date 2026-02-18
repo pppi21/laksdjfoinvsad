@@ -19,6 +19,7 @@ import org.nodriver4j.persistence.repository.ProfileGroupRepository;
 import org.nodriver4j.persistence.repository.ProfileRepository;
 import org.nodriver4j.persistence.repository.ProxyGroupRepository;
 import org.nodriver4j.persistence.repository.ProxyRepository;
+import org.nodriver4j.ui.util.SmoothScrollHelper;
 
 import java.util.*;
 
@@ -288,6 +289,10 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
         loadGroupList();
         loadProxyGroups();
         showGroupView();
+
+        // Smooth scrolling for all scrollable controls
+        SmoothScrollHelper.apply(profileListView);
+        SmoothScrollHelper.apply(proxyGroupComboBox);
     }
 
     // ==================== UI Building ====================
@@ -327,7 +332,7 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
         scrollPane.setPrefViewportWidth(480);
         scrollPane.setMaxHeight(500);
         scrollPane.setStyle("-fx-background-color: transparent; -fx-background: transparent;");
-
+        SmoothScrollHelper.apply(scrollPane);
         return scrollPane;
     }
 
@@ -429,6 +434,7 @@ public class CreateTaskDialog extends Dialog<CreateTaskDialog.Result> {
         groupScrollPane.setPrefViewportHeight(200);
         groupScrollPane.setMaxHeight(200);
         groupScrollPane.setStyle("-fx-background-color: transparent; -fx-background: transparent;");
+        SmoothScrollHelper.apply(groupScrollPane);
 
         StackPane panel = new StackPane();
         panel.getChildren().addAll(groupScrollPane, profileViewContainer);

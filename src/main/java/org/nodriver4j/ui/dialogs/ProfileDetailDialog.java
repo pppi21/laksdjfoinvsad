@@ -17,6 +17,7 @@ import javafx.stage.StageStyle;
 import javafx.stage.Window;
 import javafx.util.Duration;
 import org.nodriver4j.persistence.entity.ProfileEntity;
+import org.nodriver4j.ui.util.SmoothScrollHelper;
 
 import java.util.Optional;
 
@@ -188,6 +189,7 @@ public final class ProfileDetailDialog extends Dialog<String> {
         scrollPane.setPrefViewportHeight(SCROLL_PREF_HEIGHT);
         scrollPane.setMaxHeight(SCROLL_PREF_HEIGHT);
         scrollPane.setStyle("-fx-background-color: transparent;");
+        SmoothScrollHelper.apply(scrollPane);
 
         // Root content
         VBox content = new VBox(8);
@@ -404,6 +406,7 @@ public final class ProfileDetailDialog extends Dialog<String> {
             area.setText(existingNotes);
         }
 
+        SmoothScrollHelper.apply(area);
         return area;
     }
 

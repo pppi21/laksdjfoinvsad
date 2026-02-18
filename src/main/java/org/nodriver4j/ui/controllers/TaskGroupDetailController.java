@@ -21,6 +21,7 @@ import org.nodriver4j.ui.components.TaskRow;
 import org.nodriver4j.ui.dialogs.ChangeProxiesDialog;
 import org.nodriver4j.ui.dialogs.CreateTaskDialog;
 import org.nodriver4j.ui.dialogs.EditTaskDialog;
+import org.nodriver4j.ui.util.SmoothScrollHelper;
 import org.nodriver4j.ui.windows.ViewBrowserWindow;
 
 import java.net.URL;
@@ -468,8 +469,7 @@ public class TaskGroupDetailController implements Initializable {
     @Override
     public void initialize(URL location, ResourceBundle resources) {
         System.out.println("[TaskGroupDetailController] Initialized (awaiting loadGroup call)");
-
-        // Page starts in empty state until loadGroup is called
+        SmoothScrollHelper.apply(scrollPane);
         updateViewState();
     }
 

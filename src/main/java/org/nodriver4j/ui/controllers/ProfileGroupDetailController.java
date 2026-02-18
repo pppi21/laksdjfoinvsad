@@ -15,6 +15,7 @@ import org.nodriver4j.persistence.repository.ProfileGroupRepository;
 import org.nodriver4j.persistence.repository.ProfileRepository;
 import org.nodriver4j.ui.components.ProfileCard;
 import org.nodriver4j.ui.dialogs.ProfileDetailDialog;
+import org.nodriver4j.ui.util.SmoothScrollHelper;
 
 import java.net.URL;
 import java.util.ArrayList;
@@ -126,6 +127,7 @@ public class ProfileGroupDetailController implements Initializable {
     @Override
     public void initialize(URL location, ResourceBundle resources) {
         System.out.println("[ProfileGroupDetailController] Initialized");
+        SmoothScrollHelper.apply(scrollPane);
     }
 
     // ==================== Group Loading ====================

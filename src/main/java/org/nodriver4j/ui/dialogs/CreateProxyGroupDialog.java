@@ -13,6 +13,7 @@ import javafx.stage.FileChooser;
 import javafx.stage.Modality;
 import javafx.stage.StageStyle;
 import javafx.stage.Window;
+import org.nodriver4j.ui.util.SmoothScrollHelper;
 
 import java.io.File;
 import java.io.IOException;
@@ -292,7 +293,7 @@ public final class CreateProxyGroupDialog extends Dialog<CreateProxyGroupDialog.
         scrollPane.setPrefViewportWidth(470);
         scrollPane.setMaxHeight(400);
         scrollPane.setStyle("-fx-background-color: transparent; -fx-background: transparent;");
-
+        SmoothScrollHelper.apply(scrollPane);
         return scrollPane;
     }
 
@@ -425,6 +426,7 @@ public final class CreateProxyGroupDialog extends Dialog<CreateProxyGroupDialog.
         area.setPromptText("Paste proxies here (one per line)...");
         area.setPrefRowCount(6);
         area.setWrapText(false);
+        SmoothScrollHelper.apply(area);
         return area;
     }
 

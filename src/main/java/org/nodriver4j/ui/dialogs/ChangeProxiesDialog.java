@@ -11,6 +11,7 @@ import javafx.util.StringConverter;
 import org.nodriver4j.persistence.entity.ProxyGroupEntity;
 import org.nodriver4j.persistence.repository.ProxyGroupRepository;
 import org.nodriver4j.persistence.repository.ProxyRepository;
+import org.nodriver4j.ui.util.SmoothScrollHelper;
 
 import java.util.List;
 
@@ -148,6 +149,7 @@ public class ChangeProxiesDialog extends Dialog<ChangeProxiesDialog.Result> {
 
         // Load proxy groups into ComboBox
         loadProxyGroups();
+        SmoothScrollHelper.apply(proxyGroupComboBox);
     }
 
     // ==================== UI Building ====================

@@ -15,6 +15,7 @@ import org.nodriver4j.persistence.repository.ProxyGroupRepository;
 import org.nodriver4j.persistence.repository.ProxyRepository;
 import org.nodriver4j.ui.components.ProxyRow;
 import org.nodriver4j.ui.dialogs.CreateProxyGroupDialog;
+import org.nodriver4j.ui.util.SmoothScrollHelper;
 
 import java.net.URL;
 import java.util.ArrayList;
@@ -142,7 +143,7 @@ public class ProxyGroupDetailController implements Initializable {
     @Override
     public void initialize(URL location, ResourceBundle resources) {
         System.out.println("[ProxyGroupDetailController] Initialized");
-        // Actual data loading happens in loadGroup() called by MainController
+        SmoothScrollHelper.apply(scrollPane);
     }
 
     // ==================== Public API ====================
