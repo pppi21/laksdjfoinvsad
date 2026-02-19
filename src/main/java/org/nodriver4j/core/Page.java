@@ -211,10 +211,17 @@ public class Page {
         }
     }
 
-    private void ensureRuntimeEnabled() throws TimeoutException {
+    public void ensureRuntimeEnabled() throws TimeoutException {
         if (!runtimeEnabled) {
             cdp.send("Runtime.enable", null);
             runtimeEnabled = true;
+        }
+    }
+
+    public void ensureRuntimeDisabled() throws TimeoutException {
+        if (runtimeEnabled) {
+            cdp.send("Runtime.disable", null);
+            runtimeEnabled = false;
         }
     }
 
@@ -1997,6 +2004,8 @@ public class Page {
         // Trigger click animation on cursor overlay
         triggerCursorClickAnimation();
 
+        ensureRuntimeDisabled();
+
         // Mouse down
         dispatchMouseButton(position, "mousePressed", "left", 1);
 
@@ -2049,6 +2058,7 @@ public class Page {
      */
     public void jsClick(String selector) throws TimeoutException {
         ensureRuntimeEnabled();
+
 
         String script;
         if (isXPath(selector)) {

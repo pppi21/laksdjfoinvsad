@@ -47,12 +47,13 @@ public class FunkoGen implements AutomationScript {
     private static final String ACCEPT_TERMS_CHECKBOX = "div.terms-agree-field.form-group.custom-control.custom-checkbox > label";
     private static final String CREATE_ACCOUNT_BUTTON = "#register > form > button";
     private static final String OTP_SENT_ID = "#ajaxModal > div > div > div > div > div.modal-header > div";
-    private static final String SKIP_PHONE_BUTTON = "#alt-action-skip";
-    private static final String CONTINUE_NAME_BUTTON = "#forward-button";
-    private static final String CONTINUE_TERMS_BUTTON = "#forward-button";
-    private static final String SKIP_SECURITY_BUTTON = "button[data-testid='skip']";
-    private static final String CONTINUE_SECURITY_BUTTON = "#guided-security-upgrade-ui > div[data-baseweb='block'] > button";
-    private static final String HOMEPAGE_SUCCESS_ID = "div.entry-confirmation-main > h2";
+    private static final String VERIFIED_SUCCESS_BUTTON = "button[class='btn btn-primary w-50']";
+    private static final String LOGIN_EMAIL_TEXT = "#login-form-email";
+    private static final String LOGIN_PASSWORD_TEXT = "#login-form-password";
+    private static final String REMEMBER_ME_BUTTON = "div.form-group.custom-control.custom-checkbox.pull-left.remember-me > label";
+    private static final String LOGIN_BUTTON = "button[class='btn btn-primary login-btn btn-bigger']";
+    private static final String ENTER_DRAW_BUTTON = "button.exclusive-access-cta";
+    private static final String HOMEPAGE_SUCCESS_ID = "#sweepstakesCongratulationsModal";
 
     // ==================== Password Generation ====================
 
@@ -110,42 +111,25 @@ public class FunkoGen implements AutomationScript {
             signUp();
 
             AutomationScript.persistNote(profile, "Funko Password: " + generatedPassword, profileRepository);
-            logger.log("Password saved to profile notes");
 
-            logger.log("Waiting for email verifcation...");
+            logger.log("Password saved, waiting for email verification...");
             fetchVerificationLink();
 
-            logger.success("Check browser for successful verification");
-            page.sleep(1000000);
+            logger.success("Account created successfully!");
 
-            if (page.exists(FIRST_NAME_TEXT)) {
-                logger.log("Entering name...");
-                enterName();
-            } else if (page.exists(SKIP_PHONE_BUTTON)) {
-                logger.log("Skipping phone number...");
-                skipPhoneNumber();
-                logger.log("Entering name...");
-                enterName();
-            }
+            page.sleep(2000);
 
-            logger.log("Accepting terms...");
-            acceptTerms();
+            logger.log("Logging in...");
+            login();
 
-            page.sleep(1000);
-            if (page.exists(CONTINUE_SECURITY_BUTTON)) {
-                logger.log("Skipping security prompt...");
-                skipSecurity();
-            }
+            logger.log("Entering draw...");
+            enterDraw();
 
-            page.waitForLoadEvent(15000);
-            page.sleep(3000);
+            logger.success("Successfully entered draw!");
+            page.sleep(5000);
+            return;
 
-            if (page.exists(HOMEPAGE_SUCCESS_ID)) {
-                logger.success("Signup successful for: " + profile.emailAddress());
-                return;
-            }
-
-        } catch (UnexpectedNavigationException | GmailClient.GmailClientException | TimeoutException e) {
+        } catch (UnexpectedNavigationException | GmailClient.GmailClientException e) {
             logger.error("Attempt failed: " + e.getMessage());
         }
 
@@ -183,22 +167,22 @@ public class FunkoGen implements AutomationScript {
                 fillFormField(PASSWORD_TEXT, generatedPassword, true);
                 fillFormField(CONFIRM_PASSWORD_TEXT, generatedPassword, true);
                 page.jsClick(ACCEPT_TERMS_CHECKBOX);
+                logger.log("Submitting signup...");
                 page.click(CREATE_ACCOUNT_BUTTON);
-                while(!page.exists(OTP_SENT_ID)) {
-                    System.out.println("Does not exist");
+                for(int check = 0; check < 15; check++) {
+                    if(page.exists(OTP_SENT_ID)) break;
                     page.sleep(2000);
                 }
-                System.out.println("Exists");
                 return;
 
             } catch (TimeoutException | InterruptedException e) {
                 logger.log("Sign up attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
             }
         }
-        throw new RuntimeException("signUpWitfhEmail failed: Maximum " + ATTEMPTS + " attempts reached");
+        throw new RuntimeException("signUp failed: Maximum " + ATTEMPTS + " attempts reached");
     }
 
-    // ==================== Email OTP ====================
+    // ==================== Email Verification ====================
 
     private void fetchVerificationLink() throws GmailClient.GmailClientException {
         GmailClient gmail = new GmailClient(profile.emailAddress(), profile.catchallEmail(), profile.imapPassword());
@@ -213,70 +197,60 @@ public class FunkoGen implements AutomationScript {
                 return;
 
             } catch (EmailPollingBase.EmailExtractionException e) {
-                logger.log("OTP attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
+                logger.log("Verification attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
             } catch (TimeoutException e) {
                 throw new RuntimeException(e);
             }
         }
-        throw new RuntimeException("Email OTP failed: Maximum " + ATTEMPTS + " attempts reached");
+        throw new RuntimeException("Email verification failed: Maximum " + ATTEMPTS + " attempts reached");
     }
 
-    // ==================== Phone ====================
+    // ==================== Login ====================
 
-    private void skipPhoneNumber() {
+    private void login() throws RuntimeException {
+
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
             try {
-                page.click(SKIP_PHONE_BUTTON);
-                return;
+                page.click(VERIFIED_SUCCESS_BUTTON);
+                logger.log("Entering email...");
+                fillFormField(LOGIN_EMAIL_TEXT, profile.emailAddress(), true);
+                logger.log("Entering password...");
+                fillFormField(LOGIN_PASSWORD_TEXT, generatedPassword, true);
+                page.click(REMEMBER_ME_BUTTON);
+                page.click(LOGIN_BUTTON);
+
+                for(int check = 0; check < 15; check++) {
+                    if(page.exists(ENTER_DRAW_BUTTON)) return;
+                    page.sleep(2000);
+                }
+
+            } catch (TimeoutException | InterruptedException e) {
+                logger.log("Login attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
+            }
+        }
+        throw new RuntimeException("login failed: Maximum " + ATTEMPTS + " attempts reached");
+    }
+
+    // ==================== Login ====================
+
+    private void enterDraw() throws RuntimeException {
+
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            try {
+                page.sleep(3000);
+                page.click(ENTER_DRAW_BUTTON);
+
+                for(int check = 0; check < 20; check++) {
+                    if(page.exists(HOMEPAGE_SUCCESS_ID)) return;
+                    page.sleep(2000);
+
+                }
+
             } catch (TimeoutException e) {
-                logger.log("Phone skip attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
-                page.sleep(1000);
+                logger.log("Entry attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
             }
         }
-    }
-
-    // ==================== Name ====================
-
-    private void enterName() {
-        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
-            try {
-                fillFormField(FIRST_NAME_TEXT, profile.firstName(), true);
-                fillFormField(LAST_NAME_TEXT, profile.lastName(), true);
-                page.click(CONTINUE_NAME_BUTTON);
-                return;
-            } catch (InterruptedException | TimeoutException e) {
-                logger.log("Name attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
-            }
-        }
-    }
-
-    // ==================== Terms ====================
-
-    private void acceptTerms() {
-        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
-            try {
-                page.click(ACCEPT_TERMS_CHECKBOX);
-                page.click(CONTINUE_TERMS_BUTTON);
-                return;
-            } catch (TimeoutException e) {
-                logger.log("Terms attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
-            }
-        }
-    }
-
-    // ==================== Security ====================
-
-    private void skipSecurity() throws RuntimeException {
-        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
-            try {
-                page.waitForSelector(CONTINUE_SECURITY_BUTTON, 1000);
-                page.click(SKIP_SECURITY_BUTTON);
-                return;
-            } catch (TimeoutException e) {
-                logger.log("Security attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
-            }
-        }
-        throw new RuntimeException("Skip security failed: session likely flagged");
+        throw new RuntimeException("enterDraw failed: Maximum " + ATTEMPTS + " attempts reached.");
     }
 
     // ==================== Form Helpers ====================
