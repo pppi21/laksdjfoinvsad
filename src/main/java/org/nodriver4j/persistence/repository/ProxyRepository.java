@@ -109,6 +109,9 @@ public class ProxyRepository implements Repository<ProxyEntity> {
     private static final String DELETE_ALL_SQL =
             "DELETE FROM proxies";
 
+    private static final String SELECT_BY_GROUP_ID_PAGINATED_SQL =
+            "SELECT " + SELECT_COLUMNS + " FROM proxies WHERE group_id = ? ORDER BY id ASC LIMIT ? OFFSET ?";
+
     // ==================== Create / Update ====================
 
     @Override
@@ -271,6 +274,42 @@ public class ProxyRepository implements Repository<ProxyEntity> {
 
         } catch (SQLException e) {
             throw new Database.DatabaseException("Failed to find proxies by group ID: " + groupId, e);
+        }
+
+        return proxies;
+    }
+
+    /**
+     * Finds proxies belonging to a specific group with pagination.
+     *
+     * <p>Results are ordered by ID ascending, preserving the original
+     * import order. This is used by the UI to display one page of proxies
+     * at a time.</p>
+     *
+     * @param groupId the proxy group ID
+     * @param limit   the maximum number of proxies to return
+     * @param offset  the number of proxies to skip
+     * @return list of proxies for the requested page (empty list if none)
+     */
+    public List<ProxyEntity> findByGroupId(long groupId, int limit, int offset) {
+        List<ProxyEntity> proxies = new ArrayList<>();
+
+        try (Connection conn = Database.connection();
+             PreparedStatement stmt = conn.prepareStatement(SELECT_BY_GROUP_ID_PAGINATED_SQL)) {
+
+            stmt.setLong(1, groupId);
+            stmt.setInt(2, limit);
+            stmt.setInt(3, offset);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    proxies.add(mapRow(rs));
+                }
+            }
+
+        } catch (SQLException e) {
+            throw new Database.DatabaseException(
+                    "Failed to find proxies by group ID (paginated): " + groupId, e);
         }
 
         return proxies;

@@ -15,6 +15,7 @@
     Displays individual proxies belonging to a proxy group as full-width rows.
     Navigated to by clicking a proxy group card in the Proxy Manager.
     Has a + button to add more proxies to the group.
+    Includes Gmail-style pagination controls above the proxy list.
     Controller: ProxyGroupDetailController
 -->
 <VBox xmlns="http://javafx.com/javafx/21"
@@ -52,6 +53,43 @@
             <graphic>
                 <Label text="+"
                        style="-fx-text-fill: #e5e5e5; -fx-font-size: 20px; -fx-font-weight: bold;"/>
+            </graphic>
+        </Button>
+
+    </HBox>
+
+    <!-- ==================== Pagination Bar ==================== -->
+    <HBox fx:id="paginationBar"
+          alignment="CENTER_RIGHT"
+          spacing="8"
+          visible="false"
+          managed="false">
+        <padding>
+            <Insets top="4" right="4" bottom="8" left="0"/>
+        </padding>
+
+        <!-- Range label: e.g. "1–50 of 847" -->
+        <Label fx:id="pageRangeLabel"
+               text=""
+               styleClass="pagination-range-label"/>
+
+        <!-- Previous Page -->
+        <Button fx:id="prevPageButton"
+                styleClass="pagination-arrow-button"
+                onAction="#onPrevPageClicked">
+            <graphic>
+                <Label text="‹"
+                       style="-fx-text-fill: #e5e5e5; -fx-font-size: 16px; -fx-font-weight: bold;"/>
+            </graphic>
+        </Button>
+
+        <!-- Next Page -->
+        <Button fx:id="nextPageButton"
+                styleClass="pagination-arrow-button"
+                onAction="#onNextPageClicked">
+            <graphic>
+                <Label text="›"
+                       style="-fx-text-fill: #e5e5e5; -fx-font-size: 16px; -fx-font-weight: bold;"/>
             </graphic>
         </Button>
 

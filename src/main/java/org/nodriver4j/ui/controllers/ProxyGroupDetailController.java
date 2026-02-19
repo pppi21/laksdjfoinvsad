@@ -6,6 +6,7 @@ import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import org.nodriver4j.persistence.Database;
 import org.nodriver4j.persistence.entity.ProxyEntity;
@@ -26,41 +27,53 @@ import java.util.ResourceBundle;
 /**
  * Controller for the Proxy Group Detail page.
  *
- * <p>Displays all proxies belonging to a specific proxy group and allows
- * adding more proxies or deleting existing ones. Unlike the Profile Group
- * Detail page, this page has an add button for importing additional proxies.</p>
+ * <p>Displays proxies belonging to a specific proxy group using Gmail-style
+ * pagination. Only one page of proxies (up to {@value #PAGE_SIZE}) is loaded
+ * at a time. Navigation arrows allow moving between pages, and a range label
+ * shows the current position (e.g., "1–50 of 847").</p>
  *
  * <p>This controller is paired with {@code proxy-group-detail.fxml}.
  * Navigation to this page is handled by {@link MainController#showProxyGroupDetail(long)},
  * which calls {@link #loadGroup(long)} to populate the page with the
  * specified group's data.</p>
  *
- * <h2>Add Flow</h2>
- * <ol>
- *   <li>User clicks the "+" button</li>
- *   <li>{@link CreateProxyGroupDialog} opens in ADD mode</li>
- *   <li>User provides proxy content (file or paste)</li>
- *   <li>{@link ProxyImporter} parses the content</li>
- *   <li>New proxies are batch-saved with the current group ID</li>
- *   <li>ProxyRow components are created and added to the list</li>
- *   <li>Proxy count is updated</li>
- * </ol>
+ * <h2>Pagination Behavior</h2>
+ * <ul>
+ *   <li>Page size is {@value #PAGE_SIZE} proxies per page</li>
+ *   <li>Navigating between pages replaces all displayed rows (not appending)</li>
+ *   <li>Scroll position resets to the top on each page change</li>
+ *   <li>Arrow buttons are disabled (not hidden) when at the first/last page</li>
+ *   <li>Pagination controls are visible even for single-page groups (arrows disabled)</li>
+ *   <li>Pagination controls are hidden only when the group is empty</li>
+ * </ul>
  *
- * <h2>Delete Flow</h2>
- * <ol>
- *   <li>User clicks delete button on a ProxyRow (no confirmation needed)</li>
- *   <li>Proxy is deleted from the database</li>
- *   <li>ProxyRow is removed from the list</li>
- *   <li>Proxy count is updated</li>
- * </ol>
+ * <h2>Add Proxy Behavior</h2>
+ * <ul>
+ *   <li>New proxies are saved to the database with auto-incrementing IDs</li>
+ *   <li>If the user is on the last page, the current page is reloaded so
+ *       newly added proxies appear (up to the page size limit)</li>
+ *   <li>If the user is NOT on the last page, only the total count is
+ *       refreshed — no row changes occur</li>
+ * </ul>
+ *
+ * <h2>Delete Proxy Behavior</h2>
+ * <ul>
+ *   <li>The proxy is deleted from the database and the current page is
+ *       reloaded to backfill from subsequent items</li>
+ *   <li>If deleting the last proxy on the current page, the controller
+ *       navigates back to the previous page</li>
+ *   <li>If the group becomes empty, the empty state is displayed</li>
+ * </ul>
  *
  * <h2>Responsibilities</h2>
  * <ul>
- *   <li>Load and display proxies for a specific group</li>
- *   <li>Update page header with group name and proxy count</li>
+ *   <li>Load and display one page of proxies for a specific group</li>
+ *   <li>Manage pagination state (current page, total count)</li>
+ *   <li>Update page header with group name and total proxy count</li>
+ *   <li>Update pagination bar with range label and arrow states</li>
  *   <li>Handle back button navigation</li>
- *   <li>Handle add button → dialog → import → persist → add rows</li>
- *   <li>Handle proxy delete → persist → remove row</li>
+ *   <li>Handle add button → dialog → import → persist → reload page</li>
+ *   <li>Handle proxy delete → persist → reload page</li>
  *   <li>Toggle between empty state and proxy list</li>
  *   <li>Build ProxyRow components with wired callbacks</li>
  * </ul>
@@ -81,6 +94,13 @@ import java.util.ResourceBundle;
  */
 public class ProxyGroupDetailController implements Initializable {
 
+    // ==================== Constants ====================
+
+    /**
+     * Number of proxies displayed per page.
+     */
+    private static final int PAGE_SIZE = 50;
+
     // ==================== FXML Injected Fields ====================
 
     @FXML
@@ -94,6 +114,18 @@ public class ProxyGroupDetailController implements Initializable {
 
     @FXML
     private Button addButton;
+
+    @FXML
+    private HBox paginationBar;
+
+    @FXML
+    private Label pageRangeLabel;
+
+    @FXML
+    private Button prevPageButton;
+
+    @FXML
+    private Button nextPageButton;
 
     @FXML
     private VBox emptyState;
@@ -126,9 +158,21 @@ public class ProxyGroupDetailController implements Initializable {
     private String currentGroupName;
 
     /**
-     * List of ProxyRow components currently displayed.
+     * List of ProxyRow components currently displayed on the current page.
      */
     private final List<ProxyRow> proxyRows = new ArrayList<>();
+
+    // ==================== Pagination State ====================
+
+    /**
+     * The current page index (0-based).
+     */
+    private int currentPage;
+
+    /**
+     * The total number of proxies in the current group (from DB).
+     */
+    private long totalCount;
 
     // ==================== Callbacks ====================
 
@@ -149,11 +193,11 @@ public class ProxyGroupDetailController implements Initializable {
     // ==================== Public API ====================
 
     /**
-     * Loads a proxy group and displays its proxies.
+     * Loads a proxy group and displays the first page of its proxies.
      *
      * <p>Called by {@link MainController#showProxyGroupDetail(long)} when
-     * navigating to this page. Clears any previously displayed data and
-     * loads fresh data from the database.</p>
+     * navigating to this page. Resets pagination to page 0, clears any
+     * previously displayed data, and loads fresh data from the database.</p>
      *
      * @param groupId the database ID of the proxy group to load
      */
@@ -161,6 +205,7 @@ public class ProxyGroupDetailController implements Initializable {
         System.out.println("[ProxyGroupDetailController] Loading group: " + groupId);
 
         this.currentGroupId = groupId;
+        this.currentPage = 0;
 
         // Clear previous data
         clearProxies();
@@ -179,27 +224,8 @@ public class ProxyGroupDetailController implements Initializable {
         this.currentGroupName = group.name();
         groupNameLabel.setText(currentGroupName);
 
-        // Load proxies
-        try {
-            List<ProxyEntity> proxies = proxyRepository.findByGroupId(groupId);
-
-            for (ProxyEntity proxy : proxies) {
-                ProxyRow row = buildProxyRow(proxy);
-                addProxyRow(row);
-            }
-
-            System.out.println("[ProxyGroupDetailController] Loaded " + proxies.size()
-                    + " proxies for group '" + currentGroupName + "'");
-
-        } catch (Database.DatabaseException e) {
-            System.err.println("[ProxyGroupDetailController] Failed to load proxies: "
-                    + e.getMessage());
-            showErrorAlert("Failed to Load Proxies",
-                    "Could not load proxies from the database.",
-                    e.getMessage());
-        }
-
-        updateViewState();
+        // Load first page
+        loadCurrentPage();
     }
 
     /**
@@ -232,7 +258,7 @@ public class ProxyGroupDetailController implements Initializable {
      * Handles the add button click.
      *
      * <p>Opens the proxy import dialog in ADD mode, then imports and
-     * persists any new proxies, adding them to the list.</p>
+     * persists any new proxies, refreshing the view as needed.</p>
      */
     @FXML
     private void onAddClicked() {
@@ -244,6 +270,87 @@ public class ProxyGroupDetailController implements Initializable {
         result.ifPresent(this::addProxies);
     }
 
+    /**
+     * Navigates to the previous page of proxies.
+     *
+     * <p>Does nothing if already on the first page.</p>
+     */
+    @FXML
+    private void onPrevPageClicked() {
+        if (currentPage > 0) {
+            currentPage--;
+            loadCurrentPage();
+            System.out.println("[ProxyGroupDetailController] Navigated to page " + (currentPage + 1));
+        }
+    }
+
+    /**
+     * Navigates to the next page of proxies.
+     *
+     * <p>Does nothing if already on the last page.</p>
+     */
+    @FXML
+    private void onNextPageClicked() {
+        if (currentPage < totalPages() - 1) {
+            currentPage++;
+            loadCurrentPage();
+            System.out.println("[ProxyGroupDetailController] Navigated to page " + (currentPage + 1));
+        }
+    }
+
+    // ==================== Page Loading ====================
+
+    /**
+     * Loads the current page of proxies from the database.
+     *
+     * <p>Clears all currently displayed rows, queries the database for
+     * the current page's worth of proxies, and rebuilds the row list.
+     * Also refreshes the total count and updates all view state including
+     * the pagination controls.</p>
+     *
+     * <p>If the current page index has become invalid (e.g., due to
+     * deletions reducing the total page count), the page is clamped
+     * to the last valid page before loading.</p>
+     */
+    private void loadCurrentPage() {
+        clearProxies();
+
+        try {
+            totalCount = proxyRepository.countByGroupId(currentGroupId);
+
+            if (totalCount == 0) {
+                updateViewState();
+                return;
+            }
+
+            // Clamp page if it has become invalid (e.g., after deletions)
+            if (currentPage >= totalPages()) {
+                currentPage = Math.max(0, totalPages() - 1);
+            }
+
+            int offset = currentPage * PAGE_SIZE;
+            List<ProxyEntity> proxies = proxyRepository.findByGroupId(currentGroupId, PAGE_SIZE, offset);
+
+            for (ProxyEntity proxy : proxies) {
+                ProxyRow row = buildProxyRow(proxy);
+                addProxyRow(row);
+            }
+
+            System.out.println("[ProxyGroupDetailController] Loaded page " + (currentPage + 1)
+                    + " (" + proxies.size() + " proxies) for group '" + currentGroupName + "'");
+
+        } catch (Database.DatabaseException e) {
+            System.err.println("[ProxyGroupDetailController] Failed to load proxies: "
+                    + e.getMessage());
+            showErrorAlert("Failed to Load Proxies",
+                    "Could not load proxies from the database.",
+                    e.getMessage());
+        }
+
+        updateViewState();
+        scrollPane.setVvalue(0);
+    }
+
     // ==================== Proxy Management ====================
 
     /**
@@ -252,11 +359,12 @@ public class ProxyGroupDetailController implements Initializable {
      * <p>Flow:</p>
      * <ol>
      *   <li>Parse proxy content via ProxyImporter</li>
-     *   <li>Set group ID on all parsed entities</li>
-     *   <li>Batch-save to database</li>
-     *   <li>Create ProxyRow for each and add to list</li>
-     *   <li>Update view state and count</li>
-     *   <li>Show warnings if any lines failed</li>
+     *   <li>Check whether the user is currently on the last page</li>
+     *   <li>Set group ID on all parsed entities and batch-save to database</li>
+     *   <li>If the user was on the last page, reload the page so new proxies
+     *       appear (up to page size). Otherwise, just refresh the total count.</li>
+     *   <li>Update pagination controls</li>
+     *   <li>Show warnings if any lines failed to parse</li>
      * </ol>
      *
      * @param data the dialog result containing proxy content
@@ -275,7 +383,10 @@ public class ProxyGroupDetailController implements Initializable {
             return;
         }
 
-        // Step 2: Set group ID and batch-save
+        // Step 2: Check if on last page before saving
+        boolean wasOnLastPage = isOnLastPage();
+
+        // Step 3: Set group ID and batch-save
         List<ProxyEntity> proxies = importResult.proxies();
 
         try {
@@ -292,24 +403,61 @@ public class ProxyGroupDetailController implements Initializable {
             return;
         }
 
-        // Step 3: Create rows and add to list
-        for (ProxyEntity proxy : proxies) {
-            ProxyRow row = buildProxyRow(proxy);
-            addProxyRow(row);
+        // Step 4: Refresh view
+        if (wasOnLastPage) {
+            // Reload page so new proxies appear at the end
+            loadCurrentPage();
+        } else {
+            // Just refresh the total count and pagination controls
+            totalCount = proxyRepository.countByGroupId(currentGroupId);
+            updateViewState();
         }
-
-        updateViewState();
 
         System.out.println("[ProxyGroupDetailController] Added " + proxies.size()
                 + " proxies to group '" + currentGroupName + "'");
 
-        // Step 4: Show warnings if any
+        // Step 5: Show warnings if any
         if (importResult.hasWarnings()) {
             String warningText = String.join("\n", importResult.warnings());
             showErrorAlert("Import Warnings",
                     importResult.warningCount() + " line(s) could not be parsed.",
                     warningText);
         }
+    }
+
+    /**
+     * Handles proxy deletion from a row's delete button.
+     *
+     * <p>No confirmation is required — the proxy is deleted immediately.
+     * After deletion, the current page is reloaded from the database to
+     * backfill the gap. If the current page becomes empty (e.g., the last
+     * proxy on the last page was deleted), the controller navigates to the
+     * previous page automatically.</p>
+     *
+     * @param row the ProxyRow representing the proxy to delete
+     */
+    private void onProxyDeleted(ProxyRow row) {
+        long proxyId = row.proxyId();
+
+        System.out.println("[ProxyGroupDetailController] Deleting proxy: "
+                + row.host() + ":" + row.port() + " (ID " + proxyId + ")");
+
+        try {
+            proxyRepository.deleteById(proxyId);
+
+            System.out.println("[ProxyGroupDetailController] Deleted proxy ID " + proxyId);
+
+        } catch (Database.DatabaseException e) {
+            System.err.println("[ProxyGroupDetailController] Failed to delete proxy: "
+                    + e.getMessage());
+            showErrorAlert("Failed to Delete Proxy",
+                    "Could not delete the proxy from the database.",
+                    e.getMessage());
+            return;
+        }
+
+        // Reload current page (handles backfill and page clamping)
+        loadCurrentPage();
     }
 
     /**
@@ -332,38 +480,10 @@ public class ProxyGroupDetailController implements Initializable {
         return row;
     }
 
-    /**
-     * Handles proxy deletion from a row's delete button.
-     *
-     * <p>No confirmation is required — the proxy is deleted immediately.</p>
-     *
-     * @param row the ProxyRow representing the proxy to delete
-     */
-    private void onProxyDeleted(ProxyRow row) {
-        long proxyId = row.proxyId();
-
-        System.out.println("[ProxyGroupDetailController] Deleting proxy: "
-                + row.host() + ":" + row.port() + " (ID " + proxyId + ")");
-
-        try {
-            proxyRepository.deleteById(proxyId);
-            removeProxyRow(row);
-
-            System.out.println("[ProxyGroupDetailController] Deleted proxy ID " + proxyId);
-
-        } catch (Database.DatabaseException e) {
-            System.err.println("[ProxyGroupDetailController] Failed to delete proxy: "
-                    + e.getMessage());
-            showErrorAlert("Failed to Delete Proxy",
-                    "Could not delete the proxy from the database.",
-                    e.getMessage());
-        }
-    }
-
     // ==================== Row Management ====================
 
     /**
-     * Adds a ProxyRow to the list.
+     * Adds a ProxyRow to the current page's list.
      */
     private void addProxyRow(ProxyRow row) {
         proxyRows.add(row);
@@ -371,41 +491,79 @@ public class ProxyGroupDetailController implements Initializable {
     }
 
     /**
-     * Removes a ProxyRow from the list.
-     */
-    private void removeProxyRow(ProxyRow row) {
-        proxyRows.remove(row);
-        proxyList.getChildren().remove(row);
-        updateViewState();
-    }
-
-    /**
-     * Clears all proxy rows from the list.
+     * Clears all proxy rows from the current page.
      */
     private void clearProxies() {
         proxyRows.clear();
         proxyList.getChildren().clear();
     }
 
+    // ==================== Pagination Helpers ====================
+
+    /**
+     * Calculates the total number of pages based on the current total count.
+     *
+     * @return the total page count, or 0 if the group is empty
+     */
+    private int totalPages() {
+        if (totalCount <= 0) return 0;
+        return (int) Math.ceil((double) totalCount / PAGE_SIZE);
+    }
+
+    /**
+     * Checks whether the current page is the last page.
+     *
+     * <p>Also returns {@code true} if the group is empty (no pages).</p>
+     *
+     * @return true if on the last page or if the group is empty
+     */
+    private boolean isOnLastPage() {
+        return totalPages() == 0 || currentPage >= totalPages() - 1;
+    }
+
     // ==================== View State ====================
 
     /**
      * Updates the view to show either the empty state or the proxy list,
-     * and updates the proxy count label.
+     * and updates the proxy count label and pagination controls.
      */
     private void updateViewState() {
-        int count = proxyRows.size();
-        boolean hasProxies = count > 0;
+        boolean hasProxies = totalCount > 0;
 
-        // Update count label
-        proxyCountLabel.setText(count + (count == 1 ? " proxy" : " proxies"));
+        // Update subtitle with total count
+        proxyCountLabel.setText(totalCount + (totalCount == 1 ? " proxy" : " proxies"));
 
-        // Toggle visibility
+        // Toggle empty state vs list
         emptyState.setVisible(!hasProxies);
         emptyState.setManaged(!hasProxies);
 
         scrollPane.setVisible(hasProxies);
         scrollPane.setManaged(hasProxies);
+
+        // Toggle pagination bar
+        paginationBar.setVisible(hasProxies);
+        paginationBar.setManaged(hasProxies);
+
+        if (hasProxies) {
+            updatePaginationControls();
+        }
+    }
+
+    /**
+     * Updates the pagination range label and arrow button states.
+     *
+     * <p>The range label shows the current range and total, e.g., "1–50 of 847".
+     * The previous arrow is disabled on the first page, and the next arrow is
+     * disabled on the last page.</p>
+     */
+    private void updatePaginationControls() {
+        long start = (long) currentPage * PAGE_SIZE + 1;
+        long end = Math.min((long) (currentPage + 1) * PAGE_SIZE, totalCount);
+
+        pageRangeLabel.setText(start + "–" + end + " of " + totalCount);
+
+        prevPageButton.setDisable(currentPage <= 0);
+        nextPageButton.setDisable(currentPage >= totalPages() - 1);
     }
 
     // ==================== Error Handling ====================
@@ -457,9 +615,9 @@ public class ProxyGroupDetailController implements Initializable {
     }
 
     /**
-     * Gets the current proxy count.
+     * Gets the number of proxies currently displayed on the page.
      *
-     * @return the number of proxies displayed
+     * @return the number of proxy rows on the current page
      */
     public int proxyCount() {
         return proxyRows.size();
