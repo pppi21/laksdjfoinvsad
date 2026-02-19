@@ -3,9 +3,7 @@ package org.nodriver4j.scripts;
 import org.nodriver4j.captcha.ReCaptchaSolver;
 import org.nodriver4j.core.Page;
 import org.nodriver4j.persistence.entity.ProfileEntity;
-import org.nodriver4j.services.GmailClient;
-import org.nodriver4j.services.TaskLogger;
-import org.nodriver4j.services.UberOtpExtractor;
+import org.nodriver4j.services.*;
 
 import java.security.SecureRandom;
 import java.util.concurrent.TimeoutException;
@@ -111,6 +109,9 @@ public class FunkoGen implements AutomationScript {
             logger.log("Waiting for email verifcation...");
             fetchVerificationLink();
 
+            logger.success("Check browser for successful verification");
+            page.sleep(1000000);
+
             if (page.exists(FIRST_NAME_TEXT)) {
                 logger.log("Entering name...");
                 enterName();
@@ -153,6 +154,7 @@ public class FunkoGen implements AutomationScript {
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
             try {
                 page.navigate("https://funko.com/login/?action=register&pageSearchParams=pid%3D90729&rurl=5");
+                page.waitForLoadEvent(30000);
                 return;
 
             } catch (TimeoutException e) {
@@ -193,22 +195,19 @@ public class FunkoGen implements AutomationScript {
     private void fetchVerificationLink() throws GmailClient.GmailClientException {
         GmailClient gmail = new GmailClient(profile.emailAddress(), profile.catchallEmail(), profile.imapPassword());
         gmail.connect();
-        UberOtpExtractor extractor = new UberOtpExtractor(gmail);
+        FunkoVerificationExtractor extractor = new FunkoVerificationExtractor(gmail);
 
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
             try {
-                if (attempt > 1) {
-//                    page.click(EMAIL_OTP_RESEND_BUTTON);
-                    page.sleep(1500);
-//                    page.click(EMAIL_OTP_RESEND_CONFIRM_BUTTON);
-                }
-                String otp = extractor.extractOtp(); // Polls for up to 60 seconds
-                logger.log("Retrieved email OTP: " + otp);
-                page.sleep(1500);
+                String link = extractor.extractVerificationLink(); // Polls for up to 60 seconds
+                logger.log("Retrieved email verification...");
+                page.navigate(link);
                 return;
 
-            } catch (UberOtpExtractor.OtpExtractionException e) {
+            } catch (EmailPollingBase.EmailExtractionException e) {
                 logger.log("OTP attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
+            } catch (TimeoutException e) {
+                throw new RuntimeException(e);
             }
         }
         throw new RuntimeException("Email OTP failed: Maximum " + ATTEMPTS + " attempts reached");

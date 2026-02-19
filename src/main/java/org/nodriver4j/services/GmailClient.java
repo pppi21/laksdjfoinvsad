@@ -375,11 +375,13 @@ public class GmailClient implements AutoCloseable {
      */
     private EmailMessage convertMessage(Message message) throws MessagingException, IOException {
         String subject = message.getSubject();
+        System.out.println(subject);
 
         Address[] toAddress = message.getRecipients(Message.RecipientType.TO);
-        String recipient = (toAddress != null && toAddress.length > 0)
+        String recipient = extractBetweenBrackets((toAddress != null && toAddress.length > 0)
                 ? toAddress[0].toString()
-                : null;
+                : null);
+
         System.out.println(recipient);
 
         // Extract sender

@@ -3,6 +3,7 @@ package org.nodriver4j.scripts;
 import org.nodriver4j.captcha.ReCaptchaSolver;
 import org.nodriver4j.core.Page;
 import org.nodriver4j.persistence.entity.ProfileEntity;
+import org.nodriver4j.services.EmailPollingBase;
 import org.nodriver4j.services.GmailClient;
 import org.nodriver4j.services.TaskLogger;
 import org.nodriver4j.services.UberOtpExtractor;
@@ -211,7 +212,7 @@ public class UberGen implements AutomationScript {
                 page.sleep(1500);
                 return;
 
-            } catch (UberOtpExtractor.OtpExtractionException | InterruptedException | TimeoutException e) {
+            } catch (EmailPollingBase.EmailExtractionException | InterruptedException | TimeoutException e) {
                 logger.log("OTP attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
             }
         }
