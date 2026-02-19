@@ -3,6 +3,7 @@ package org.nodriver4j.scripts;
 import org.nodriver4j.captcha.ReCaptchaSolver;
 import org.nodriver4j.core.Page;
 import org.nodriver4j.persistence.entity.ProfileEntity;
+import org.nodriver4j.persistence.repository.ProfileRepository;
 import org.nodriver4j.services.*;
 
 import java.security.SecureRandom;
@@ -71,6 +72,8 @@ public class FunkoGen implements AutomationScript {
     private Page page;
     private ProfileEntity profile;
     private TaskLogger logger;
+    private String generatedPassword;
+    private final ProfileRepository profileRepository = new ProfileRepository();
 
     // ==================== Constructor ====================
 
@@ -105,6 +108,9 @@ public class FunkoGen implements AutomationScript {
 
             logger.log("Signing up...");
             signUp();
+
+            AutomationScript.persistNote(profile, "Funko Password: " + generatedPassword, profileRepository);
+            logger.log("Password saved to profile notes");
 
             logger.log("Waiting for email verifcation...");
             fetchVerificationLink();
@@ -173,14 +179,16 @@ public class FunkoGen implements AutomationScript {
                 fillFormField(FIRST_NAME_TEXT, profile.firstName(), true);
                 fillFormField(LAST_NAME_TEXT, profile.lastName(), true);
                 fillFormField(EMAIL_TEXT, profile.emailAddress(), true);
-                String password = generatePassword();
-                fillFormField(PASSWORD_TEXT, password, true);
-                fillFormField(CONFIRM_PASSWORD_TEXT, password, true);
+                generatedPassword = generatePassword();
+                fillFormField(PASSWORD_TEXT, generatedPassword, true);
+                fillFormField(CONFIRM_PASSWORD_TEXT, generatedPassword, true);
                 page.jsClick(ACCEPT_TERMS_CHECKBOX);
                 page.click(CREATE_ACCOUNT_BUTTON);
-                page.waitForSelector(OTP_SENT_ID, 10000);
-                System.out.println("FOUND............................");
-                page.sleep(10000);
+                while(!page.exists(OTP_SENT_ID)) {
+                    System.out.println("Does not exist");
+                    page.sleep(2000);
+                }
+                System.out.println("Exists");
                 return;
 
             } catch (TimeoutException | InterruptedException e) {

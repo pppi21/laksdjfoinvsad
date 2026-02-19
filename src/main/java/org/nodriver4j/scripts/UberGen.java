@@ -101,6 +101,8 @@ public class UberGen implements AutomationScript {
             logger.log("Signing up with email...");
             signUpWithEmail();
 
+            profile.notes("Password");
+
             logger.log("Waiting for email OTP...");
             enterEmailOTP();
 

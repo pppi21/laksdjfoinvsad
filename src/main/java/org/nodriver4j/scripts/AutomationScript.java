@@ -2,6 +2,7 @@ package org.nodriver4j.scripts;
 
 import org.nodriver4j.core.Page;
 import org.nodriver4j.persistence.entity.ProfileEntity;
+import org.nodriver4j.persistence.repository.ProfileRepository;
 import org.nodriver4j.services.TaskLogger;
 
 /**
@@ -39,15 +40,10 @@ import org.nodriver4j.services.TaskLogger;
  * <p>Scripts may modify the {@link ProfileEntity} passed to them (e.g.,
  * appending notes on success). The caller saves the entity after
  * {@code run()} returns, so changes are persisted automatically.
- * Scripts should append notes using the convention:</p>
+ * For mid-execution persistence (e.g., saving a generated password
+ * before verification completes), use {@link #persistNote}:</p>
  * <pre>{@code
- * String note = "UberEats Account created on 2025-07-15 14:30";
- * String existing = profile.notes();
- * if (existing != null && !existing.isBlank()) {
- *     profile.notes(existing + " | " + note);
- * } else {
- *     profile.notes(note);
- * }
+ * AutomationScript.persistNote(profile, "Password: " + password, profileRepo);
  * }</pre>
  *
  * <h2>Implementation Example</h2>
@@ -74,6 +70,7 @@ import org.nodriver4j.services.TaskLogger;
  *   <li>Define the execution contract for automation scripts</li>
  *   <li>Standardize how scripts receive runtime dependencies</li>
  *   <li>Establish exception and cancellation semantics</li>
+ *   <li>Provide shared utilities for mid-execution profile persistence</li>
  * </ul>
  *
  * <h2>NOT Responsible For</h2>
@@ -110,4 +107,41 @@ public interface AutomationScript {
      * @throws Exception            if the script fails for any reason
      */
     void run(Page page, ProfileEntity profile, TaskLogger logger) throws Exception;
+
+    /**
+     * Appends a note to a profile's notes field and persists it immediately.
+     *
+     * <p>Use this for mid-execution persistence when important data (e.g., a
+     * generated password) must survive even if the script fails later. Notes
+     * are appended with a {@code " | "} separator if existing notes are present.</p>
+     *
+     * <pre>{@code
+     * AutomationScript.persistNote(profile, "Password: " + password, profileRepo);
+     * }</pre>
+     *
+     * @param profile    the profile to update (modified in place and saved)
+     * @param note       the note to append
+     * @param repository the repository to persist the profile with
+     * @throws IllegalArgumentException if profile, note, or repository is null
+     */
+    static void persistNote(ProfileEntity profile, String note, ProfileRepository repository) {
+        if (profile == null) {
+            throw new IllegalArgumentException("Profile cannot be null");
+        }
+        if (note == null || note.isBlank()) {
+            throw new IllegalArgumentException("Note cannot be null or blank");
+        }
+        if (repository == null) {
+            throw new IllegalArgumentException("Repository cannot be null");
+        }
+
+        String existing = profile.notes();
+        if (existing != null && !existing.isBlank()) {
+            profile.notes(existing + " | " + note);
+        } else {
+            profile.notes(note);
+        }
+
+        repository.save(profile);
+    }
 }
