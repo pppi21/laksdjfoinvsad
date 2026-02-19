@@ -77,6 +77,7 @@ public final class ScriptRegistry {
 
     static {
         register("UberGen", UberGen::new);
+        register("FunkoGen", FunkoGen::new);
     }
 
     // ==================== Private Constructor ====================

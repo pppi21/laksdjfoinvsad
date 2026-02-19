@@ -97,10 +97,10 @@ public class ScriptTestRunner {
         // Build headless config (no userdata dir — temp dir auto-generated and cleaned up)
         BrowserConfig config = BrowserConfig.builder()
                 .executablePath(settings.chromePath())
-                .headless(true)
-                .headlessGpuAcceleration(true)
-                .fingerprintEnabled(false)
-                .resourceBlocking(false)
+                .headless(false)
+                .headlessGpuAcceleration(false)
+                .fingerprintEnabled(true)
+                .resourceBlocking(true)
                 .build();
 
         int port = 9222;

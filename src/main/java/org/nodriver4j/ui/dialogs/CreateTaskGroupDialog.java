@@ -51,9 +51,7 @@ public class CreateTaskGroupDialog extends Dialog<CreateTaskGroupDialog.TaskGrou
      */
     private static final List<String> AVAILABLE_SCRIPTS = List.of(
             "UberGen",
-            "SandwichGen",
-            "MattelDraw"
-            // Add more scripts here as they're created
+            "FunkoGen"
     );
 
     // ==================== UI Components ====================

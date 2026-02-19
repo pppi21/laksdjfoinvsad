@@ -955,6 +955,47 @@
     -fx-background-color: -fx-primary-dark;
 }
 
+/* ==================== Pagination Controls ==================== */
+.pagination-range-label {
+    -fx-font-size: 13px;
+    -fx-text-fill: -fx-text-secondary;
+    -fx-padding: 0 4px 0 0;
+}
+
+.pagination-arrow-button {
+    -fx-background-color: transparent;
+    -fx-background-radius: 6px;
+    -fx-min-width: 28px;
+    -fx-min-height: 28px;
+    -fx-max-width: 28px;
+    -fx-max-height: 28px;
+    -fx-padding: 0;
+    -fx-cursor: hand;
+}
+
+.pagination-arrow-button:hover {
+    -fx-background-color: rgba(255, 255, 255, 0.1);
+}
+
+.pagination-arrow-button:pressed {
+    -fx-background-color: rgba(255, 255, 255, 0.05);
+}
+
+.pagination-arrow-button:disabled {
+    -fx-opacity: 0.3;
+    -fx-cursor: default;
+}
+
+.pagination-arrow-button .label {
+    -fx-text-fill: -fx-text-secondary;
+    -fx-font-size: 16px;
+    -fx-font-weight: bold;
+}
+
+.pagination-arrow-button:hover .label {
+    -fx-text-fill: -fx-text-primary;
+}
+
 /* ==================== Task Row Action Buttons ==================== */
 .task-row-button {
     -fx-background-color: transparent;

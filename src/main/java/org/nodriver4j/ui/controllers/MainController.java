@@ -357,6 +357,11 @@ public class MainController implements Initializable {
      */
     public void showTaskManager() {
         navigateTo(Page.TASK_MANAGER, navTasks);
+
+        TaskManagerController tmc = taskManagerController();
+        if (tmc != null) {
+            tmc.refreshCardStats();
+        }
     }
 
     /**

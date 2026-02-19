@@ -1730,8 +1730,6 @@ public class Page {
 
     // ==================== Clickability Checks ====================
 
-    // ==================== Clickability Checks ====================
-
     /**
      * Checks if an element is ready to be clicked by performing the same
      * validation steps as {@link #click(String)}.
@@ -2033,6 +2031,53 @@ public class Page {
         params.addProperty("clickCount", clickCount);
 
         cdp.send("Input.dispatchMouseEvent", params);
+    }
+
+    /**
+     * Clicks an element by directly invoking its {@code .click()} method via JavaScript.
+     *
+     * <p>Unlike {@link #click(String)}, which scrolls the element into view and dispatches
+     * synthetic mouse events at the element's coordinates, this method executes
+     * {@code element.click()} directly through CDP's {@code Runtime.evaluate}. This makes
+     * it immune to overlays, popups, scroll position issues, or other elements intercepting
+     * the click.</p>
+     *
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector the XPath or CSS selector
+     * @throws TimeoutException if the element is not found or the operation times out
+     */
+    public void jsClick(String selector) throws TimeoutException {
+        ensureRuntimeEnabled();
+
+        String script;
+        if (isXPath(selector)) {
+            script = String.format(
+                    "(function() {" +
+                            "  var el = document.evaluate(\"%s\", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;" +
+                            "  if (!el) return 'NOT_FOUND';" +
+                            "  el.click();" +
+                            "  return 'OK';" +
+                            "})()",
+                    escapeXPath(selector)
+            );
+        } else {
+            script = String.format(
+                    "(function() {" +
+                            "  var el = document.querySelector(\"%s\");" +
+                            "  if (!el) return 'NOT_FOUND';" +
+                            "  el.click();" +
+                            "  return 'OK';" +
+                            "})()",
+                    escapeCss(selector)
+            );
+        }
+
+        String result = evaluate(script);
+
+        if (!"OK".equals(result)) {
+            throw new TimeoutException("Element not found for jsClick: " + selector);
+        }
     }
 
     // ==================== Keyboard Interaction ====================
