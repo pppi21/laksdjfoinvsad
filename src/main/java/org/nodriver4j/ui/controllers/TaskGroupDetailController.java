@@ -7,6 +7,7 @@ import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import org.nodriver4j.core.Browser;
 import org.nodriver4j.persistence.Database;
@@ -31,46 +32,85 @@ import java.util.*;
 /**
  * Controller for the Task Group Detail page.
  *
- * <p>Displays individual tasks belonging to a task group as full-width rows.
- * This page is navigated to by clicking a task group card in the Task Manager.
- * The controller is parameterized — {@link #loadGroup(long)} must be called
- * after FXML initialization to populate the page with a specific group's data.</p>
+ * <p>Displays tasks belonging to a specific task group using Gmail-style
+ * pagination. Only one page of tasks (up to {@value #PAGE_SIZE}) is loaded
+ * at a time. Navigation arrows allow moving between pages, and a range label
+ * shows the current position (e.g., "1–100 of 847").</p>
  *
- * <h2>Navigation Pattern</h2>
- * <p>The FXML is loaded and cached once by {@link MainController}. Each time
- * the user navigates to a group, {@code MainController} calls
- * {@link #loadGroup(long)} which clears existing state and repopulates
- * from the database. A back navigation callback is set via
- * {@link #setOnBack(Runnable)} so this controller has no direct dependency
- * on {@code MainController}.</p>
+ * <p>This controller is paired with {@code task-group-detail.fxml}.
+ * Navigation to this page is handled by {@link MainController}, which
+ * calls {@link #loadGroup(long)} to populate the page with the specified
+ * group's data.</p>
  *
- * <h2>Display Name Assembly</h2>
- * <p>Each task is linked to a profile by {@code profile_id}. The controller
- * resolves profiles from the database and assembles display names in the
- * format {@code "Profile Name (email@example.com)"}. If a profile cannot
- * be found (e.g., deleted), a fallback name is used.</p>
+ * <h2>Pagination Behavior</h2>
+ * <ul>
+ *   <li>Page size is {@value #PAGE_SIZE} tasks per page</li>
+ *   <li>Navigating between pages replaces all displayed rows (not appending)</li>
+ *   <li>Scroll position resets to the top on each page change</li>
+ *   <li>Arrow buttons are disabled (not hidden) when at the first/last page</li>
+ *   <li>Pagination controls are visible even for single-page groups (arrows disabled)</li>
+ *   <li>Pagination controls are hidden only when the group is empty</li>
+ *   <li>Running tasks continue unaffected when navigating between pages</li>
+ *   <li>Screencast sessions persist across page navigations</li>
+ * </ul>
+ *
+ * <h2>Callback Re-wiring</h2>
+ * <p>When a page is loaded, any task that is currently active (RUNNING)
+ * has its UI callbacks replaced on {@link TaskExecutionService} so that
+ * live log and status updates target the newly created {@link TaskRow}.
+ * This uses the proxy pattern in {@code TaskExecutionService} — see
+ * {@link TaskExecutionService#replaceCallbacks(long, java.util.function.BiConsumer,
+ * java.util.function.Consumer)}.</p>
+ *
+ * <h2>Bulk Operations</h2>
+ * <p>Start All, Stop All, and Change Proxies operate on <b>all</b> tasks in the
+ * group, not just the visible page. This is because the user thinks in terms of
+ * the entire group — these buttons are in the page header, not per-row. For
+ * visible rows, UI updates happen immediately. For off-screen tasks, the service
+ * persists state to the database, and when the user navigates to that page later,
+ * rows are rebuilt with the latest state.</p>
  *
  * <h2>Responsibilities</h2>
  * <ul>
- *   <li>Load task group details and display in the header</li>
- *   <li>Load tasks for the group and create {@link TaskRow} components</li>
- *   <li>Resolve profile display names from {@link ProfileRepository}</li>
- *   <li>Handle back navigation via callback</li>
- *   <li>Show/hide empty state vs task list</li>
- *   <li>Display error alerts on database failures</li>
+ *   <li>Load and display one page of tasks for a specific group</li>
+ *   <li>Manage pagination state (current page, total count)</li>
+ *   <li>Update page header with group name, script name</li>
+ *   <li>Update pagination bar with range label and arrow states</li>
+ *   <li>Wire all TaskRow callbacks (start, stop, view, manual, clone, edit, delete)</li>
+ *   <li>Re-wire callbacks on {@link TaskExecutionService} for active tasks when rows rebuild</li>
+ *   <li>Restore screencast/view browser state when rows rebuild</li>
+ *   <li>Handle Start All / Stop All across all group tasks</li>
+ *   <li>Handle Change Proxies across all group tasks</li>
+ *   <li>Handle Add Task with last-page awareness</li>
+ *   <li>Handle Delete with page reload and backfill</li>
+ *   <li>Handle Clone with last-page awareness</li>
+ *   <li>Manage screencast sessions (open, close, persist across pages)</li>
+ *   <li>Toggle between empty state and task list</li>
  * </ul>
  *
  * <h2>NOT Responsible For</h2>
  * <ul>
- *   <li>Task execution or browser lifecycle (future service layer)</li>
- *   <li>Database connection management (delegated to {@link Database})</li>
- *   <li>SQL queries (delegated to repositories)</li>
- *   <li>Row rendering (delegated to {@link TaskRow})</li>
- *   <li>Task creation dialog (deferred to a future stage)</li>
- *   <li>Page caching or FXML loading (handled by {@link MainController})</li>
+ *   <li>Task execution or browser lifecycle ({@link TaskExecutionService})</li>
+ *   <li>Row rendering ({@link TaskRow})</li>
+ *   <li>Dialog display (CreateTaskDialog, EditTaskDialog, ChangeProxiesDialog)</li>
+ *   <li>SQL queries (repositories)</li>
+ *   <li>Page caching or FXML loading ({@link MainController})</li>
  * </ul>
+ *
+ * @see TaskRow
+ * @see TaskExecutionService
+ * @see CreateTaskDialog
+ * @see EditTaskDialog
+ * @see ChangeProxiesDialog
  */
 public class TaskGroupDetailController implements Initializable {
+
+    // ==================== Constants ====================
+
+    /**
+     * Number of tasks displayed per page.
+     */
+    private static final int PAGE_SIZE = 25;
 
     // ==================== FXML Injected Fields ====================
 
@@ -87,15 +127,6 @@ public class TaskGroupDetailController implements Initializable {
     private Button addButton;
 
     @FXML
-    private VBox emptyState;
-
-    @FXML
-    private ScrollPane scrollPane;
-
-    @FXML
-    private VBox taskListContainer;
-
-    @FXML
     private Button startAllButton;
 
     @FXML
@@ -103,6 +134,27 @@ public class TaskGroupDetailController implements Initializable {
 
     @FXML
     private Button changeProxiesButton;
+
+    @FXML
+    private HBox paginationBar;
+
+    @FXML
+    private Label pageRangeLabel;
+
+    @FXML
+    private Button prevPageButton;
+
+    @FXML
+    private Button nextPageButton;
+
+    @FXML
+    private VBox emptyState;
+
+    @FXML
+    private ScrollPane scrollPane;
+
+    @FXML
+    private VBox taskListContainer;
 
     // ==================== Repositories ====================
 
@@ -120,15 +172,28 @@ public class TaskGroupDetailController implements Initializable {
     private long currentGroupId = -1;
 
     /**
-     * List of task rows currently displayed.
+     * List of task rows currently displayed on the current page.
      */
     private final List<TaskRow> taskRows = new ArrayList<>();
 
     /**
      * Active screencast sessions mapped by task ID.
      * Each entry represents an open view browser window streaming from a running task.
+     * These persist across page navigations within the same group.
      */
     private final Map<Long, ScreencastSession> screencastSessions = new HashMap<>();
+
+    // ==================== Pagination State ====================
+
+    /**
+     * The current page index (0-based).
+     */
+    private int currentPage;
+
+    /**
+     * The total number of tasks in the current group (from DB).
+     */
+    private long totalCount;
 
     // ==================== Callbacks ====================
 
@@ -137,332 +202,6 @@ public class TaskGroupDetailController implements Initializable {
      * Set by {@link MainController} to navigate back to the Task Manager.
      */
     private Runnable onBack;
-
-    /**
-     * Wires all action button callbacks on a TaskRow.
-     *
-     * <p>Lifecycle callbacks (start, stop, manual browser) delegate to
-     * helper methods that coordinate with {@link TaskExecutionService}.
-     * View browser callbacks manage screencast sessions directly.
-     * Clone, edit, and delete callbacks are wired in Stage 4B.</p>
-     *
-     * @param row the task row to wire
-     */
-    private void wireRowCallbacks(TaskRow row) {
-        long id = row.taskId();
-
-        // ---- Lifecycle callbacks (Stage 4A) ----
-
-        row.setOnStart(taskId -> requestStart(row));
-
-        row.setOnStop(taskId -> requestStop(row));
-
-        row.setOnOpenManualBrowser(taskId -> openManualBrowser(row));
-
-        // ---- View browser callbacks (already functional) ----
-
-        row.setOnOpenViewBrowser(taskId -> {
-            System.out.println("[TaskGroupDetailController] Open view browser — Task #" + taskId);
-
-            Browser browser = TaskExecutionService.instance().browser(taskId);
-            if (browser == null || !browser.isOpen()) {
-                System.err.println("[TaskGroupDetailController] No active browser for task " + taskId);
-                return;
-            }
-
-            // Create screencast service and view window
-            ScreencastService service = new ScreencastService(browser.cdpClient());
-            ViewBrowserWindow window = new ViewBrowserWindow("View Browser — Task #" + taskId);
-
-            // Wire window close (user clicks X) to clean up
-            window.setOnClose(() -> {
-                closeScreencastSession(taskId);
-                findTaskRow(taskId).ifPresent(r -> r.setViewBrowserActive(false));
-            });
-
-            // Track the session before starting
-            screencastSessions.put(taskId, new ScreencastSession(service, window));
-
-            // Start streaming — frames arrive on WebSocket thread, marshal to FX thread
-            service.start(frameBytes ->
-                    Platform.runLater(() -> window.updateFrame(frameBytes))
-            );
-
-            window.show();
-            row.setViewBrowserActive(true);
-        });
-
-        row.setOnCloseViewBrowser(taskId -> {
-            System.out.println("[TaskGroupDetailController] Close view browser — Task #" + taskId);
-            closeScreencastSession(taskId);
-            row.setViewBrowserActive(false);
-        });
-
-        // ---- Data callbacks (Stage 4B stubs) ----
-
-        row.setOnClone(taskId -> {
-            System.out.println("[TaskGroupDetailController] Clone task #" + taskId);
-
-            Optional<TaskEntity> taskOpt = taskRepository.findById(taskId);
-            if (taskOpt.isEmpty()) {
-                System.err.println("[TaskGroupDetailController] Task not found for clone: " + taskId);
-                return;
-            }
-
-            TaskEntity original = taskOpt.get();
-
-            // Build a fresh copy — keep profile, proxy, warmSession, notes
-            // Reset identity, status, userdata, custom status, and log
-            TaskEntity clone = original.toBuilder()
-                    .id(0)
-                    .status(TaskEntity.STATUS_IDLE)
-                    .userdataPath(null)
-                    .customStatus(null)
-                    .logMessage(null)
-                    .logColor(null)
-                    .createdAt(null)   // let builder default to now
-                    .updatedAt(null)   // let builder default to now
-                    .build();
-
-            taskRepository.save(clone);
-
-            // Resolve display name
-            String displayName = profileRepository.findById(clone.profileId())
-                    .map(profile -> {
-                        String name = profile.displayName();
-                        String email = profile.emailAddress();
-                        return (email != null && !email.isBlank())
-                                ? name + " (" + email + ")"
-                                : name;
-                    })
-                    .orElse("Unknown Profile (Task #" + clone.id() + ")");
-
-            // Resolve proxy display
-            String proxyDisplay = null;
-            if (clone.hasProxy()) {
-                proxyDisplay = proxyRepository.findById(clone.proxyId())
-                        .map(ProxyEntity::toDisplayString)
-                        .orElse(null);
-            }
-
-            // Create row and wire it up
-            TaskRow cloneRow = new TaskRow(clone.id(), displayName, clone.displayStatus());
-            cloneRow.setProxyText(proxyDisplay);
-
-            wireRowCallbacks(cloneRow);
-            taskRows.add(cloneRow);
-            taskListContainer.getChildren().add(cloneRow);
-
-            System.out.println("[TaskGroupDetailController] Cloned task #" + taskId
-                    + " → new task #" + clone.id());
-        });
-
-        row.setOnEdit(taskId -> {
-            System.out.println("[TaskGroupDetailController] Edit task #" + taskId);
-
-            // Load current task state
-            Optional<TaskEntity> taskOpt = taskRepository.findById(taskId);
-            if (taskOpt.isEmpty()) {
-                System.err.println("[TaskGroupDetailController] Task not found: " + taskId);
-                return;
-            }
-
-            TaskEntity task = taskOpt.get();
-
-            // Resolve current proxy string for pre-population
-            String currentProxyString = null;
-            if (task.hasProxy()) {
-                Optional<ProxyEntity> proxyOpt = proxyRepository.findById(task.proxyId());
-                if (proxyOpt.isPresent()) {
-                    currentProxyString = proxyOpt.get().toProxyString();
-                }
-            }
-
-            // Open edit dialog
-            EditTaskDialog dialog = new EditTaskDialog(
-                    row.getScene().getWindow(),
-                    currentProxyString,
-                    task.customStatus()
-            );
-
-            dialog.showAndWait().ifPresent(result -> {
-                // --- Handle proxy change ---
-                Long oldProxyId = task.proxyId();
-                Long newProxyId;
-
-                if (result.proxyString() != null) {
-                    // Create a standalone proxy (null group)
-                    ProxyEntity newProxy = ProxyEntity.builder()
-                            .groupId(null)
-                            .fromProxyString(result.proxyString())
-                            .build();
-                    proxyRepository.save(newProxy);
-                    newProxyId = newProxy.id();
-                } else {
-                    newProxyId = null;
-                }
-
-                // Update task
-                task.proxyId(newProxyId);
-                task.customStatus(result.customStatus());
-                task.touchUpdatedAt();
-                taskRepository.save(task);
-
-                // Clean up old standalone proxy if it was replaced
-                proxyRepository.deleteIfStandalone(oldProxyId);
-
-                // Refresh the row
-                findTaskRow(taskId).ifPresent(r -> {
-                    if (newProxyId != null) {
-                        proxyRepository.findById(newProxyId).ifPresent(
-                                p -> r.setProxyText(p.toDisplayString())
-                        );
-                    } else {
-                        r.setProxyText(null);
-                    }
-
-                    r.setStatus(task.displayStatus());
-                });
-
-                System.out.println("[TaskGroupDetailController] Task #" + taskId + " updated");
-            });
-        });
-
-        row.setOnDelete(taskId -> {
-            System.out.println("[TaskGroupDetailController] Delete task #" + taskId);
-
-            // Defensive: stop browser if somehow still active
-            TaskExecutionService service = TaskExecutionService.instance();
-            if (service.isActive(taskId)) {
-                closeScreencastSession(taskId);
-                service.stopBrowser(taskId);
-            }
-
-            // Load task for userdata path and proxy info before deletion
-            Optional<TaskEntity> taskOpt = taskRepository.findById(taskId);
-            if (taskOpt.isPresent()) {
-                TaskEntity task = taskOpt.get();
-
-                // Delete userdata directory from disk
-                if (task.hasUserdataPath()) {
-                    TaskExecutionService.deleteDirectoryWithRetry(
-                            Path.of(task.userdataPath()));
-                }
-
-                // Delete task from database
-                taskRepository.deleteById(taskId);
-
-                // Clean up standalone proxy (null-group proxies created via edit)
-                proxyRepository.deleteIfStandalone(task.proxyId());
-            }
-
-            // Remove row from UI
-            findTaskRow(taskId).ifPresent(r -> {
-                taskRows.remove(r);
-                taskListContainer.getChildren().remove(r);
-            });
-
-            updateViewState();
-
-            System.out.println("[TaskGroupDetailController] Deleted task #" + taskId);
-        });
-    }
-
-    // ==================== Task Lifecycle Helpers ====================
-
-    /**
-     * Requests a scripted task start for the given row.
-     *
-     * <p>Sets the row to a transitional "STARTING..." state immediately, then
-     * calls {@link TaskExecutionService#startTask(long, java.util.function.BiConsumer,
-     * java.util.function.Consumer)} which spawns its own daemon thread and returns
-     * immediately. Log and status callbacks are wrapped with {@code Platform.runLater}
-     * to marshal updates back to the FX thread.</p>
-     *
-     * <p>If the service rejects the start (e.g., task already active, service
-     * shutdown, missing settings), the row is set to FAILED with an error log.</p>
-     *
-     * @param row the task row to start
-     */
-    private void requestStart(TaskRow row) {
-        long taskId = row.taskId();
-        row.setStatus("STARTING...");
-
-        try {
-            TaskExecutionService.instance().startTask(taskId,
-                    // Log callback — invoked on script thread, marshalled to FX
-                    (msg, color) -> Platform.runLater(() -> row.setLogText(msg, color)),
-                    // Status callback — invoked on script thread, marshalled to FX
-                    status -> Platform.runLater(() -> row.setStatus(status))
-            );
-        } catch (IllegalStateException e) {
-            System.err.println("[TaskGroupDetailController] Failed to start task #"
-                    + taskId + ": " + e.getMessage());
-            row.setStatus(TaskEntity.STATUS_FAILED);
-            row.setLogText("Failed to start: " + e.getMessage(), TaskEntity.LOG_ERROR);
-        }
-    }
-
-    /**
-     * Requests a task stop for the given row (handles both RUNNING and MANUAL).
-     *
-     * <p>Closes any active screencast session on the FX thread first, then
-     * calls {@link TaskExecutionService#stopBrowser(long)} on a background
-     * thread since it may block briefly while terminating the Chrome process.
-     * The row status is set to STOPPED on the FX thread after the browser
-     * is closed.</p>
-     *
-     * <p>For RUNNING tasks that were started via {@link #requestStart(TaskRow)},
-     * the script thread's status callback will also fire STOPPED. The duplicate
-     * UI update is harmless.</p>
-     *
-     * @param row the task row to stop
-     */
-    private void requestStop(TaskRow row) {
-        long taskId = row.taskId();
-
-        // Close screencast on FX thread (window.close() requires FX thread)
-        closeScreencastSession(taskId);
-
-        Thread thread = new Thread(() -> {
-            TaskExecutionService.instance().stopBrowser(taskId);
-            Platform.runLater(() -> row.setStatus(TaskEntity.STATUS_STOPPED));
-        }, "Stop-" + taskId);
-        thread.setDaemon(true);
-        thread.start();
-    }
-
-    /**
-     * Opens a manual (headed) browser session for the given row.
-     *
-     * <p>Sets the row to a transitional "STARTING..." state immediately, then
-     * launches the browser on a background thread since
-     * {@link TaskExecutionService#startManualBrowser(long)} blocks until the
-     * browser is fully initialized. On success the row transitions to MANUAL;
-     * on failure it transitions to FAILED with an error log.</p>
-     *
-     * @param row the task row to open a manual browser for
-     */
-    private void openManualBrowser(TaskRow row) {
-        long taskId = row.taskId();
-        row.setStatus("STARTING...");
-
-        Thread thread = new Thread(() -> {
-            try {
-                TaskExecutionService.instance().startManualBrowser(taskId);
-                Platform.runLater(() -> row.setStatus(TaskEntity.STATUS_MANUAL));
-            } catch (Exception e) {
-                System.err.println("[TaskGroupDetailController] Manual browser failed for task #"
-                        + taskId + ": " + e.getMessage());
-                Platform.runLater(() -> {
-                    row.setStatus(TaskEntity.STATUS_FAILED);
-                    row.setLogText("Manual browser failed: " + e.getMessage(), TaskEntity.LOG_ERROR);
-                });
-            }
-        }, "Manual-" + taskId);
-        thread.setDaemon(true);
-        thread.start();
-    }
 
     // ==================== Initialization ====================
 
@@ -473,35 +212,363 @@ public class TaskGroupDetailController implements Initializable {
         updateViewState();
     }
 
-    // ==================== Group Loading ====================
+    // ==================== Public API ====================
 
     /**
-     * Loads a task group and its tasks into the page.
+     * Loads a task group and displays the first page of its tasks.
      *
-     * <p>Clears any previously displayed data, then fetches the group
-     * entity and its tasks from the database. For each task, the associated
-     * profile is resolved to assemble a display name.</p>
-     *
-     * <p>This method should be called by {@link MainController} every time
-     * the user navigates to this page.</p>
+     * <p>Called by {@link MainController} each time the user navigates to
+     * this page. Resets pagination to page 0, clears previously displayed
+     * data (including screencast sessions), and loads fresh data from the
+     * database.</p>
      *
      * @param groupId the database ID of the task group to load
      */
     public void loadGroup(long groupId) {
         System.out.println("[TaskGroupDetailController] Loading group ID: " + groupId);
 
-        // Clear previous state
         clearPage();
         this.currentGroupId = groupId;
+        this.currentPage = 0;
 
-        // Load group entity for header info
         loadGroupHeader(groupId);
+        loadCurrentPage();
+    }
 
-        // Load tasks for this group
-        loadTasks(groupId);
+    /**
+     * Sets the callback for back button navigation.
+     *
+     * @param onBack the callback to invoke when back is clicked
+     */
+    public void setOnBack(Runnable onBack) {
+        this.onBack = onBack;
+    }
 
-        // Update view based on whether tasks exist
+    // ==================== FXML Actions — Navigation ====================
+
+    /**
+     * Handles the back button click.
+     */
+    @FXML
+    private void onBackClicked() {
+        System.out.println("[TaskGroupDetailController] Back button clicked");
+        if (onBack != null) {
+            onBack.run();
+        }
+    }
+
+    /**
+     * Navigates to the previous page of tasks.
+     */
+    @FXML
+    private void onPrevPageClicked() {
+        if (currentPage > 0) {
+            currentPage--;
+            loadCurrentPage();
+            System.out.println("[TaskGroupDetailController] Navigated to page " + (currentPage + 1));
+        }
+    }
+
+    /**
+     * Navigates to the next page of tasks.
+     */
+    @FXML
+    private void onNextPageClicked() {
+        if (currentPage < totalPages() - 1) {
+            currentPage++;
+            loadCurrentPage();
+            System.out.println("[TaskGroupDetailController] Navigated to page " + (currentPage + 1));
+        }
+    }
+
+    // ==================== FXML Actions — Task Operations ====================
+
+    /**
+     * Opens the Create Task dialog and creates tasks from the selected profiles.
+     *
+     * <p>New tasks are saved to the database. If the user is on the last page,
+     * the page is reloaded so newly created tasks appear (up to page size). If
+     * not on the last page, only the total count and pagination controls are
+     * refreshed.</p>
+     */
+    @FXML
+    private void onAddTaskClicked() {
+        System.out.println("[TaskGroupDetailController] Add task clicked for group " + currentGroupId);
+
+        CreateTaskDialog dialog = new CreateTaskDialog(
+                addButton.getScene().getWindow(),
+                new ProfileGroupRepository(),
+                profileRepository,
+                proxyGroupRepository,
+                proxyRepository
+        );
+
+        dialog.showAndWait().ifPresent(result -> {
+            List<Long> profileIds = result.profileIds();
+            Long proxyGroupId = result.proxyGroupId();
+            boolean warmSession = result.warmSession();
+
+            // Load proxies sequentially if a proxy group was selected
+            List<ProxyEntity> proxies = (proxyGroupId != null)
+                    ? proxyRepository.findByGroupId(proxyGroupId)
+                    : List.of();
+
+            // Check if on last page before saving
+            boolean wasOnLastPage = isOnLastPage();
+
+            // Create a TaskEntity for each selected profile
+            List<TaskEntity> tasks = new ArrayList<>();
+            for (int i = 0; i < profileIds.size(); i++) {
+                Long proxyId = (i < proxies.size()) ? proxies.get(i).id() : null;
+
+                TaskEntity task = TaskEntity.builder()
+                        .groupId(currentGroupId)
+                        .profileId(profileIds.get(i))
+                        .proxyId(proxyId)
+                        .warmSession(warmSession)
+                        .build();
+
+                tasks.add(task);
+            }
+
+            // Persist all tasks
+            taskRepository.saveAll(tasks);
+
+            // Refresh view
+            if (wasOnLastPage) {
+                loadCurrentPage();
+            } else {
+                totalCount = taskRepository.countByGroupId(currentGroupId);
+                updateViewState();
+            }
+
+            System.out.println("[TaskGroupDetailController] Created " + tasks.size() + " tasks");
+        });
+    }
+
+    /**
+     * Starts all idle tasks in the group.
+     *
+     * <p>Operates on <b>all</b> tasks in the group, not just the visible page.
+     * For visible rows, {@link #requestStart(TaskRow)} is called for immediate
+     * UI feedback. For off-screen tasks, the service is called directly with
+     * null callbacks — state is persisted to the database and reflected when
+     * the user navigates to that page.</p>
+     */
+    @FXML
+    private void onStartAllClicked() {
+        System.out.println("[TaskGroupDetailController] Start All clicked for group " + currentGroupId);
+
+        List<Long> allTaskIds = taskRepository.findTaskIdsByGroupId(currentGroupId);
+        TaskExecutionService service = TaskExecutionService.instance();
+
+        for (long taskId : allTaskIds) {
+            if (service.isActive(taskId)) {
+                continue;
+            }
+
+            Optional<TaskRow> rowOpt = findTaskRow(taskId);
+            if (rowOpt.isPresent()) {
+                requestStart(rowOpt.get());
+            } else {
+                // Off-screen task — start with no UI callbacks.
+                // The service persists status/log to DB via TaskLogger.
+                try {
+                    service.startTask(taskId, null, null);
+                } catch (IllegalStateException e) {
+                    System.err.println("[TaskGroupDetailController] Failed to start off-screen task #"
+                            + taskId + ": " + e.getMessage());
+                }
+            }
+        }
+    }
+
+    /**
+     * Stops all active tasks in the group.
+     *
+     * <p>Operates on <b>all</b> tasks in the group, not just the visible page.
+     * Screencast sessions are closed on the FX thread first, then visible rows
+     * are optimistically updated to STOPPED. A single background thread handles
+     * the actual browser shutdown for all active tasks.</p>
+     */
+    @FXML
+    private void onStopAllClicked() {
+        System.out.println("[TaskGroupDetailController] Stop All clicked for group " + currentGroupId);
+
+        List<Long> allTaskIds = taskRepository.findTaskIdsByGroupId(currentGroupId);
+        TaskExecutionService service = TaskExecutionService.instance();
+
+        List<Long> activeTaskIds = allTaskIds.stream()
+                .filter(service::isActive)
+                .toList();
+
+        if (activeTaskIds.isEmpty()) {
+            return;
+        }
+
+        // Close screencasts and update visible rows on FX thread
+        for (long taskId : activeTaskIds) {
+            closeScreencastSession(taskId);
+            findTaskRow(taskId).ifPresent(row -> row.setStatus(TaskEntity.STATUS_STOPPED));
+        }
+
+        // Stop all on single background thread
+        Thread thread = new Thread(() -> {
+            for (long taskId : activeTaskIds) {
+                try {
+                    service.stopBrowser(taskId);
+                } catch (Exception e) {
+                    System.err.println("[TaskGroupDetailController] Error stopping task "
+                            + taskId + ": " + e.getMessage());
+                }
+            }
+        }, "StopAll-" + currentGroupId);
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    /**
+     * Opens the Change Proxies dialog and reassigns proxies across all
+     * tasks in the group.
+     *
+     * <p>Operates on <b>all</b> tasks in the group, not just the visible page.
+     * After reassignment, the current page is reloaded to reflect proxy changes
+     * on visible rows.</p>
+     */
+    @FXML
+    private void onChangeProxiesClicked() {
+        System.out.println("[TaskGroupDetailController] Change Proxies clicked for group " + currentGroupId);
+
+        ChangeProxiesDialog dialog = new ChangeProxiesDialog(
+                changeProxiesButton.getScene().getWindow(),
+                proxyGroupRepository,
+                proxyRepository,
+                (int) totalCount
+        );
+
+        dialog.showAndWait().ifPresent(result -> {
+            Long proxyGroupId = result.proxyGroupId();
+
+            // Load proxies from the selected group (empty list if "None")
+            List<ProxyEntity> proxies = (proxyGroupId != null)
+                    ? proxyRepository.findByGroupId(proxyGroupId)
+                    : List.of();
+
+            // Load ALL tasks in group order for sequential proxy assignment
+            List<TaskEntity> allTasks = taskRepository.findByGroupId(currentGroupId);
+
+            for (int i = 0; i < allTasks.size(); i++) {
+                TaskEntity task = allTasks.get(i);
+                Long oldProxyId = task.proxyId();
+
+                if (i < proxies.size()) {
+                    // Assign proxy from the new group
+                    task.proxyId(proxies.get(i).id());
+                    task.touchUpdatedAt();
+                    taskRepository.save(task);
+                } else if (proxyGroupId == null) {
+                    // "None" selected — clear proxy from all tasks
+                    task.proxyId(null);
+                    task.touchUpdatedAt();
+                    taskRepository.save(task);
+                } else {
+                    // More tasks than proxies — leave remaining tasks unchanged
+                    continue;
+                }
+
+                // Clean up old standalone proxy (null-group proxies from edit dialog)
+                proxyRepository.deleteIfStandalone(oldProxyId);
+            }
+
+            // Reload current page to reflect proxy changes on visible rows
+            loadCurrentPage();
+
+            System.out.println("[TaskGroupDetailController] Proxies changed — group "
+                    + (proxyGroupId != null ? "#" + proxyGroupId : "None")
+                    + ", " + Math.min(proxies.size(), allTasks.size()) + " tasks updated");
+        });
+    }
+
+    // ==================== Page Loading ====================
+
+    /**
+     * Loads the current page of tasks from the database.
+     *
+     * <p>Clears all displayed rows (but NOT screencast sessions), queries
+     * the database for the current page, and rebuilds rows. For any task
+     * that is currently active, UI callbacks are re-wired on
+     * {@link TaskExecutionService} so live updates target the new row.
+     * Screencast view browser state is also restored.</p>
+     */
+    private void loadCurrentPage() {
+        clearRows();
+
+        try {
+            totalCount = taskRepository.countByGroupId(currentGroupId);
+
+            if (totalCount == 0) {
+                updateViewState();
+                return;
+            }
+
+            // Clamp page if it has become invalid (e.g., after deletions)
+            if (currentPage >= totalPages()) {
+                currentPage = Math.max(0, totalPages() - 1);
+            }
+
+            int offset = currentPage * PAGE_SIZE;
+            List<TaskEntity> tasks = taskRepository.findByGroupId(currentGroupId, PAGE_SIZE, offset);
+
+            // Bulk-load profiles and proxies to avoid N+1 queries
+            Map<Long, ProfileEntity> profileMap = buildProfileMap(tasks);
+            Map<Long, ProxyEntity> proxyMap = buildProxyMap(tasks);
+
+            TaskExecutionService service = TaskExecutionService.instance();
+
+            for (TaskEntity task : tasks) {
+                String displayName = resolveDisplayName(task, profileMap);
+                String proxyDisplay = resolveProxyDisplay(task, proxyMap);
+                String statusText = task.displayStatus();
+
+                TaskRow row = new TaskRow(task.id(), displayName, statusText);
+                row.setProxyText(proxyDisplay);
+
+                // Restore persisted log state
+                if (task.hasLogMessage()) {
+                    row.setLogText(task.logMessage(), task.logColor());
+                }
+
+                wireRowCallbacks(row);
+
+                // Re-wire callbacks for active tasks so live updates target the new row
+                if (service.isActive(task.id())) {
+                    service.replaceCallbacks(task.id(),
+                            (msg, color) -> Platform.runLater(() -> row.setLogText(msg, color)),
+                            status -> Platform.runLater(() -> row.setStatus(status))
+                    );
+                }
+
+                // Restore view browser active state for tasks with open screencasts
+                if (screencastSessions.containsKey(task.id())) {
+                    row.setViewBrowserActive(true);
+                }
+
+                taskRows.add(row);
+                taskListContainer.getChildren().add(row);
+            }
+
+            System.out.println("[TaskGroupDetailController] Loaded page " + (currentPage + 1)
+                    + " (" + tasks.size() + " tasks) for group " + currentGroupId);
+
+        } catch (Database.DatabaseException e) {
+            System.err.println("[TaskGroupDetailController] Failed to load tasks: " + e.getMessage());
+            showErrorAlert("Failed to Load Tasks",
+                    "Could not load tasks from the database.",
+                    e.getMessage());
+        }
+
         updateViewState();
+        scrollPane.setVvalue(0);
     }
 
     /**
@@ -530,348 +597,293 @@ public class TaskGroupDetailController implements Initializable {
         }
     }
 
-    /**
-     * Loads all tasks for the group and creates {@link TaskRow} components.
-     *
-     * <p>Profiles are bulk-loaded for the group's tasks to avoid N+1 queries.
-     * Each task's display name is assembled as
-     * {@code "Profile Name (email@example.com)"}.</p>
-     *
-     * @param groupId the group ID
-     */
-    private void loadTasks(long groupId) {
-        try {
-            List<TaskEntity> tasks = taskRepository.findByGroupId(groupId);
+    // ==================== Row Callback Wiring ====================
 
-            if (tasks.isEmpty()) {
-                System.out.println("[TaskGroupDetailController] No tasks found for group " + groupId);
+    /**
+     * Wires all action button callbacks on a TaskRow.
+     *
+     * @param row the task row to wire
+     */
+    private void wireRowCallbacks(TaskRow row) {
+        long id = row.taskId();
+
+        // ---- Lifecycle callbacks ----
+
+        row.setOnStart(taskId -> requestStart(row));
+        row.setOnStop(taskId -> requestStop(row));
+        row.setOnOpenManualBrowser(taskId -> openManualBrowser(row));
+
+        // ---- View browser callbacks ----
+
+        row.setOnOpenViewBrowser(taskId -> {
+            System.out.println("[TaskGroupDetailController] Open view browser — Task #" + taskId);
+
+            Browser browser = TaskExecutionService.instance().browser(taskId);
+            if (browser == null || !browser.isOpen()) {
+                System.err.println("[TaskGroupDetailController] No active browser for task " + taskId);
                 return;
             }
 
-            // Bulk-load profiles and proxies to avoid N+1 queries
-            Map<Long, ProfileEntity> profileMap = buildProfileMap(tasks);
-            Map<Long, ProxyEntity> proxyMap = buildProxyMap(tasks);
+            ScreencastService service = new ScreencastService(browser.cdpClient());
+            ViewBrowserWindow window = new ViewBrowserWindow("View Browser — Task #" + taskId);
 
-            // Create a TaskRow for each task
-            for (TaskEntity task : tasks) {
-                String displayName = resolveDisplayName(task, profileMap);
-                String proxyDisplay = resolveProxyDisplay(task, proxyMap);
-                String statusText = task.displayStatus();
+            window.setOnClose(() -> {
+                closeScreencastSession(taskId);
+                findTaskRow(taskId).ifPresent(r -> r.setViewBrowserActive(false));
+            });
 
-                TaskRow row = new TaskRow(task.id(), displayName, statusText);
-                row.setProxyText(proxyDisplay);
+            screencastSessions.put(taskId, new ScreencastSession(service, window));
 
-                // Restore persisted log state
-                if (task.hasLogMessage()) {
-                    row.setLogText(task.logMessage(), task.logColor());
-                }
+            service.start(frameBytes ->
+                    Platform.runLater(() -> window.updateFrame(frameBytes))
+            );
 
-                wireRowCallbacks(row);
-                taskRows.add(row);
-                taskListContainer.getChildren().add(row);
+            window.show();
+            row.setViewBrowserActive(true);
+        });
+
+        row.setOnCloseViewBrowser(taskId -> {
+            System.out.println("[TaskGroupDetailController] Close view browser — Task #" + taskId);
+            closeScreencastSession(taskId);
+            row.setViewBrowserActive(false);
+        });
+
+        // ---- Clone ----
+
+        row.setOnClone(taskId -> {
+            System.out.println("[TaskGroupDetailController] Clone task #" + taskId);
+
+            Optional<TaskEntity> taskOpt = taskRepository.findById(taskId);
+            if (taskOpt.isEmpty()) {
+                System.err.println("[TaskGroupDetailController] Task not found for clone: " + taskId);
+                return;
             }
 
-            System.out.println("[TaskGroupDetailController] Loaded " + tasks.size()
-                    + " tasks for group " + groupId);
+            TaskEntity original = taskOpt.get();
 
-        } catch (Database.DatabaseException e) {
-            System.err.println("[TaskGroupDetailController] Failed to load tasks: " + e.getMessage());
-            showErrorAlert("Failed to Load Tasks",
-                    "Could not load tasks from the database.",
-                    e.getMessage());
-        }
-    }
+            // Build a fresh copy — keep profile, proxy, warmSession, notes
+            // Reset identity, status, userdata, custom status, fingerprint, and log
+            TaskEntity clone = original.toBuilder()
+                    .id(0)
+                    .status(TaskEntity.STATUS_IDLE)
+                    .userdataPath(null)
+                    .customStatus(null)
+                    .logMessage(null)
+                    .logColor(null)
+                    .fingerprintIndex(null)
+                    .createdAt(null)
+                    .updatedAt(null)
+                    .build();
 
-    // ==================== Profile Resolution ====================
+            taskRepository.save(clone);
 
-    /**
-     * Builds a map of profile ID → ProfileEntity for the given tasks.
-     *
-     * <p>Collects unique profile IDs from the task list, then fetches
-     * each profile individually. A future optimization could add a
-     * {@code findByIds(List<Long>)} method to the repository.</p>
-     *
-     * @param tasks the tasks to resolve profiles for
-     * @return map of profile ID to entity
-     */
-    private Map<Long, ProfileEntity> buildProfileMap(List<TaskEntity> tasks) {
-        Map<Long, ProfileEntity> profileMap = new HashMap<>();
+            // Check if on last page before refreshing
+            boolean wasOnLastPage = isOnLastPage();
 
-        // Collect unique profile IDs
-        Set<Long> profileIds = new HashSet<>();
-        for (TaskEntity task : tasks) {
-            profileIds.add(task.profileId());
-        }
-
-        // Fetch each profile
-        for (long profileId : profileIds) {
-            try {
-                profileRepository.findById(profileId).ifPresent(
-                        profile -> profileMap.put(profileId, profile)
-                );
-            } catch (Database.DatabaseException e) {
-                System.err.println("[TaskGroupDetailController] Failed to load profile "
-                        + profileId + ": " + e.getMessage());
+            if (wasOnLastPage) {
+                loadCurrentPage();
+            } else {
+                totalCount = taskRepository.countByGroupId(currentGroupId);
+                updateViewState();
             }
-        }
 
-        return profileMap;
-    }
+            System.out.println("[TaskGroupDetailController] Cloned task #" + taskId
+                    + " → new task #" + clone.id());
+        });
 
-    /**
-     * Builds a map of proxy ID → ProxyEntity for the given tasks.
-     *
-     * <p>Only resolves proxies for tasks that have a non-null proxy ID.
-     * Follows the same pattern as {@link #buildProfileMap(List)}.</p>
-     *
-     * @param tasks the tasks to resolve proxies for
-     * @return map of proxy ID to entity
-     */
-    private Map<Long, ProxyEntity> buildProxyMap(List<TaskEntity> tasks) {
-        Map<Long, ProxyEntity> proxyMap = new HashMap<>();
+        // ---- Edit ----
 
-        Set<Long> proxyIds = new HashSet<>();
-        for (TaskEntity task : tasks) {
+        row.setOnEdit(taskId -> {
+            System.out.println("[TaskGroupDetailController] Edit task #" + taskId);
+
+            Optional<TaskEntity> taskOpt = taskRepository.findById(taskId);
+            if (taskOpt.isEmpty()) {
+                System.err.println("[TaskGroupDetailController] Task not found: " + taskId);
+                return;
+            }
+
+            TaskEntity task = taskOpt.get();
+
+            // Resolve current proxy string for pre-population
+            String currentProxyString = null;
             if (task.hasProxy()) {
-                proxyIds.add(task.proxyId());
-            }
-        }
-
-        for (long proxyId : proxyIds) {
-            try {
-                proxyRepository.findById(proxyId).ifPresent(
-                        proxy -> proxyMap.put(proxyId, proxy)
-                );
-            } catch (Database.DatabaseException e) {
-                System.err.println("[TaskGroupDetailController] Failed to load proxy "
-                        + proxyId + ": " + e.getMessage());
-            }
-        }
-
-        return proxyMap;
-    }
-
-
-
-    /**
-     * Resolves a display name for a task based on its linked profile.
-     *
-     * <p>Format: {@code "Profile Name (email@example.com)"}</p>
-     * <p>Fallback: {@code "Unknown Profile (Task #ID)"} if the profile
-     * cannot be found (e.g., deleted after task creation).</p>
-     *
-     * @param task       the task entity
-     * @param profileMap the pre-loaded profile map
-     * @return the display name string
-     */
-    private String resolveDisplayName(TaskEntity task, Map<Long, ProfileEntity> profileMap) {
-        ProfileEntity profile = profileMap.get(task.profileId());
-
-        if (profile == null) {
-            return "Unknown Profile (Task #" + task.id() + ")";
-        }
-
-        String name = profile.displayName();
-        String email = profile.emailAddress();
-
-        if (email != null && !email.isBlank()) {
-            return name + " (" + email + ")";
-        }
-
-        return name;
-    }
-
-    /**
-     * Resolves a display string for a task's proxy.
-     *
-     * <p>Returns the masked proxy string (e.g., "host:8080:user:***")
-     * or null if the task has no proxy assigned.</p>
-     *
-     * @param task     the task entity
-     * @param proxyMap the pre-loaded proxy map
-     * @return the display string, or null if no proxy
-     */
-    private String resolveProxyDisplay(TaskEntity task, Map<Long, ProxyEntity> proxyMap) {
-        if (!task.hasProxy()) {
-            return null;
-        }
-
-        ProxyEntity proxy = proxyMap.get(task.proxyId());
-        if (proxy == null) {
-            return null;
-        }
-
-        return proxy.toDisplayString();
-    }
-
-    // ==================== Event Handlers ====================
-
-    /**
-     * Handles the back button click.
-     * Delegates to the navigation callback set by {@link MainController}.
-     */
-    @FXML
-    private void onBackClicked() {
-        System.out.println("[TaskGroupDetailController] Back button clicked");
-
-        if (onBack != null) {
-            onBack.run();
-        }
-    }
-
-    @FXML
-    private void onAddTaskClicked() {
-        System.out.println("[TaskGroupDetailController] Add task clicked for group " + currentGroupId);
-
-        CreateTaskDialog dialog = new CreateTaskDialog(
-                addButton.getScene().getWindow(),
-                new ProfileGroupRepository(),
-                profileRepository,
-                proxyGroupRepository,
-                proxyRepository
-        );
-
-        dialog.showAndWait().ifPresent(result -> {
-            List<Long> profileIds = result.profileIds();
-            Long proxyGroupId = result.proxyGroupId();
-            boolean warmSession = result.warmSession();
-
-            // Load proxies sequentially if a proxy group was selected
-            List<ProxyEntity> proxies = (proxyGroupId != null)
-                    ? proxyRepository.findByGroupId(proxyGroupId)
-                    : List.of();
-
-            // Create a TaskEntity for each selected profile
-            List<TaskEntity> tasks = new ArrayList<>();
-            for (int i = 0; i < profileIds.size(); i++) {
-                Long proxyId = (i < proxies.size()) ? proxies.get(i).id() : null;
-
-                TaskEntity task = TaskEntity.builder()
-                        .groupId(currentGroupId)
-                        .profileId(profileIds.get(i))
-                        .proxyId(proxyId)
-                        .warmSession(warmSession)
-                        .build();
-
-                tasks.add(task);
-            }
-
-            // Persist all tasks
-            taskRepository.saveAll(tasks);
-
-            // Build profile and proxy maps for display resolution
-            Map<Long, ProfileEntity> profileMap = buildProfileMap(tasks);
-            Map<Long, ProxyEntity> proxyMap = buildProxyMap(tasks);
-
-            // Create a TaskRow for each saved task
-            for (TaskEntity task : tasks) {
-                String displayName = resolveDisplayName(task, profileMap);
-                String proxyDisplay = resolveProxyDisplay(task, proxyMap);
-                TaskRow row = new TaskRow(task.id(), displayName, task.displayStatus());
-                row.setProxyText(proxyDisplay);
-
-                // Restore persisted log state (newly created tasks won't have one,
-                // but this keeps the pattern consistent)
-                if (task.hasLogMessage()) {
-                    row.setLogText(task.logMessage(), task.logColor());
+                Optional<ProxyEntity> proxyOpt = proxyRepository.findById(task.proxyId());
+                if (proxyOpt.isPresent()) {
+                    currentProxyString = proxyOpt.get().toProxyString();
                 }
-
-                wireRowCallbacks(row);
-                taskRows.add(row);
-                taskListContainer.getChildren().add(row);
             }
 
-            updateViewState();
+            // Open edit dialog
+            EditTaskDialog dialog = new EditTaskDialog(
+                    row.getScene().getWindow(),
+                    currentProxyString,
+                    task.customStatus()
+            );
 
-            System.out.println("[TaskGroupDetailController] Created " + tasks.size() + " tasks");
-        });
-    }
-
-    @FXML
-    private void onStartAllClicked() {
-        System.out.println("[TaskGroupDetailController] Start All clicked for group " + currentGroupId);
-
-        TaskExecutionService service = TaskExecutionService.instance();
-
-        for (TaskRow row : taskRows) {
-            if (service.isActive(row.taskId())) {
-                continue; // Skip tasks that already have a browser or script thread
-            }
-            requestStart(row);
-        }
-    }
-
-    @FXML
-    private void onStopAllClicked() {
-        System.out.println("[TaskGroupDetailController] Stop All clicked for group " + currentGroupId);
-
-        TaskExecutionService service = TaskExecutionService.instance();
-
-        for (TaskRow row : taskRows) {
-            if (service.isActive(row.taskId())) {
-                requestStop(row);
-            }
-        }
-    }
-
-    @FXML
-    private void onChangeProxiesClicked() {
-        System.out.println("[TaskGroupDetailController] Change Proxies clicked for group " + currentGroupId);
-
-        ChangeProxiesDialog dialog = new ChangeProxiesDialog(
-                changeProxiesButton.getScene().getWindow(),
-                proxyGroupRepository,
-                proxyRepository,
-                taskRows.size()
-        );
-
-        dialog.showAndWait().ifPresent(result -> {
-            Long proxyGroupId = result.proxyGroupId();
-
-            // Load proxies from the selected group (empty list if "None")
-            List<ProxyEntity> proxies = (proxyGroupId != null)
-                    ? proxyRepository.findByGroupId(proxyGroupId)
-                    : List.of();
-
-            // Reassign proxies across tasks in row order
-            for (int i = 0; i < taskRows.size(); i++) {
-                TaskRow row = taskRows.get(i);
-
-                Optional<TaskEntity> taskOpt = taskRepository.findById(row.taskId());
-                if (taskOpt.isEmpty()) {
-                    continue;
-                }
-
-                TaskEntity task = taskOpt.get();
+            dialog.showAndWait().ifPresent(result -> {
+                // Handle proxy change
                 Long oldProxyId = task.proxyId();
+                Long newProxyId;
 
-                if (i < proxies.size()) {
-                    // Assign proxy from the new group
-                    ProxyEntity proxy = proxies.get(i);
-                    task.proxyId(proxy.id());
-                    task.touchUpdatedAt();
-                    taskRepository.save(task);
-                    row.setProxyText(proxy.toDisplayString());
-                } else if (proxyGroupId == null) {
-                    // "None" selected — clear proxy from all tasks
-                    task.proxyId(null);
-                    task.touchUpdatedAt();
-                    taskRepository.save(task);
-                    row.setProxyText(null);
+                if (result.proxyString() != null) {
+                    ProxyEntity newProxy = ProxyEntity.builder()
+                            .groupId(null)
+                            .fromProxyString(result.proxyString())
+                            .build();
+                    proxyRepository.save(newProxy);
+                    newProxyId = newProxy.id();
                 } else {
-                    // More tasks than proxies — leave remaining tasks unchanged
-                    continue;
+                    newProxyId = null;
                 }
 
-                // Clean up old standalone proxy (null-group proxies from edit dialog)
+                // Update task
+                task.proxyId(newProxyId);
+                task.customStatus(result.customStatus());
+                task.touchUpdatedAt();
+                taskRepository.save(task);
+
+                // Clean up old standalone proxy
                 proxyRepository.deleteIfStandalone(oldProxyId);
+
+                // Refresh the visible row
+                findTaskRow(taskId).ifPresent(r -> {
+                    if (newProxyId != null) {
+                        proxyRepository.findById(newProxyId).ifPresent(
+                                p -> r.setProxyText(p.toDisplayString())
+                        );
+                    } else {
+                        r.setProxyText(null);
+                    }
+
+                    r.setStatus(task.displayStatus());
+                });
+
+                System.out.println("[TaskGroupDetailController] Task #" + taskId + " updated");
+            });
+        });
+
+        // ---- Delete ----
+
+        row.setOnDelete(taskId -> {
+            System.out.println("[TaskGroupDetailController] Delete task #" + taskId);
+
+            // Defensive: stop browser if somehow still active
+            TaskExecutionService service = TaskExecutionService.instance();
+            if (service.isActive(taskId)) {
+                closeScreencastSession(taskId);
+                service.stopBrowser(taskId);
             }
 
-            System.out.println("[TaskGroupDetailController] Proxies changed — group "
-                    + (proxyGroupId != null ? "#" + proxyGroupId : "None")
-                    + ", " + Math.min(proxies.size(), taskRows.size()) + " tasks updated");
+            // Load task for userdata path and proxy info before deletion
+            Optional<TaskEntity> taskOpt = taskRepository.findById(taskId);
+            if (taskOpt.isPresent()) {
+                TaskEntity task = taskOpt.get();
+
+                // Delete userdata directory from disk
+                if (task.hasUserdataPath()) {
+                    TaskExecutionService.deleteDirectoryWithRetry(
+                            Path.of(task.userdataPath()));
+                }
+
+                // Delete task from database
+                taskRepository.deleteById(taskId);
+
+                // Clean up standalone proxy
+                proxyRepository.deleteIfStandalone(task.proxyId());
+            }
+
+            // Reload current page (handles backfill and page clamping)
+            loadCurrentPage();
+
+            System.out.println("[TaskGroupDetailController] Deleted task #" + taskId);
         });
     }
+
+    // ==================== Task Lifecycle Helpers ====================
+
+    /**
+     * Requests a scripted task start for the given row.
+     *
+     * <p>Sets the row to a transitional "STARTING..." state immediately, then
+     * calls {@link TaskExecutionService#startTask} which spawns its own daemon
+     * thread and returns immediately. Log and status callbacks are wrapped with
+     * {@code Platform.runLater} to marshal updates back to the FX thread.</p>
+     *
+     * <p>The callbacks are stored in {@link TaskExecutionService} via the proxy
+     * pattern and can be replaced later when rows are rebuilt.</p>
+     *
+     * @param row the task row to start
+     */
+    private void requestStart(TaskRow row) {
+        long taskId = row.taskId();
+        row.setStatus("STARTING...");
+
+        try {
+            TaskExecutionService.instance().startTask(taskId,
+                    (msg, color) -> Platform.runLater(() -> row.setLogText(msg, color)),
+                    status -> Platform.runLater(() -> row.setStatus(status))
+            );
+        } catch (IllegalStateException e) {
+            System.err.println("[TaskGroupDetailController] Failed to start task #"
+                    + taskId + ": " + e.getMessage());
+            row.setStatus(TaskEntity.STATUS_FAILED);
+            row.setLogText("Failed to start: " + e.getMessage(), TaskEntity.LOG_ERROR);
+        }
+    }
+
+    /**
+     * Requests a task stop for the given row (handles both RUNNING and MANUAL).
+     *
+     * <p>Closes any active screencast session on the FX thread first, then
+     * stops the browser on a background thread. The row status is set to
+     * STOPPED on the FX thread after the browser is closed.</p>
+     *
+     * @param row the task row to stop
+     */
+    private void requestStop(TaskRow row) {
+        long taskId = row.taskId();
+
+        closeScreencastSession(taskId);
+
+        Thread thread = new Thread(() -> {
+            TaskExecutionService.instance().stopBrowser(taskId);
+            Platform.runLater(() -> row.setStatus(TaskEntity.STATUS_STOPPED));
+        }, "Stop-" + taskId);
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    /**
+     * Opens a manual (headed) browser session for the given row.
+     *
+     * <p>Sets the row to "STARTING..." immediately, then launches the browser
+     * on a background thread. On success the row transitions to MANUAL;
+     * on failure it transitions to FAILED.</p>
+     *
+     * @param row the task row to open a manual browser for
+     */
+    private void openManualBrowser(TaskRow row) {
+        long taskId = row.taskId();
+        row.setStatus("STARTING...");
+
+        Thread thread = new Thread(() -> {
+            try {
+                TaskExecutionService.instance().startManualBrowser(taskId);
+                Platform.runLater(() -> row.setStatus(TaskEntity.STATUS_MANUAL));
+            } catch (Exception e) {
+                System.err.println("[TaskGroupDetailController] Manual browser failed for task #"
+                        + taskId + ": " + e.getMessage());
+                Platform.runLater(() -> {
+                    row.setStatus(TaskEntity.STATUS_FAILED);
+                    row.setLogText("Manual browser failed: " + e.getMessage(), TaskEntity.LOG_ERROR);
+                });
+            }
+        }, "Manual-" + taskId);
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    // ==================== Screencast Management ====================
 
     /**
      * Closes and cleans up a screencast session for a task.
@@ -902,26 +914,131 @@ public class TaskGroupDetailController implements Initializable {
         }
     }
 
-    // ==================== View State Management ====================
+    // ==================== Profile / Proxy Resolution ====================
 
     /**
-     * Updates the view to show either empty state or the task list.
+     * Builds a map of profile ID → ProfileEntity for the given tasks.
+     *
+     * @param tasks the tasks to resolve profiles for
+     * @return map of profile ID to entity
      */
-    private void updateViewState() {
-        boolean hasTasks = !taskRows.isEmpty();
+    private Map<Long, ProfileEntity> buildProfileMap(List<TaskEntity> tasks) {
+        Map<Long, ProfileEntity> profileMap = new HashMap<>();
 
-        emptyState.setVisible(!hasTasks);
-        emptyState.setManaged(!hasTasks);
+        Set<Long> profileIds = new HashSet<>();
+        for (TaskEntity task : tasks) {
+            profileIds.add(task.profileId());
+        }
 
-        scrollPane.setVisible(hasTasks);
-        scrollPane.setManaged(hasTasks);
+        for (long profileId : profileIds) {
+            try {
+                profileRepository.findById(profileId).ifPresent(
+                        profile -> profileMap.put(profileId, profile)
+                );
+            } catch (Database.DatabaseException e) {
+                System.err.println("[TaskGroupDetailController] Failed to load profile "
+                        + profileId + ": " + e.getMessage());
+            }
+        }
+
+        return profileMap;
     }
 
     /**
-     * Clears all displayed data from the page.
+     * Builds a map of proxy ID → ProxyEntity for the given tasks.
      *
-     * <p>Called at the start of {@link #loadGroup(long)} to ensure
-     * clean state before populating with new data.</p>
+     * @param tasks the tasks to resolve proxies for
+     * @return map of proxy ID to entity
+     */
+    private Map<Long, ProxyEntity> buildProxyMap(List<TaskEntity> tasks) {
+        Map<Long, ProxyEntity> proxyMap = new HashMap<>();
+
+        Set<Long> proxyIds = new HashSet<>();
+        for (TaskEntity task : tasks) {
+            if (task.hasProxy()) {
+                proxyIds.add(task.proxyId());
+            }
+        }
+
+        for (long proxyId : proxyIds) {
+            try {
+                proxyRepository.findById(proxyId).ifPresent(
+                        proxy -> proxyMap.put(proxyId, proxy)
+                );
+            } catch (Database.DatabaseException e) {
+                System.err.println("[TaskGroupDetailController] Failed to load proxy "
+                        + proxyId + ": " + e.getMessage());
+            }
+        }
+
+        return proxyMap;
+    }
+
+    /**
+     * Resolves a display name for a task based on its linked profile.
+     *
+     * <p>Format: {@code "Profile Name (email@example.com)"}</p>
+     *
+     * @param task       the task entity
+     * @param profileMap the pre-loaded profile map
+     * @return the display name string
+     */
+    private String resolveDisplayName(TaskEntity task, Map<Long, ProfileEntity> profileMap) {
+        ProfileEntity profile = profileMap.get(task.profileId());
+
+        if (profile == null) {
+            return "Unknown Profile (Task #" + task.id() + ")";
+        }
+
+        String name = profile.displayName();
+        String email = profile.emailAddress();
+
+        if (email != null && !email.isBlank()) {
+            return name + " (" + email + ")";
+        }
+
+        return name;
+    }
+
+    /**
+     * Resolves a display string for a task's proxy.
+     *
+     * @param task     the task entity
+     * @param proxyMap the pre-loaded proxy map
+     * @return the display string, or null if no proxy
+     */
+    private String resolveProxyDisplay(TaskEntity task, Map<Long, ProxyEntity> proxyMap) {
+        if (!task.hasProxy()) {
+            return null;
+        }
+
+        ProxyEntity proxy = proxyMap.get(task.proxyId());
+        if (proxy == null) {
+            return null;
+        }
+
+        return proxy.toDisplayString();
+    }
+
+    // ==================== Row / Page Management ====================
+
+    /**
+     * Clears all displayed task rows from the UI.
+     *
+     * <p>Does NOT close screencast sessions — they persist across page
+     * navigations. Used when navigating between pages within the same group.</p>
+     */
+    private void clearRows() {
+        taskRows.clear();
+        taskListContainer.getChildren().clear();
+    }
+
+    /**
+     * Fully resets the page, including closing all screencast sessions.
+     *
+     * <p>Called at the start of {@link #loadGroup(long)} when entering
+     * the page fresh from the Task Manager. Screencasts from a previous
+     * group visit are cleaned up.</p>
      */
     private void clearPage() {
         // Close all active screencast sessions
@@ -929,8 +1046,7 @@ public class TaskGroupDetailController implements Initializable {
             closeScreencastSession(taskId);
         }
 
-        taskRows.clear();
-        taskListContainer.getChildren().clear();
+        clearRows();
 
         groupNameLabel.setText("Task Group");
         scriptNameLabel.setText("Script");
@@ -938,10 +1054,67 @@ public class TaskGroupDetailController implements Initializable {
         currentGroupId = -1;
     }
 
+    // ==================== Pagination Helpers ====================
+
+    /**
+     * Calculates the total number of pages based on the current total count.
+     *
+     * @return the total page count, or 0 if the group is empty
+     */
+    private int totalPages() {
+        if (totalCount <= 0) return 0;
+        return (int) Math.ceil((double) totalCount / PAGE_SIZE);
+    }
+
+    /**
+     * Checks whether the current page is the last page.
+     *
+     * @return true if on the last page or if the group is empty
+     */
+    private boolean isOnLastPage() {
+        return totalPages() == 0 || currentPage >= totalPages() - 1;
+    }
+
+    // ==================== View State ====================
+
+    /**
+     * Updates the view to show either empty state or the task list,
+     * and updates the pagination controls.
+     */
+    private void updateViewState() {
+        boolean hasTasks = totalCount > 0;
+
+        emptyState.setVisible(!hasTasks);
+        emptyState.setManaged(!hasTasks);
+
+        scrollPane.setVisible(hasTasks);
+        scrollPane.setManaged(hasTasks);
+
+        paginationBar.setVisible(hasTasks);
+        paginationBar.setManaged(hasTasks);
+
+        if (hasTasks) {
+            updatePaginationControls();
+        }
+    }
+
+    /**
+     * Updates the pagination range label and arrow button states.
+     */
+    private void updatePaginationControls() {
+        long start = (long) currentPage * PAGE_SIZE + 1;
+        long end = Math.min((long) (currentPage + 1) * PAGE_SIZE, totalCount);
+
+        pageRangeLabel.setText(start + "–" + end + " of " + totalCount);
+
+        prevPageButton.setDisable(currentPage <= 0);
+        nextPageButton.setDisable(currentPage >= totalPages() - 1);
+    }
+
     // ==================== Error Handling ====================
 
     /**
-     * Shows an error alert dialog to the user.
+     * Shows an error alert dialog styled with the dark theme.
      *
      * @param title   the alert title
      * @param header  the header text describing what went wrong
@@ -966,21 +1139,7 @@ public class TaskGroupDetailController implements Initializable {
         alert.showAndWait();
     }
 
-    // ==================== Callbacks ====================
-
-    /**
-     * Sets the callback for back navigation.
-     *
-     * <p>Called by {@link MainController} after loading this controller
-     * to wire navigation without tight coupling.</p>
-     *
-     * @param onBack the callback to invoke when back is clicked
-     */
-    public void setOnBack(Runnable onBack) {
-        this.onBack = onBack;
-    }
-
-    // ==================== Public API ====================
+    // ==================== Getters ====================
 
     /**
      * Gets the currently loaded group ID.
@@ -1010,10 +1169,10 @@ public class TaskGroupDetailController implements Initializable {
     }
 
     /**
-     * Finds a task row by task ID.
+     * Finds a task row by task ID on the current page.
      *
      * @param taskId the task ID to search for
-     * @return an Optional containing the row, or empty if not found
+     * @return an Optional containing the row, or empty if not on this page
      */
     public Optional<TaskRow> findTaskRow(long taskId) {
         return taskRows.stream()
@@ -1021,10 +1180,8 @@ public class TaskGroupDetailController implements Initializable {
                 .findFirst();
     }
 
-
     /**
      * Bundles the screencast service and view window for an active session.
-     * Used to track and clean up view browser sessions per task.
      */
     private record ScreencastSession(ScreencastService service, ViewBrowserWindow window) {}
 }

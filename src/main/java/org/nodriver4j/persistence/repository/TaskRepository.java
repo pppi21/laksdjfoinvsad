@@ -3,6 +3,7 @@ package org.nodriver4j.persistence.repository;
 import org.nodriver4j.persistence.Database;
 import org.nodriver4j.persistence.Repository;
 import org.nodriver4j.persistence.entity.TaskEntity;
+import org.nodriver4j.services.TaskExecutionService;
 
 import java.sql.*;
 import java.time.LocalDateTime;
@@ -142,6 +143,12 @@ public class TaskRepository implements Repository<TaskEntity> {
 
     private static final String DELETE_ALL_SQL =
             "DELETE FROM tasks";
+
+    private static final String SELECT_IDS_BY_GROUP_ID_SQL =
+            "SELECT id FROM tasks WHERE group_id = ? ORDER BY id ASC";
+
+    private static final String SELECT_BY_GROUP_ID_PAGINATED_SQL =
+            "SELECT " + SELECT_COLUMNS + " FROM tasks WHERE group_id = ? ORDER BY id ASC LIMIT ? OFFSET ?";
 
     // ==================== Create / Update ====================
 
@@ -368,6 +375,74 @@ public class TaskRepository implements Repository<TaskEntity> {
         }
 
         return tasks;
+    }
+
+    /**
+     * Finds tasks belonging to a specific group with pagination.
+     *
+     * <p>Results are ordered by ID ascending, preserving the order in which
+     * tasks were created. This is used by the UI to display one page of
+     * tasks at a time.</p>
+     *
+     * @param groupId the task group ID
+     * @param limit   the maximum number of tasks to return
+     * @param offset  the number of tasks to skip
+     * @return list of tasks for the requested page (empty list if none)
+     */
+    public List<TaskEntity> findByGroupId(long groupId, int limit, int offset) {
+        List<TaskEntity> tasks = new ArrayList<>();
+
+        try (Connection conn = Database.connection();
+             PreparedStatement stmt = conn.prepareStatement(SELECT_BY_GROUP_ID_PAGINATED_SQL)) {
+
+            stmt.setLong(1, groupId);
+            stmt.setInt(2, limit);
+            stmt.setInt(3, offset);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    tasks.add(mapRow(rs));
+                }
+            }
+
+        } catch (SQLException e) {
+            throw new Database.DatabaseException(
+                    "Failed to find tasks by group ID (paginated): " + groupId, e);
+        }
+
+        return tasks;
+    }
+
+    /**
+     * Finds all task IDs belonging to a specific group.
+     *
+     * <p>Returns only the IDs, not full entities. This is used by
+     * bulk operations like Start All and Stop All where only the
+     * task ID is needed to delegate to {@link TaskExecutionService}.</p>
+     *
+     * @param groupId the task group ID
+     * @return list of task IDs in the group, ordered by ID ascending
+     */
+    public List<Long> findTaskIdsByGroupId(long groupId) {
+        List<Long> ids = new ArrayList<>();
+
+        try (Connection conn = Database.connection();
+             PreparedStatement stmt = conn.prepareStatement(SELECT_IDS_BY_GROUP_ID_SQL)) {
+
+            stmt.setLong(1, groupId);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    ids.add(rs.getLong("id"));
+                }
+            }
+
+        } catch (SQLException e) {
+            throw new Database.DatabaseException(
+                    "Failed to find task IDs by group ID: " + groupId, e);
+        }
+
+        return ids;
     }
 
     @Override

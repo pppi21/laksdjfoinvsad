@@ -147,6 +147,7 @@ public class TaskExecutionService {
 
     private final ConcurrentHashMap<Long, Browser> runningBrowsers;
     private final ConcurrentHashMap<Long, Thread> scriptThreads;
+    private final ConcurrentHashMap<Long, TaskCallbacks> taskCallbacks;
     private final BlockingQueue<Integer> availablePorts;
     private final AtomicBoolean isShutdown;
     private final Thread shutdownHook;
@@ -162,6 +163,7 @@ public class TaskExecutionService {
     private TaskExecutionService() {
         this.runningBrowsers = new ConcurrentHashMap<>();
         this.scriptThreads = new ConcurrentHashMap<>();
+        this.taskCallbacks = new ConcurrentHashMap<>();
         this.isShutdown = new AtomicBoolean(false);
         this.taskRepository = new TaskRepository();
         this.taskGroupRepository = new TaskGroupRepository();
@@ -192,6 +194,11 @@ public class TaskExecutionService {
      * All heavy work (browser launch, script execution, cleanup) happens
      * asynchronously. The caller is notified of progress via callbacks.</p>
      *
+     * <p>The provided callbacks are stored in a map and accessed via proxy
+     * lambdas. This allows {@link #replaceCallbacks(long, BiConsumer, Consumer)}
+     * to swap in new callbacks when task rows are rebuilt (e.g., due to
+     * pagination or page re-entry), without interrupting the running script.</p>
+     *
      * <p>The background thread handles the full lifecycle:</p>
      * <ol>
      *   <li>Load task, group, and profile entities from the database</li>
@@ -204,6 +211,7 @@ public class TaskExecutionService {
      *   <li>Always: close the browser and release resources</li>
      * </ol>
      *
+     * @param taskId         the ID of the task to start
      * @param onLogUpdate    callback for live log messages from the script;
      *                       receives {@code (message, colorClass)} — the caller
      *                       is responsible for marshalling to the JavaFX thread;
@@ -212,7 +220,6 @@ public class TaskExecutionService {
      *                       new status string (e.g., {@link TaskEntity#STATUS_RUNNING});
      *                       the caller is responsible for marshalling to the JavaFX
      *                       thread; may be null to disable UI status updates
-     * @param taskId         the ID of the task to start
      * @throws IllegalStateException if the service is shutdown, the task is already
      *                               active, or Settings is misconfigured
      */
@@ -223,8 +230,27 @@ public class TaskExecutionService {
         ensureNotActive(taskId);
         validateSettings();
 
+        // Store real callbacks in the map (replaceable via replaceCallbacks)
+        taskCallbacks.put(taskId, new TaskCallbacks(onLogUpdate, onStatusChange));
+
+        // Create proxy lambdas that always delegate to the current map entry.
+        // This allows the controller to swap callbacks without touching the thread.
+        BiConsumer<String, String> logProxy = (msg, color) -> {
+            TaskCallbacks current = taskCallbacks.get(taskId);
+            if (current != null && current.onLogUpdate() != null) {
+                current.onLogUpdate().accept(msg, color);
+            }
+        };
+
+        Consumer<String> statusProxy = status -> {
+            TaskCallbacks current = taskCallbacks.get(taskId);
+            if (current != null && current.onStatusChange() != null) {
+                current.onStatusChange().accept(status);
+            }
+        };
+
         Thread scriptThread = new Thread(
-                () -> executeTask(taskId, onLogUpdate, onStatusChange),
+                () -> executeTask(taskId, logProxy, statusProxy),
                 "Task-" + taskId
         );
         scriptThread.setDaemon(true);
@@ -234,6 +260,32 @@ public class TaskExecutionService {
         scriptThread.start();
 
         System.out.println("[TaskExecutionService] Spawned script thread for task " + taskId);
+    }
+
+    /**
+     * Replaces the UI callbacks for an active task.
+     *
+     * <p>Used when the UI rebuilds task rows — for example, when the user
+     * navigates between pagination pages or re-enters the TaskGroupDetail
+     * page. The new callbacks point to the freshly created {@code TaskRow},
+     * so live log and status updates resume on the correct UI component.</p>
+     *
+     * <p>If the task is not active (no entry in the callbacks map), this
+     * method does nothing. The caller does not need to check whether the
+     * task is running before calling this.</p>
+     *
+     * @param taskId         the task ID
+     * @param onLogUpdate    the new log callback, or null
+     * @param onStatusChange the new status callback, or null
+     */
+    public void replaceCallbacks(long taskId,
+                                 BiConsumer<String, String> onLogUpdate,
+                                 Consumer<String> onStatusChange) {
+        // Only replace if the task is actually active — otherwise the entry
+        // doesn't exist and there's nothing to replace.
+        if (taskCallbacks.containsKey(taskId)) {
+            taskCallbacks.put(taskId, new TaskCallbacks(onLogUpdate, onStatusChange));
+        }
     }
 
     /**
@@ -315,9 +367,6 @@ public class TaskExecutionService {
             notifyStatusChange(onStatusChange, TaskEntity.STATUS_FAILED);
 
         } finally {
-            // Close the browser if stopBrowser hasn't already done so.
-            // ConcurrentHashMap.remove() is atomic, so only one of
-            // executeTask or stopBrowser will get the reference.
             Browser browser = runningBrowsers.remove(taskId);
             if (browser != null) {
                 try {
@@ -328,6 +377,7 @@ public class TaskExecutionService {
                 }
             }
             scriptThreads.remove(taskId);
+            taskCallbacks.remove(taskId);
         }
     }
 
@@ -382,9 +432,6 @@ public class TaskExecutionService {
     public void stopBrowser(long taskId) {
         ensureNotShutdown();
 
-        // Interrupt script thread if present. The thread's finally block
-        // will handle its own cleanup, but we also close the browser here
-        // to ensure the Chrome process is terminated promptly.
         Thread thread = scriptThreads.remove(taskId);
         if (thread != null) {
             thread.interrupt();
@@ -403,8 +450,8 @@ public class TaskExecutionService {
             }
         }
 
-        // Always update status, even if browser wasn't in the map
-        // (handles edge case where browser crashed but status wasn't updated)
+        taskCallbacks.remove(taskId);
+
         updateTaskStatus(taskId, TaskEntity.STATUS_STOPPED);
     }
 
@@ -827,6 +874,7 @@ public class TaskExecutionService {
 
         runningBrowsers.clear();
         scriptThreads.clear();
+        taskCallbacks.clear();
     }
 
     /**
@@ -1017,4 +1065,19 @@ public class TaskExecutionService {
         System.err.println("[TaskExecutionService] Failed to delete directory after " +
                 maxRetries + " attempts: " + directory);
     }
+
+    /**
+     * Holds replaceable UI callbacks for an active task.
+     *
+     * <p>Stored in {@link #taskCallbacks} and looked up by proxy lambdas
+     * on every invocation, allowing the controller to swap in new callbacks
+     * when task rows are rebuilt (e.g., page navigation, returning to the page).</p>
+     *
+     * @param onLogUpdate    callback for log messages, or null
+     * @param onStatusChange callback for status transitions, or null
+     */
+    public record TaskCallbacks(
+            BiConsumer<String, String> onLogUpdate,
+            Consumer<String> onStatusChange
+    ) {}
 }
