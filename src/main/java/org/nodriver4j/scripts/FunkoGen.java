@@ -245,6 +245,7 @@ public class FunkoGen implements AutomationScript {
                     page.sleep(2000);
                 }
                 page.reload(true, 30000);
+                page.sleep(3000);
             } catch (TimeoutException e) {
                 logger.log("Entry attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
             }
