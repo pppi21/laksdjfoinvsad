@@ -16,6 +16,7 @@
     Displays individual profiles belonging to a profile group as card tiles.
     Navigated to by clicking a profile group card in the Profile Manager.
     No add button — profiles are only added during group creation via CSV import.
+    Includes Gmail-style pagination controls above the card grid.
     Controller: ProfileGroupDetailController
 -->
 <VBox xmlns="http://javafx.com/javafx/21"
@@ -45,6 +46,43 @@
 
         <!-- Spacer -->
         <Region HBox.hgrow="ALWAYS"/>
+
+    </HBox>
+
+    <!-- ==================== Pagination Bar ==================== -->
+    <HBox fx:id="paginationBar"
+          alignment="CENTER_RIGHT"
+          spacing="8"
+          visible="false"
+          managed="false">
+        <padding>
+            <Insets top="4" right="4" bottom="8" left="0"/>
+        </padding>
+
+        <!-- Range label: e.g. "1–50 of 847" -->
+        <Label fx:id="pageRangeLabel"
+               text=""
+               styleClass="pagination-range-label"/>
+
+        <!-- Previous Page -->
+        <Button fx:id="prevPageButton"
+                styleClass="pagination-arrow-button"
+                onAction="#onPrevPageClicked">
+            <graphic>
+                <Label text="‹"
+                       style="-fx-text-fill: #e5e5e5; -fx-font-size: 16px; -fx-font-weight: bold;"/>
+            </graphic>
+        </Button>
+
+        <!-- Next Page -->
+        <Button fx:id="nextPageButton"
+                styleClass="pagination-arrow-button"
+                onAction="#onNextPageClicked">
+            <graphic>
+                <Label text="›"
+                       style="-fx-text-fill: #e5e5e5; -fx-font-size: 16px; -fx-font-weight: bold;"/>
+            </graphic>
+        </Button>
 
     </HBox>
 

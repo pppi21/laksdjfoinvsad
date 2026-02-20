@@ -1,9 +1,17 @@
 package org.nodriver4j.ui.components;
 
 import javafx.geometry.Pos;
+import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
+import org.kordamp.ikonli.fontawesome5.FontAwesomeSolid;
+import org.kordamp.ikonli.javafx.FontIcon;
+import org.nodriver4j.ui.dialogs.ProfileDetailDialog;
 
 /**
  * An ID-card-shaped component that displays a profile's key information.
@@ -13,22 +21,41 @@ import javafx.scene.layout.VBox;
  *   <li>Profile name (bold, primary text)</li>
  *   <li>Email address</li>
  *   <li>Phone number</li>
- *   <li>Card number (full)</li>
+ *   <li>Card number (formatted with spaces)</li>
  *   <li>Expiration date + CVV</li>
+ *   <li>Delete button with inline confirmation (bottom-right)</li>
  * </ul>
  *
- * <p>Clicking the card fires the {@code onClick} callback. The controller
- * uses this to open a {@code ProfileDetailDialog} — the card itself has
- * no knowledge of the dialog or copy-to-clipboard behavior.</p>
+ * <p>Clicking the card fires the {@code onClick} callback (unless delete
+ * confirmation is showing). The controller uses this to open a
+ * {@code ProfileDetailDialog}. The delete button follows the same
+ * inline confirmation pattern as {@link GroupCard}: clicking the trash
+ * icon reveals "Delete" / "Cancel" buttons in the same slot.</p>
  *
  * <p>Cards are displayed in a FlowPane grid on the Profile Group Detail
  * page, similar to how {@link GroupCard} appears on manager pages.</p>
+ *
+ * <h2>Layout Structure</h2>
+ * <pre>
+ * VBox (card)
+ * ├── identitySection (name, email, phone)
+ * ├── paymentSection (card number, exp + cvv)
+ * ├── spacer
+ * └── bottomRow (HBox)
+ *     ├── spacer
+ *     └── deleteContainer (StackPane)
+ *         ├── deleteButton (trash icon)
+ *         └── confirmCancelContainer (hidden by default)
+ *             ├── confirmButton ("Delete")
+ *             └── cancelButton ("Cancel")
+ * </pre>
  *
  * <h2>Responsibilities</h2>
  * <ul>
  *   <li>Display profile summary fields in an ID-card layout</li>
  *   <li>Hold the database profile ID for controller lookups</li>
  *   <li>Delegate click events via callback</li>
+ *   <li>Delete button with inline confirmation flow</li>
  *   <li>Apply profile-card CSS styling</li>
  * </ul>
  *
@@ -54,8 +81,12 @@ import javafx.scene.layout.VBox;
  *     "123"
  * );
  * card.setOnClick(() -> openDetailDialog(42L));
+ * card.setOnDelete(() -> deleteProfile(42L));
  * flowPane.getChildren().add(card);
  * }</pre>
+ *
+ * @see GroupCard
+ * @see ProfileDetailDialog
  */
 public class ProfileCard extends VBox {
 
@@ -67,13 +98,24 @@ public class ProfileCard extends VBox {
     private final Label cardNumberLabel;
     private final Label cardDetailsLabel;
 
+    // ==================== Delete Flow Components ====================
+
+    private final StackPane deleteContainer;
+    private final Button deleteButton;
+    private final HBox confirmCancelContainer;
+
     // ==================== Data ====================
 
     private final long profileId;
 
+    // ==================== State ====================
+
+    private boolean isConfirmingDelete = false;
+
     // ==================== Callbacks ====================
 
     private Runnable onClick;
+    private Runnable onDelete;
 
     // ==================== Constructor ====================
 
@@ -126,17 +168,152 @@ public class ProfileCard extends VBox {
         paymentSection.getStyleClass().add("profile-card-payment");
         paymentSection.getChildren().addAll(cardNumberLabel, cardDetailsLabel);
 
+        // ---- Delete flow components ----
+        deleteButton = buildDeleteButton();
+        confirmCancelContainer = buildConfirmCancelContainer();
+        deleteContainer = buildDeleteContainer();
+
+        // ---- Bottom row ----
+        HBox bottomRow = buildBottomRow();
+
+        // ---- Spacer to push bottom row down ----
+        Region spacer = new Region();
+        VBox.setVgrow(spacer, Priority.ALWAYS);
+
         // ---- Assemble card ----
         setSpacing(8);
         setAlignment(Pos.TOP_LEFT);
-        getChildren().addAll(identitySection, paymentSection);
+        getChildren().addAll(identitySection, paymentSection, spacer, bottomRow);
 
-        // Click handler
+        // Click handler (only fires when not confirming delete)
         setOnMouseClicked(event -> {
-            if (event.getButton().name().equals("PRIMARY") && onClick != null) {
+            if (event.getButton().name().equals("PRIMARY")
+                    && !isConfirmingDelete
+                    && onClick != null) {
                 onClick.run();
             }
         });
+    }
+
+    // ==================== Delete Flow UI Building ====================
+
+    /**
+     * Builds the trash icon delete button.
+     */
+    private Button buildDeleteButton() {
+        Button button = new Button();
+        button.getStyleClass().add("delete-button");
+
+        FontIcon trashIcon = new FontIcon(FontAwesomeSolid.TRASH_ALT);
+        trashIcon.setIconSize(14);
+        trashIcon.setIconColor(Color.web("#d15252"));
+        button.setGraphic(trashIcon);
+
+        button.setOnAction(event -> {
+            event.consume();
+            showDeleteConfirmation();
+        });
+
+        return button;
+    }
+
+    /**
+     * Builds the confirm/cancel button container for delete confirmation.
+     */
+    private HBox buildConfirmCancelContainer() {
+        HBox container = new HBox();
+        container.getStyleClass().add("delete-confirm-buttons");
+        container.setAlignment(Pos.CENTER_RIGHT);
+        container.setSpacing(6);
+
+        Button confirmButton = new Button("Delete");
+        confirmButton.getStyleClass().add("confirm-delete-button");
+        confirmButton.setOnAction(event -> {
+            event.consume();
+            confirmDelete();
+        });
+
+        Button cancelButton = new Button("Cancel");
+        cancelButton.getStyleClass().add("cancel-delete-button");
+        cancelButton.setOnAction(event -> {
+            event.consume();
+            hideDeleteConfirmation();
+        });
+
+        container.getChildren().addAll(confirmButton, cancelButton);
+        container.setVisible(false);
+        container.setManaged(false);
+
+        return container;
+    }
+
+    /**
+     * Builds the StackPane that holds the delete button and confirmation buttons.
+     */
+    private StackPane buildDeleteContainer() {
+        StackPane container = new StackPane();
+        container.setAlignment(Pos.BOTTOM_RIGHT);
+        container.setMinWidth(120);
+        container.setPrefWidth(120);
+        container.setMaxWidth(120);
+        container.setMinHeight(28);
+        container.setPrefHeight(28);
+        container.setMaxHeight(28);
+        container.getChildren().addAll(deleteButton, confirmCancelContainer);
+        return container;
+    }
+
+    /**
+     * Builds the bottom row containing a spacer and the delete container.
+     */
+    private HBox buildBottomRow() {
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        HBox row = new HBox();
+        row.setAlignment(Pos.BOTTOM_RIGHT);
+        row.getChildren().addAll(spacer, deleteContainer);
+
+        return row;
+    }
+
+    // ==================== Delete Flow ====================
+
+    /**
+     * Shows the delete confirmation buttons, hiding the trash icon.
+     */
+    private void showDeleteConfirmation() {
+        isConfirmingDelete = true;
+
+        deleteButton.setVisible(false);
+        deleteButton.setManaged(false);
+
+        confirmCancelContainer.setVisible(true);
+        confirmCancelContainer.setManaged(true);
+    }
+
+    /**
+     * Hides the delete confirmation buttons, restoring the trash icon.
+     */
+    private void hideDeleteConfirmation() {
+        isConfirmingDelete = false;
+
+        deleteButton.setVisible(true);
+        deleteButton.setManaged(true);
+
+        confirmCancelContainer.setVisible(false);
+        confirmCancelContainer.setManaged(false);
+    }
+
+    /**
+     * Confirms the delete action and invokes the onDelete callback.
+     */
+    private void confirmDelete() {
+        isConfirmingDelete = false;
+
+        if (onDelete != null) {
+            onDelete.run();
+        }
     }
 
     // ==================== Formatting ====================
@@ -152,10 +329,8 @@ public class ProfileCard extends VBox {
             return "•••• •••• •••• ••••";
         }
 
-        // Remove any existing spaces or dashes
         String digits = cardNumber.replaceAll("[\\s\\-]", "");
 
-        // Insert space every 4 characters
         StringBuilder formatted = new StringBuilder();
         for (int i = 0; i < digits.length(); i++) {
             if (i > 0 && i % 4 == 0) {
@@ -195,10 +370,25 @@ public class ProfileCard extends VBox {
     /**
      * Sets the callback for when the card is clicked.
      *
+     * <p>The callback is only invoked on primary mouse button clicks
+     * when the delete confirmation is not showing.</p>
+     *
      * @param onClick the callback
      */
     public void setOnClick(Runnable onClick) {
         this.onClick = onClick;
+    }
+
+    /**
+     * Sets the callback for when delete is confirmed.
+     *
+     * <p>The callback is invoked after the user clicks the trash icon
+     * and then confirms with the "Delete" button.</p>
+     *
+     * @param onDelete the callback
+     */
+    public void setOnDelete(Runnable onDelete) {
+        this.onDelete = onDelete;
     }
 
     // ==================== Getters ====================
@@ -210,5 +400,14 @@ public class ProfileCard extends VBox {
      */
     public long profileId() {
         return profileId;
+    }
+
+    /**
+     * Checks if the card is currently showing delete confirmation.
+     *
+     * @return true if confirming delete
+     */
+    public boolean isConfirmingDelete() {
+        return isConfirmingDelete;
     }
 }

@@ -128,6 +128,9 @@ public class ProfileRepository implements Repository<ProfileEntity> {
     private static final String DELETE_ALL_SQL =
             "DELETE FROM profiles";
 
+    private static final String SELECT_BY_GROUP_ID_PAGINATED_SQL =
+            "SELECT " + SELECT_COLUMNS + " FROM profiles WHERE group_id = ? ORDER BY id ASC LIMIT ? OFFSET ?";
+
     // ==================== Create / Update ====================
 
     @Override
@@ -286,6 +289,42 @@ public class ProfileRepository implements Repository<ProfileEntity> {
 
         } catch (SQLException e) {
             throw new Database.DatabaseException("Failed to find profiles by group ID: " + groupId, e);
+        }
+
+        return profiles;
+    }
+
+    /**
+     * Finds profiles belonging to a specific group with pagination.
+     *
+     * <p>Results are ordered by ID ascending, preserving the original
+     * import order. This is used by the UI to display one page of profiles
+     * at a time.</p>
+     *
+     * @param groupId the profile group ID
+     * @param limit   the maximum number of profiles to return
+     * @param offset  the number of profiles to skip
+     * @return list of profiles for the requested page (empty list if none)
+     */
+    public List<ProfileEntity> findByGroupId(long groupId, int limit, int offset) {
+        List<ProfileEntity> profiles = new ArrayList<>();
+
+        try (Connection conn = Database.connection();
+             PreparedStatement stmt = conn.prepareStatement(SELECT_BY_GROUP_ID_PAGINATED_SQL)) {
+
+            stmt.setLong(1, groupId);
+            stmt.setInt(2, limit);
+            stmt.setInt(3, offset);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    profiles.add(mapRow(rs));
+                }
+            }
+
+        } catch (SQLException e) {
+            throw new Database.DatabaseException(
+                    "Failed to find profiles by group ID (paginated): " + groupId, e);
         }
 
         return profiles;

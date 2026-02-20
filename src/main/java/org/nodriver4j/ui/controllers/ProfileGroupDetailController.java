@@ -7,6 +7,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.layout.FlowPane;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import org.nodriver4j.persistence.Database;
 import org.nodriver4j.persistence.entity.ProfileEntity;
@@ -26,48 +27,72 @@ import java.util.ResourceBundle;
 /**
  * Controller for the Profile Group Detail page.
  *
- * <p>Displays all profiles belonging to a specific profile group as
- * clickable ID-card-shaped cards in a grid layout. Navigated to by
- * clicking a profile group card in the Profile Manager.</p>
+ * <p>Displays profiles belonging to a specific profile group using Gmail-style
+ * pagination. Only one page of profiles (up to {@value #PAGE_SIZE}) is loaded
+ * at a time. Navigation arrows allow moving between pages, and a range label
+ * shows the current position (e.g., "1–50 of 847").</p>
  *
- * <p>This controller is paired with {@code profile-group-detail.fxml},
- * which declares this controller via {@code fx:controller}. Navigation
- * is managed by {@link MainController}, which calls
- * {@link #loadGroup(long)} each time the page is shown.</p>
+ * <p>This controller is paired with {@code profile-group-detail.fxml}.
+ * Navigation to this page is handled by {@link MainController#showProfileGroupDetail(long)},
+ * which calls {@link #loadGroup(long)} to populate the page with the
+ * specified group's data.</p>
  *
- * <h2>Page Features</h2>
+ * <h2>Pagination Behavior</h2>
  * <ul>
- *   <li>Back button → returns to Profile Manager</li>
- *   <li>Header showing group name and profile count</li>
- *   <li>Scrollable FlowPane grid of {@link ProfileCard} instances</li>
- *   <li>Empty state fallback when the group has no profiles</li>
- *   <li>Card click → opens {@code ProfileDetailDialog} (full detail view)</li>
+ *   <li>Page size is {@value #PAGE_SIZE} profiles per page</li>
+ *   <li>Navigating between pages replaces all displayed cards (not appending)</li>
+ *   <li>Scroll position resets to the top on each page change</li>
+ *   <li>Arrow buttons are disabled (not hidden) when at the first/last page</li>
+ *   <li>Pagination controls are visible even for single-page groups (arrows disabled)</li>
+ *   <li>Pagination controls are hidden only when the group is empty</li>
+ * </ul>
+ *
+ * <h2>Delete Behavior</h2>
+ * <ul>
+ *   <li>Each ProfileCard has a delete button with inline confirmation</li>
+ *   <li>After deletion, the current page is reloaded to backfill from
+ *       subsequent items</li>
+ *   <li>If the current page becomes empty (e.g., last profile on the last
+ *       page was deleted), the controller navigates to the previous page</li>
+ *   <li>If the group becomes empty, the empty state is displayed</li>
  * </ul>
  *
  * <h2>Responsibilities</h2>
  * <ul>
- *   <li>Load profile group header info (name + count)</li>
- *   <li>Load profiles and create {@link ProfileCard} instances</li>
- *   <li>Handle back navigation via {@link Runnable} callback</li>
- *   <li>Open {@code ProfileDetailDialog} when a card is clicked</li>
+ *   <li>Load and display one page of profiles for a specific group</li>
+ *   <li>Manage pagination state (current page, total count)</li>
+ *   <li>Update page header with group name and total profile count</li>
+ *   <li>Update pagination bar with range label and arrow states</li>
+ *   <li>Handle back button navigation</li>
+ *   <li>Handle card click → open ProfileDetailDialog</li>
+ *   <li>Handle card delete → persist → reload page</li>
  *   <li>Persist notes updates returned from the detail dialog</li>
- *   <li>Toggle empty state vs grid visibility</li>
+ *   <li>Toggle between empty state and card grid</li>
+ *   <li>Build ProfileCard components with wired callbacks</li>
  * </ul>
  *
  * <h2>NOT Responsible For</h2>
  * <ul>
  *   <li>Profile card layout/styling (delegated to {@link ProfileCard})</li>
- *   <li>Profile detail display/editing/copy-to-clipboard (delegated to {@code ProfileDetailDialog})</li>
+ *   <li>Profile detail display/editing/copy-to-clipboard (delegated to {@link ProfileDetailDialog})</li>
  *   <li>Page navigation mechanics (delegated to {@link MainController})</li>
- *   <li>CSV import (handled by {@link ProfileManagerController} + {@code ProfileImporter})</li>
+ *   <li>CSV import (handled by {@link ProfileManagerController} + ProfileImporter)</li>
  *   <li>Grid layout management (FXML + CSS)</li>
  * </ul>
  *
  * @see ProfileCard
+ * @see ProfileDetailDialog
  * @see ProfileManagerController
  * @see MainController
  */
 public class ProfileGroupDetailController implements Initializable {
+
+    // ==================== Constants ====================
+
+    /**
+     * Number of profiles displayed per page.
+     */
+    private static final int PAGE_SIZE = 50;
 
     // ==================== FXML Injected Fields ====================
 
@@ -79,6 +104,18 @@ public class ProfileGroupDetailController implements Initializable {
 
     @FXML
     private Label profileCountLabel;
+
+    @FXML
+    private HBox paginationBar;
+
+    @FXML
+    private Label pageRangeLabel;
+
+    @FXML
+    private Button prevPageButton;
+
+    @FXML
+    private Button nextPageButton;
 
     @FXML
     private VBox emptyState;
@@ -94,7 +131,7 @@ public class ProfileGroupDetailController implements Initializable {
     private final ProfileGroupRepository profileGroupRepository = new ProfileGroupRepository();
     private final ProfileRepository profileRepository = new ProfileRepository();
 
-    // ==================== Internal State ====================
+    // ==================== State ====================
 
     /**
      * The database ID of the currently displayed profile group.
@@ -102,10 +139,27 @@ public class ProfileGroupDetailController implements Initializable {
     private long currentGroupId;
 
     /**
-     * List of profile cards currently displayed in the grid.
+     * The name of the currently displayed profile group.
+     */
+    private String currentGroupName;
+
+    /**
+     * List of profile cards currently displayed on the current page.
      * Maintained in sync with {@code cardGrid.getChildren()}.
      */
     private final List<ProfileCard> cards = new ArrayList<>();
+
+    // ==================== Pagination State ====================
+
+    /**
+     * The current page index (0-based).
+     */
+    private int currentPage;
+
+    /**
+     * The total number of profiles in the current group (from DB).
+     */
+    private long totalCount;
 
     // ==================== Callbacks ====================
 
@@ -130,34 +184,25 @@ public class ProfileGroupDetailController implements Initializable {
         SmoothScrollHelper.apply(scrollPane);
     }
 
-    // ==================== Group Loading ====================
+    // ==================== Public API ====================
 
     /**
-     * Loads a profile group and populates the page.
+     * Loads a profile group and displays the first page of its profiles.
      *
      * <p>Called by {@link MainController#showProfileGroupDetail(long)} each
-     * time this page is displayed. Clears any previously loaded data and
-     * reloads from the database.</p>
-     *
-     * <p>Flow:</p>
-     * <ol>
-     *   <li>Clear existing cards</li>
-     *   <li>Load group entity for header info</li>
-     *   <li>Load all profiles for the group</li>
-     *   <li>Build {@link ProfileCard} instances</li>
-     *   <li>Update header labels and view state</li>
-     * </ol>
+     * time this page is displayed. Resets pagination to page 0, clears any
+     * previously loaded data, and reloads from the database.</p>
      *
      * @param groupId the database ID of the profile group to display
      */
     public void loadGroup(long groupId) {
         this.currentGroupId = groupId;
+        this.currentPage = 0;
 
         System.out.println("[ProfileGroupDetailController] Loading group " + groupId);
 
         // Clear previous state
         clearCards();
-        resetScrollPosition();
 
         try {
             // Load group info for header
@@ -171,25 +216,11 @@ public class ProfileGroupDetailController implements Initializable {
             }
 
             ProfileGroupEntity group = groupOpt.get();
+            this.currentGroupName = group.name();
+            groupNameLabel.setText(currentGroupName);
 
-            // Load profiles
-            List<ProfileEntity> profiles = profileRepository.findByGroupId(groupId);
-
-            // Update header
-            groupNameLabel.setText(group.name());
-            profileCountLabel.setText(formatProfileCount(profiles.size()));
-
-            // Build and add cards
-            for (ProfileEntity profile : profiles) {
-                ProfileCard card = buildCard(profile);
-                cards.add(card);
-                cardGrid.getChildren().add(card);
-            }
-
-            updateViewState();
-
-            System.out.println("[ProfileGroupDetailController] Loaded " + profiles.size()
-                    + " profiles for group '" + group.name() + "'");
+            // Load first page
+            loadCurrentPage();
 
         } catch (Database.DatabaseException e) {
             System.err.println("[ProfileGroupDetailController] Failed to load group: "
@@ -200,11 +231,121 @@ public class ProfileGroupDetailController implements Initializable {
         }
     }
 
+    /**
+     * Sets the callback for back navigation.
+     *
+     * <p>Called by {@link MainController} to wire the back button
+     * to return to the Profile Manager page.</p>
+     *
+     * @param onBack the callback to invoke on back click
+     */
+    public void setOnBack(Runnable onBack) {
+        this.onBack = onBack;
+    }
+
+    // ==================== FXML Actions ====================
+
+    /**
+     * Handles the back button click.
+     *
+     * <p>Invokes the {@link #onBack} callback, which is wired by
+     * {@link MainController} to return to the Profile Manager page.</p>
+     */
+    @FXML
+    private void onBackClicked() {
+        if (onBack != null) {
+            onBack.run();
+        }
+    }
+
+    /**
+     * Navigates to the previous page of profiles.
+     *
+     * <p>Does nothing if already on the first page.</p>
+     */
+    @FXML
+    private void onPrevPageClicked() {
+        if (currentPage > 0) {
+            currentPage--;
+            loadCurrentPage();
+            System.out.println("[ProfileGroupDetailController] Navigated to page " + (currentPage + 1));
+        }
+    }
+
+    /**
+     * Navigates to the next page of profiles.
+     *
+     * <p>Does nothing if already on the last page.</p>
+     */
+    @FXML
+    private void onNextPageClicked() {
+        if (currentPage < totalPages() - 1) {
+            currentPage++;
+            loadCurrentPage();
+            System.out.println("[ProfileGroupDetailController] Navigated to page " + (currentPage + 1));
+        }
+    }
+
+    // ==================== Page Loading ====================
+
+    /**
+     * Loads the current page of profiles from the database.
+     *
+     * <p>Clears all currently displayed cards, queries the database for
+     * the current page's worth of profiles, and rebuilds the card list.
+     * Also refreshes the total count and updates all view state including
+     * the pagination controls.</p>
+     *
+     * <p>If the current page index has become invalid (e.g., due to
+     * deletions reducing the total page count), the page is clamped
+     * to the last valid page before loading.</p>
+     */
+    private void loadCurrentPage() {
+        clearCards();
+
+        try {
+            totalCount = profileRepository.countByGroupId(currentGroupId);
+
+            if (totalCount == 0) {
+                updateViewState();
+                return;
+            }
+
+            // Clamp page if it has become invalid (e.g., after deletions)
+            if (currentPage >= totalPages()) {
+                currentPage = Math.max(0, totalPages() - 1);
+            }
+
+            int offset = currentPage * PAGE_SIZE;
+            List<ProfileEntity> profiles = profileRepository.findByGroupId(
+                    currentGroupId, PAGE_SIZE, offset);
+
+            for (ProfileEntity profile : profiles) {
+                ProfileCard card = buildCard(profile);
+                cards.add(card);
+                cardGrid.getChildren().add(card);
+            }
+
+            System.out.println("[ProfileGroupDetailController] Loaded page " + (currentPage + 1)
+                    + " (" + profiles.size() + " profiles) for group '" + currentGroupName + "'");
+
+        } catch (Database.DatabaseException e) {
+            System.err.println("[ProfileGroupDetailController] Failed to load profiles: "
+                    + e.getMessage());
+            showErrorAlert("Failed to Load Profiles",
+                    "Could not load profiles from the database.",
+                    e.getMessage());
+        }
+
+        updateViewState();
+        scrollPane.setVvalue(0);
+    }
+
     // ==================== Card Building ====================
 
     /**
-     * Builds a {@link ProfileCard} from a profile entity with the click
-     * callback wired to open the detail dialog.
+     * Builds a {@link ProfileCard} from a profile entity with click
+     * and delete callbacks wired.
      *
      * @param profile the profile entity to build a card for
      * @return the configured ProfileCard
@@ -222,6 +363,7 @@ public class ProfileGroupDetailController implements Initializable {
         );
 
         card.setOnClick(() -> openProfileDetail(profile.id()));
+        card.setOnDelete(() -> onProfileDeleted(profile.id()));
 
         return card;
     }
@@ -232,7 +374,7 @@ public class ProfileGroupDetailController implements Initializable {
      * Opens the profile detail dialog for a specific profile.
      *
      * <p>Loads the full profile entity from the database and opens
-     * {@code ProfileDetailDialog}. If the user edits the notes field,
+     * {@link ProfileDetailDialog}. If the user edits the notes field,
      * the updated notes are persisted back to the database.</p>
      *
      * @param profileId the database ID of the profile to display
@@ -288,35 +430,41 @@ public class ProfileGroupDetailController implements Initializable {
         }
     }
 
-    // ==================== Navigation ====================
+    // ==================== Profile Deletion ====================
 
     /**
-     * Handles the back button click.
+     * Handles profile deletion from a card's delete button.
      *
-     * <p>Invokes the {@link #onBack} callback, which is wired by
-     * {@link MainController} to return to the Profile Manager page.</p>
+     * <p>Deletes the profile from the database and reloads the current
+     * page to backfill the gap. If the current page becomes empty after
+     * deletion (e.g., the last profile on the last page), the controller
+     * navigates to the previous page. If the group becomes entirely
+     * empty, the empty state is displayed.</p>
+     *
+     * @param profileId the database ID of the profile to delete
      */
-    @FXML
-    private void onBackClicked() {
-        if (onBack != null) {
-            onBack.run();
+    private void onProfileDeleted(long profileId) {
+        System.out.println("[ProfileGroupDetailController] Deleting profile ID " + profileId);
+
+        try {
+            profileRepository.deleteById(profileId);
+
+            System.out.println("[ProfileGroupDetailController] Deleted profile ID " + profileId);
+
+        } catch (Database.DatabaseException e) {
+            System.err.println("[ProfileGroupDetailController] Failed to delete profile: "
+                    + e.getMessage());
+            showErrorAlert("Failed to Delete Profile",
+                    "Could not delete the profile from the database.",
+                    e.getMessage());
+            return;
         }
+
+        // Reload current page (handles backfill and page clamping)
+        loadCurrentPage();
     }
 
-    // ==================== View State ====================
-
-    /**
-     * Updates the view to show either the empty state or the card grid.
-     */
-    private void updateViewState() {
-        boolean hasCards = !cards.isEmpty();
-
-        emptyState.setVisible(!hasCards);
-        emptyState.setManaged(!hasCards);
-
-        scrollPane.setVisible(hasCards);
-        scrollPane.setManaged(hasCards);
-    }
+    // ==================== Card Management ====================
 
     /**
      * Clears all cards from the grid and internal list.
@@ -324,29 +472,63 @@ public class ProfileGroupDetailController implements Initializable {
     private void clearCards() {
         cards.clear();
         cardGrid.getChildren().clear();
-        updateViewState();
+    }
+
+    // ==================== Pagination Helpers ====================
+
+    /**
+     * Calculates the total number of pages based on the current total count.
+     *
+     * @return the total page count, or 0 if the group is empty
+     */
+    private int totalPages() {
+        if (totalCount <= 0) return 0;
+        return (int) Math.ceil((double) totalCount / PAGE_SIZE);
+    }
+
+    // ==================== View State ====================
+
+    /**
+     * Updates the view to show either the empty state or the card grid,
+     * and updates the profile count label and pagination controls.
+     */
+    private void updateViewState() {
+        boolean hasProfiles = totalCount > 0;
+
+        // Update subtitle with total count
+        profileCountLabel.setText(totalCount + (totalCount == 1 ? " profile" : " profiles"));
+
+        // Toggle empty state vs grid
+        emptyState.setVisible(!hasProfiles);
+        emptyState.setManaged(!hasProfiles);
+
+        scrollPane.setVisible(hasProfiles);
+        scrollPane.setManaged(hasProfiles);
+
+        // Toggle pagination bar
+        paginationBar.setVisible(hasProfiles);
+        paginationBar.setManaged(hasProfiles);
+
+        if (hasProfiles) {
+            updatePaginationControls();
+        }
     }
 
     /**
-     * Resets the scroll position to the top.
+     * Updates the pagination range label and arrow button states.
      *
-     * <p>Called when loading a new group to ensure the user starts
-     * at the top of the card grid.</p>
+     * <p>The range label shows the current range and total, e.g., "1–50 of 847".
+     * The previous arrow is disabled on the first page, and the next arrow is
+     * disabled on the last page.</p>
      */
-    private void resetScrollPosition() {
-        scrollPane.setVvalue(0);
-    }
+    private void updatePaginationControls() {
+        long start = (long) currentPage * PAGE_SIZE + 1;
+        long end = Math.min((long) (currentPage + 1) * PAGE_SIZE, totalCount);
 
-    // ==================== Formatting ====================
+        pageRangeLabel.setText(start + "–" + end + " of " + totalCount);
 
-    /**
-     * Formats a profile count as a human-readable string.
-     *
-     * @param count the number of profiles
-     * @return formatted string (e.g., "12 profiles", "1 profile")
-     */
-    private String formatProfileCount(int count) {
-        return count + (count == 1 ? " profile" : " profiles");
+        prevPageButton.setDisable(currentPage <= 0);
+        nextPageButton.setDisable(currentPage >= totalPages() - 1);
     }
 
     // ==================== Error Handling ====================
@@ -377,20 +559,6 @@ public class ProfileGroupDetailController implements Initializable {
         alert.showAndWait();
     }
 
-    // ==================== Callback Setters ====================
-
-    /**
-     * Sets the callback for back navigation.
-     *
-     * <p>Called by {@link MainController} to wire the back button
-     * to return to the Profile Manager page.</p>
-     *
-     * @param onBack the callback to invoke on back click
-     */
-    public void setOnBack(Runnable onBack) {
-        this.onBack = onBack;
-    }
-
     // ==================== Getters ====================
 
     /**
@@ -403,7 +571,7 @@ public class ProfileGroupDetailController implements Initializable {
     }
 
     /**
-     * Gets the number of profile cards currently displayed.
+     * Gets the number of profile cards currently displayed on the page.
      *
      * @return the card count
      */
