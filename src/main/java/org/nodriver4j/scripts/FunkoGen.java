@@ -144,7 +144,7 @@ public class FunkoGen implements AutomationScript {
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
             try {
                 page.navigate("https://funko.com/login/?action=register&pageSearchParams=pid%3D90729&rurl=5");
-                page.waitForLoadEvent(30000);
+                page.waitForLoadEvent(40000);
                 return;
 
             } catch (TimeoutException e) {
@@ -169,12 +169,12 @@ public class FunkoGen implements AutomationScript {
                 page.jsClick(ACCEPT_TERMS_CHECKBOX);
                 logger.log("Submitting signup...");
                 page.click(CREATE_ACCOUNT_BUTTON);
-                for(int check = 0; check < 15; check++) {
-                    if(page.exists(OTP_SENT_ID)) break;
+                for(int check = 0; check < 25; check++) {
+                    if(page.exists(OTP_SENT_ID)) return;
                     page.sleep(2000);
                 }
-                return;
-
+                page.reload(true,40000);
+                throw new TimeoutException("Potentially bad proxy.");
             } catch (TimeoutException | InterruptedException e) {
                 logger.log("Sign up attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
             }
@@ -243,9 +243,8 @@ public class FunkoGen implements AutomationScript {
                 for(int check = 0; check < 20; check++) {
                     if(page.exists(HOMEPAGE_SUCCESS_ID)) return;
                     page.sleep(2000);
-
                 }
-
+                page.reload(true, 30000);
             } catch (TimeoutException e) {
                 logger.log("Entry attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
             }
