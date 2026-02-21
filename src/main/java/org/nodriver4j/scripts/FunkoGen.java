@@ -174,6 +174,7 @@ public class FunkoGen implements AutomationScript {
                     page.sleep(2000);
                 }
                 page.reload(true,40000);
+                page.sleep(10000);
                 throw new TimeoutException("Potentially bad proxy.");
             } catch (TimeoutException | InterruptedException e) {
                 logger.log("Sign up attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
@@ -245,7 +246,7 @@ public class FunkoGen implements AutomationScript {
                     page.sleep(2000);
                 }
                 page.reload(true, 30000);
-                page.sleep(3000);
+                page.sleep(10000);
             } catch (TimeoutException e) {
                 logger.log("Entry attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
             }
