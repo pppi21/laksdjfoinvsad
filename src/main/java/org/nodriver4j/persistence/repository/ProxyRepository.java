@@ -112,6 +112,15 @@ public class ProxyRepository implements Repository<ProxyEntity> {
     private static final String SELECT_BY_GROUP_ID_PAGINATED_SQL =
             "SELECT " + SELECT_COLUMNS + " FROM proxies WHERE group_id = ? ORDER BY id ASC LIMIT ? OFFSET ?";
 
+    private static final String SELECT_BY_GROUP_ID_SEARCH_PAGINATED_SQL =
+            "SELECT " + SELECT_COLUMNS + " FROM proxies WHERE group_id = ? " +
+                    "AND (host || ':' || port || ':' || username || ':' || password) LIKE ? " +
+                    "ORDER BY id ASC LIMIT ? OFFSET ?";
+
+    private static final String COUNT_BY_GROUP_ID_SEARCH_SQL =
+            "SELECT COUNT(*) FROM proxies WHERE group_id = ? " +
+                    "AND (host || ':' || port || ':' || username || ':' || password) LIKE ?";
+
     // ==================== Create / Update ====================
 
     @Override
@@ -313,6 +322,74 @@ public class ProxyRepository implements Repository<ProxyEntity> {
         }
 
         return proxies;
+    }
+
+    /**
+     * Finds proxies belonging to a specific group matching a search query, with pagination.
+     *
+     * <p>The search matches against the full proxy string ({@code host:port:username:password})
+     * using a case-insensitive LIKE query. Results are ordered by ID ascending,
+     * preserving the original import order.</p>
+     *
+     * @param groupId the proxy group ID
+     * @param query   the search string to match against the proxy string
+     * @param limit   the maximum number of proxies to return
+     * @param offset  the number of proxies to skip
+     * @return list of matching proxies for the requested page (empty list if none)
+     */
+    public List<ProxyEntity> findByGroupIdAndSearch(long groupId, String query, int limit, int offset) {
+        List<ProxyEntity> proxies = new ArrayList<>();
+
+        try (Connection conn = Database.connection();
+             PreparedStatement stmt = conn.prepareStatement(SELECT_BY_GROUP_ID_SEARCH_PAGINATED_SQL)) {
+
+            stmt.setLong(1, groupId);
+            stmt.setString(2, "%" + query + "%");
+            stmt.setInt(3, limit);
+            stmt.setInt(4, offset);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    proxies.add(mapRow(rs));
+                }
+            }
+
+        } catch (SQLException e) {
+            throw new Database.DatabaseException(
+                    "Failed to search proxies by group ID: " + groupId, e);
+        }
+
+        return proxies;
+    }
+
+    /**
+     * Counts proxies in a specific group matching a search query.
+     *
+     * <p>The search matches against the full proxy string ({@code host:port:username:password})
+     * using a case-insensitive LIKE query.</p>
+     *
+     * @param groupId the proxy group ID
+     * @param query   the search string to match against the proxy string
+     * @return the count of matching proxies
+     */
+    public long countByGroupIdAndSearch(long groupId, String query) {
+        try (Connection conn = Database.connection();
+             PreparedStatement stmt = conn.prepareStatement(COUNT_BY_GROUP_ID_SEARCH_SQL)) {
+
+            stmt.setLong(1, groupId);
+            stmt.setString(2, "%" + query + "%");
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getLong(1);
+                }
+            }
+            return 0;
+
+        } catch (SQLException e) {
+            throw new Database.DatabaseException(
+                    "Failed to count searched proxies by group ID: " + groupId, e);
+        }
     }
 
     @Override

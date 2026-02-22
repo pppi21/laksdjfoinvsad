@@ -393,6 +393,54 @@
     -fx-padding: 0 0 16px 0;
 }
 
+/* ==================== Search Bar ==================== */
+.search-bar {
+    -fx-background-color: -fx-primary-dark;
+    -fx-background-radius: 8px;
+    -fx-border-color: -fx-border;
+    -fx-border-width: 1px;
+    -fx-border-radius: 8px;
+    -fx-min-height: 40px;
+    -fx-max-height: 40px;
+    -fx-pref-width: 260px;
+    -fx-padding: 0 10px 0 0;
+}
+
+.search-bar:focused,
+.search-bar:hover {
+    -fx-border-color: -fx-accent;
+}
+
+.search-field {
+    -fx-background-color: transparent;
+    -fx-text-fill: -fx-text-primary;
+    -fx-prompt-text-fill: -fx-text-muted;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-background-radius: 8px;
+    -fx-padding: 0 8px 0 12px;
+    -fx-font-size: 14px;
+    -fx-min-height: 38px;
+    -fx-max-height: 38px;
+    -fx-pref-width: 230px;
+}
+
+.search-field:focused {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+}
+
+.search-icon-container {
+    -fx-min-width: 16px;
+    -fx-min-height: 16px;
+    -fx-max-width: 16px;
+    -fx-max-height: 16px;
+}
+
+.search-bar-focused {
+    -fx-border-color: -fx-accent;
+}
+
 /* ==================== Radio Buttons ==================== */
 .radio-button {
     -fx-text-fill: -fx-text-primary;

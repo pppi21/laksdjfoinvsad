@@ -10,6 +10,7 @@
 <?import javafx.scene.layout.Region?>
 <?import javafx.scene.layout.StackPane?>
 <?import javafx.scene.layout.VBox?>
+<?import javafx.scene.control.TextField?>
 
 <!--
     Profile Group Detail page layout.
@@ -46,6 +47,13 @@
 
         <!-- Spacer -->
         <Region HBox.hgrow="ALWAYS"/>
+
+        <!-- Search Bar -->
+        <HBox fx:id="searchBar" styleClass="search-bar" alignment="CENTER_LEFT">
+            <TextField fx:id="searchField"
+                       promptText="Search"
+                       styleClass="search-field"/>
+        </HBox>
 
     </HBox>
 

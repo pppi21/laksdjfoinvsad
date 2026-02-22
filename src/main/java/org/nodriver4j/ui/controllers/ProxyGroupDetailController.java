@@ -1,13 +1,15 @@
 package org.nodriver4j.ui.controllers;
 
+import javafx.animation.PauseTransition;
 import javafx.fxml.FXML;
 import javafx.fxml.Initializable;
-import javafx.scene.control.Alert;
-import javafx.scene.control.Button;
-import javafx.scene.control.Label;
-import javafx.scene.control.ScrollPane;
+import javafx.scene.control.*;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
+import javafx.util.Duration;
+import org.kordamp.ikonli.fontawesome5.FontAwesomeSolid;
+import org.kordamp.ikonli.javafx.FontIcon;
 import org.nodriver4j.persistence.Database;
 import org.nodriver4j.persistence.entity.ProxyEntity;
 import org.nodriver4j.persistence.entity.ProxyGroupEntity;
@@ -32,6 +34,10 @@ import java.util.ResourceBundle;
  * at a time. Navigation arrows allow moving between pages, and a range label
  * shows the current position (e.g., "1–50 of 847").</p>
  *
+ * <p>Includes a live search bar with 500ms debounce that filters proxies by
+ * matching against the full proxy string ({@code host:port:username:password}).
+ * Search is performed at the database level using SQL LIKE queries.</p>
+ *
  * <p>This controller is paired with {@code proxy-group-detail.fxml}.
  * Navigation to this page is handled by {@link MainController#showProxyGroupDetail(long)},
  * which calls {@link #loadGroup(long)} to populate the page with the
@@ -45,6 +51,16 @@ import java.util.ResourceBundle;
  *   <li>Arrow buttons are disabled (not hidden) when at the first/last page</li>
  *   <li>Pagination controls are visible even for single-page groups (arrows disabled)</li>
  *   <li>Pagination controls are hidden only when the group is empty</li>
+ * </ul>
+ *
+ * <h2>Search Behavior</h2>
+ * <ul>
+ *   <li>Live search with 500ms debounce — queries fire after the user stops typing</li>
+ *   <li>Searches against the full proxy string (host:port:username:password)</li>
+ *   <li>Entering a search term resets pagination to page 0</li>
+ *   <li>Clearing the search field restores the unfiltered view</li>
+ *   <li>The proxy count label shows filtered context (e.g., "12 of 847 proxies")</li>
+ *   <li>Search state is reset when navigating to a different group</li>
  * </ul>
  *
  * <h2>Add Proxy Behavior</h2>
@@ -69,6 +85,7 @@ import java.util.ResourceBundle;
  * <ul>
  *   <li>Load and display one page of proxies for a specific group</li>
  *   <li>Manage pagination state (current page, total count)</li>
+ *   <li>Manage search state (query string, debounce timer, filtered count)</li>
  *   <li>Update page header with group name and total proxy count</li>
  *   <li>Update pagination bar with range label and arrow states</li>
  *   <li>Handle back button navigation</li>
@@ -101,6 +118,11 @@ public class ProxyGroupDetailController implements Initializable {
      */
     private static final int PAGE_SIZE = 50;
 
+    /**
+     * Debounce delay for live search in milliseconds.
+     */
+    private static final double SEARCH_DEBOUNCE_MS = 500;
+
     // ==================== FXML Injected Fields ====================
 
     @FXML
@@ -111,6 +133,12 @@ public class ProxyGroupDetailController implements Initializable {
 
     @FXML
     private Label proxyCountLabel;
+
+    @FXML
+    private HBox searchBar;
+
+    @FXML
+    private TextField searchField;
 
     @FXML
     private Button addButton;
@@ -170,9 +198,27 @@ public class ProxyGroupDetailController implements Initializable {
     private int currentPage;
 
     /**
-     * The total number of proxies in the current group (from DB).
+     * The total number of proxies matching the current view (filtered or unfiltered).
      */
     private long totalCount;
+
+    /**
+     * The total number of proxies in the group (always unfiltered).
+     * Used for the subtitle label when a search is active.
+     */
+    private long unfilteredCount;
+
+    // ==================== Search State ====================
+
+    /**
+     * The current search query. Empty string means no filter.
+     */
+    private String currentSearchQuery = "";
+
+    /**
+     * Debounce timer for live search. Restarted on each keystroke.
+     */
+    private final PauseTransition searchDebounce = new PauseTransition(Duration.millis(SEARCH_DEBOUNCE_MS));
 
     // ==================== Callbacks ====================
 
@@ -188,6 +234,39 @@ public class ProxyGroupDetailController implements Initializable {
     public void initialize(URL location, ResourceBundle resources) {
         System.out.println("[ProxyGroupDetailController] Initialized");
         SmoothScrollHelper.apply(scrollPane, 0.2, 1.2);
+
+        setupSearchBar();
+    }
+
+    /**
+     * Configures the search bar: adds the search icon, wires the debounce
+     * listener, and sets up focus forwarding from the container HBox.
+     */
+    private void setupSearchBar() {
+        // Add search icon to the right side of the search bar
+        FontIcon searchIcon = new FontIcon(FontAwesomeSolid.SEARCH);
+        searchIcon.setIconSize(14);
+        searchIcon.setIconColor(Color.web("#737373"));
+        searchBar.getChildren().add(searchIcon);
+
+        // Forward clicks on the HBox container to the TextField
+        searchBar.setOnMouseClicked(event -> searchField.requestFocus());
+
+        // Toggle focused style class on the parent HBox when TextField gains/loses focus
+        searchField.focusedProperty().addListener((obs, wasFocused, isFocused) -> {
+            if (isFocused) {
+                searchBar.getStyleClass().add("search-bar-focused");
+            } else {
+                searchBar.getStyleClass().remove("search-bar-focused");
+            }
+        });
+
+        // Wire debounce: restart timer on each keystroke, fire search on completion
+        searchDebounce.setOnFinished(event -> executeSearch());
+
+        searchField.textProperty().addListener((obs, oldText, newText) -> {
+            searchDebounce.playFromStart();
+        });
     }
 
     // ==================== Public API ====================
@@ -196,8 +275,9 @@ public class ProxyGroupDetailController implements Initializable {
      * Loads a proxy group and displays the first page of its proxies.
      *
      * <p>Called by {@link MainController#showProxyGroupDetail(long)} when
-     * navigating to this page. Resets pagination to page 0, clears any
-     * previously displayed data, and loads fresh data from the database.</p>
+     * navigating to this page. Resets pagination and search state to defaults,
+     * clears any previously displayed data, and loads fresh data from the
+     * database.</p>
      *
      * @param groupId the database ID of the proxy group to load
      */
@@ -206,6 +286,11 @@ public class ProxyGroupDetailController implements Initializable {
 
         this.currentGroupId = groupId;
         this.currentPage = 0;
+        this.currentSearchQuery = "";
+
+        // Clear search field without triggering the debounce
+        searchDebounce.stop();
+        searchField.setText("");
 
         // Clear previous data
         clearProxies();
@@ -298,15 +383,50 @@ public class ProxyGroupDetailController implements Initializable {
         }
     }
 
+    // ==================== Search ====================
+
+    /**
+     * Executes a search based on the current text in the search field.
+     *
+     * <p>Called by the debounce timer after the user stops typing. Resets
+     * pagination to page 0 and reloads with the new search filter. If the
+     * search text hasn't changed since the last execution, the reload is
+     * skipped to avoid unnecessary database queries.</p>
+     */
+    private void executeSearch() {
+        String query = searchField.getText().trim();
+
+        // Skip if query hasn't changed
+        if (query.equals(currentSearchQuery)) {
+            return;
+        }
+
+        currentSearchQuery = query;
+        currentPage = 0;
+        loadCurrentPage();
+
+        System.out.println("[ProxyGroupDetailController] Search executed: '"
+                + (query.isEmpty() ? "(cleared)" : query) + "'");
+    }
+
+    /**
+     * Checks whether a search filter is currently active.
+     *
+     * @return true if the current search query is non-empty
+     */
+    private boolean isSearchActive() {
+        return !currentSearchQuery.isEmpty();
+    }
+
     // ==================== Page Loading ====================
 
     /**
      * Loads the current page of proxies from the database.
      *
      * <p>Clears all currently displayed rows, queries the database for
-     * the current page's worth of proxies, and rebuilds the row list.
-     * Also refreshes the total count and updates all view state including
-     * the pagination controls.</p>
+     * the current page's worth of proxies (filtered by search if active),
+     * and rebuilds the row list. Also refreshes the total count and updates
+     * all view state including the pagination controls.</p>
      *
      * <p>If the current page index has become invalid (e.g., due to
      * deletions reducing the total page count), the page is clamped
@@ -316,7 +436,15 @@ public class ProxyGroupDetailController implements Initializable {
         clearProxies();
 
         try {
-            totalCount = proxyRepository.countByGroupId(currentGroupId);
+            // Always fetch unfiltered count for the subtitle
+            unfilteredCount = proxyRepository.countByGroupId(currentGroupId);
+
+            // Fetch filtered count (same as unfiltered when no search is active)
+            if (isSearchActive()) {
+                totalCount = proxyRepository.countByGroupIdAndSearch(currentGroupId, currentSearchQuery);
+            } else {
+                totalCount = unfilteredCount;
+            }
 
             if (totalCount == 0) {
                 updateViewState();
@@ -329,7 +457,14 @@ public class ProxyGroupDetailController implements Initializable {
             }
 
             int offset = currentPage * PAGE_SIZE;
-            List<ProxyEntity> proxies = proxyRepository.findByGroupId(currentGroupId, PAGE_SIZE, offset);
+            List<ProxyEntity> proxies;
+
+            if (isSearchActive()) {
+                proxies = proxyRepository.findByGroupIdAndSearch(
+                        currentGroupId, currentSearchQuery, PAGE_SIZE, offset);
+            } else {
+                proxies = proxyRepository.findByGroupId(currentGroupId, PAGE_SIZE, offset);
+            }
 
             for (ProxyEntity proxy : proxies) {
                 ProxyRow row = buildProxyRow(proxy);
@@ -337,7 +472,8 @@ public class ProxyGroupDetailController implements Initializable {
             }
 
             System.out.println("[ProxyGroupDetailController] Loaded page " + (currentPage + 1)
-                    + " (" + proxies.size() + " proxies) for group '" + currentGroupName + "'");
+                    + " (" + proxies.size() + " proxies) for group '" + currentGroupName + "'"
+                    + (isSearchActive() ? " [search: '" + currentSearchQuery + "']" : ""));
 
         } catch (Database.DatabaseException e) {
             System.err.println("[ProxyGroupDetailController] Failed to load proxies: "
@@ -409,7 +545,12 @@ public class ProxyGroupDetailController implements Initializable {
             loadCurrentPage();
         } else {
             // Just refresh the total count and pagination controls
-            totalCount = proxyRepository.countByGroupId(currentGroupId);
+            unfilteredCount = proxyRepository.countByGroupId(currentGroupId);
+            if (isSearchActive()) {
+                totalCount = proxyRepository.countByGroupIdAndSearch(currentGroupId, currentSearchQuery);
+            } else {
+                totalCount = unfilteredCount;
+            }
             updateViewState();
         }
 
@@ -526,12 +667,21 @@ public class ProxyGroupDetailController implements Initializable {
     /**
      * Updates the view to show either the empty state or the proxy list,
      * and updates the proxy count label and pagination controls.
+     *
+     * <p>When a search is active, the proxy count label shows the filtered
+     * count in context (e.g., "12 of 847 proxies"). When no search is active,
+     * it shows just the total (e.g., "847 proxies").</p>
      */
     private void updateViewState() {
         boolean hasProxies = totalCount > 0;
 
-        // Update subtitle with total count
-        proxyCountLabel.setText(totalCount + (totalCount == 1 ? " proxy" : " proxies"));
+        // Update subtitle with count
+        if (isSearchActive()) {
+            String proxyWord = unfilteredCount == 1 ? " proxy" : " proxies";
+            proxyCountLabel.setText(totalCount + " of " + unfilteredCount + proxyWord);
+        } else {
+            proxyCountLabel.setText(totalCount + (totalCount == 1 ? " proxy" : " proxies"));
+        }
 
         // Toggle empty state vs list
         emptyState.setVisible(!hasProxies);

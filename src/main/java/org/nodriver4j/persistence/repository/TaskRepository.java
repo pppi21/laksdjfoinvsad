@@ -150,6 +150,24 @@ public class TaskRepository implements Repository<TaskEntity> {
     private static final String SELECT_BY_GROUP_ID_PAGINATED_SQL =
             "SELECT " + SELECT_COLUMNS + " FROM tasks WHERE group_id = ? ORDER BY id ASC LIMIT ? OFFSET ?";
 
+    private static final String SELECT_BY_GROUP_ID_SEARCH_PAGINATED_SQL = """
+        SELECT t.id, t.group_id, t.profile_id, t.proxy_id, t.status, t.userdata_path,
+               t.notes, t.custom_status, t.log_message, t.log_color, t.warm_session,
+               t.fingerprint_index, t.created_at, t.updated_at
+        FROM tasks t
+        JOIN profiles p ON t.profile_id = p.id
+        WHERE t.group_id = ?
+          AND (p.email_address LIKE ? OR p.profile_name LIKE ?)
+        ORDER BY t.id ASC LIMIT ? OFFSET ?
+        """;
+
+    private static final String COUNT_BY_GROUP_ID_SEARCH_SQL = """
+        SELECT COUNT(*) FROM tasks t
+        JOIN profiles p ON t.profile_id = p.id
+        WHERE t.group_id = ?
+          AND (p.email_address LIKE ? OR p.profile_name LIKE ?)
+        """;
+
     // ==================== Create / Update ====================
 
     @Override
@@ -411,6 +429,80 @@ public class TaskRepository implements Repository<TaskEntity> {
         }
 
         return tasks;
+    }
+
+    /**
+     * Finds tasks belonging to a specific group matching a search query, with pagination.
+     *
+     * <p>The search matches against the linked profile's email address and profile
+     * name using a case-insensitive LIKE query. This requires a JOIN against the
+     * profiles table. Results are ordered by task ID ascending, preserving
+     * creation order.</p>
+     *
+     * @param groupId the task group ID
+     * @param query   the search string to match against email and profile name
+     * @param limit   the maximum number of tasks to return
+     * @param offset  the number of tasks to skip
+     * @return list of matching tasks for the requested page (empty list if none)
+     */
+    public List<TaskEntity> findByGroupIdAndSearch(long groupId, String query, int limit, int offset) {
+        List<TaskEntity> tasks = new ArrayList<>();
+
+        try (Connection conn = Database.connection();
+             PreparedStatement stmt = conn.prepareStatement(SELECT_BY_GROUP_ID_SEARCH_PAGINATED_SQL)) {
+
+            String pattern = "%" + query + "%";
+            stmt.setLong(1, groupId);
+            stmt.setString(2, pattern);
+            stmt.setString(3, pattern);
+            stmt.setInt(4, limit);
+            stmt.setInt(5, offset);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    tasks.add(mapRow(rs));
+                }
+            }
+
+        } catch (SQLException e) {
+            throw new Database.DatabaseException(
+                    "Failed to search tasks by group ID: " + groupId, e);
+        }
+
+        return tasks;
+    }
+
+    /**
+     * Counts tasks in a specific group matching a search query.
+     *
+     * <p>The search matches against the linked profile's email address and profile
+     * name using a case-insensitive LIKE query. This requires a JOIN against the
+     * profiles table.</p>
+     *
+     * @param groupId the task group ID
+     * @param query   the search string to match against email and profile name
+     * @return the count of matching tasks
+     */
+    public long countByGroupIdAndSearch(long groupId, String query) {
+        try (Connection conn = Database.connection();
+             PreparedStatement stmt = conn.prepareStatement(COUNT_BY_GROUP_ID_SEARCH_SQL)) {
+
+            String pattern = "%" + query + "%";
+            stmt.setLong(1, groupId);
+            stmt.setString(2, pattern);
+            stmt.setString(3, pattern);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getLong(1);
+                }
+            }
+            return 0;
+
+        } catch (SQLException e) {
+            throw new Database.DatabaseException(
+                    "Failed to count searched tasks by group ID: " + groupId, e);
+        }
     }
 
     /**

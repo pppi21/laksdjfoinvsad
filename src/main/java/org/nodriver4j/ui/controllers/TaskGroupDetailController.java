@@ -1,14 +1,16 @@
 package org.nodriver4j.ui.controllers;
 
+import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.fxml.Initializable;
-import javafx.scene.control.Alert;
-import javafx.scene.control.Button;
-import javafx.scene.control.Label;
-import javafx.scene.control.ScrollPane;
+import javafx.scene.control.*;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
+import javafx.util.Duration;
+import org.kordamp.ikonli.fontawesome5.FontAwesomeSolid;
+import org.kordamp.ikonli.javafx.FontIcon;
 import org.nodriver4j.core.Browser;
 import org.nodriver4j.persistence.Database;
 import org.nodriver4j.persistence.entity.ProfileEntity;
@@ -37,6 +39,11 @@ import java.util.*;
  * at a time. Navigation arrows allow moving between pages, and a range label
  * shows the current position (e.g., "1–100 of 847").</p>
  *
+ * <p>Includes a live search bar with 500ms debounce that filters tasks by
+ * matching against the linked profile's email address and profile name.
+ * Search is performed at the database level using SQL LIKE queries with
+ * a JOIN against the profiles table.</p>
+ *
  * <p>This controller is paired with {@code task-group-detail.fxml}.
  * Navigation to this page is handled by {@link MainController}, which
  * calls {@link #loadGroup(long)} to populate the page with the specified
@@ -52,6 +59,23 @@ import java.util.*;
  *   <li>Pagination controls are hidden only when the group is empty</li>
  *   <li>Running tasks continue unaffected when navigating between pages</li>
  *   <li>Screencast sessions persist across page navigations</li>
+ * </ul>
+ *
+ * <h2>Search Behavior</h2>
+ * <ul>
+ *   <li>Live search with 500ms debounce — queries fire after the user stops typing</li>
+ *   <li>Searches against the linked profile's email address and profile name (OR match)</li>
+ *   <li>Entering a search term resets pagination to page 0</li>
+ *   <li>Clearing the search field restores the unfiltered view</li>
+ *   <li>Search state is reset when navigating to a different group</li>
+ *   <li>Running tasks filtered out by search continue executing — their callbacks
+ *       update detached rows harmlessly, and {@link org.nodriver4j.services.TaskLogger}
+ *       persists state to the database. When the task reappears (search cleared or
+ *       changed), the row is rebuilt from DB state and callbacks are re-wired.</li>
+ *   <li>Screencast sessions persist across search changes — filtered-out tasks
+ *       keep their view windows open</li>
+ *   <li>Start All, Stop All, and Change Proxies always operate on ALL tasks in
+ *       the group regardless of the active search filter</li>
  * </ul>
  *
  * <h2>Callback Re-wiring</h2>
@@ -74,6 +98,7 @@ import java.util.*;
  * <ul>
  *   <li>Load and display one page of tasks for a specific group</li>
  *   <li>Manage pagination state (current page, total count)</li>
+ *   <li>Manage search state (query string, debounce timer, filtered count)</li>
  *   <li>Update page header with group name, script name</li>
  *   <li>Update pagination bar with range label and arrow states</li>
  *   <li>Wire all TaskRow callbacks (start, stop, view, manual, clone, edit, delete)</li>
@@ -112,6 +137,11 @@ public class TaskGroupDetailController implements Initializable {
      */
     private static final int PAGE_SIZE = 25;
 
+    /**
+     * Debounce delay for live search in milliseconds.
+     */
+    private static final double SEARCH_DEBOUNCE_MS = 500;
+
     // ==================== FXML Injected Fields ====================
 
     @FXML
@@ -122,6 +152,12 @@ public class TaskGroupDetailController implements Initializable {
 
     @FXML
     private Label scriptNameLabel;
+
+    @FXML
+    private HBox searchBar;
+
+    @FXML
+    private TextField searchField;
 
     @FXML
     private Button addButton;
@@ -179,7 +215,7 @@ public class TaskGroupDetailController implements Initializable {
     /**
      * Active screencast sessions mapped by task ID.
      * Each entry represents an open view browser window streaming from a running task.
-     * These persist across page navigations within the same group.
+     * These persist across page navigations and search changes.
      */
     private final Map<Long, ScreencastSession> screencastSessions = new HashMap<>();
 
@@ -191,9 +227,27 @@ public class TaskGroupDetailController implements Initializable {
     private int currentPage;
 
     /**
-     * The total number of tasks in the current group (from DB).
+     * The total number of tasks matching the current view (filtered or unfiltered).
      */
     private long totalCount;
+
+    /**
+     * The total number of tasks in the group (always unfiltered).
+     * Used by bulk operations and the pagination label when search is active.
+     */
+    private long unfilteredCount;
+
+    // ==================== Search State ====================
+
+    /**
+     * The current search query. Empty string means no filter.
+     */
+    private String currentSearchQuery = "";
+
+    /**
+     * Debounce timer for live search. Restarted on each keystroke.
+     */
+    private final PauseTransition searchDebounce = new PauseTransition(Duration.millis(SEARCH_DEBOUNCE_MS));
 
     // ==================== Callbacks ====================
 
@@ -209,7 +263,40 @@ public class TaskGroupDetailController implements Initializable {
     public void initialize(URL location, ResourceBundle resources) {
         System.out.println("[TaskGroupDetailController] Initialized (awaiting loadGroup call)");
         SmoothScrollHelper.apply(scrollPane);
+
+        setupSearchBar();
         updateViewState();
+    }
+
+    /**
+     * Configures the search bar: adds the search icon, wires the debounce
+     * listener, and sets up focus forwarding from the container HBox.
+     */
+    private void setupSearchBar() {
+        // Add search icon to the right side of the search bar
+        FontIcon searchIcon = new FontIcon(FontAwesomeSolid.SEARCH);
+        searchIcon.setIconSize(14);
+        searchIcon.setIconColor(Color.web("#737373"));
+        searchBar.getChildren().add(searchIcon);
+
+        // Forward clicks on the HBox container to the TextField
+        searchBar.setOnMouseClicked(event -> searchField.requestFocus());
+
+        // Toggle focused style class on the parent HBox when TextField gains/loses focus
+        searchField.focusedProperty().addListener((obs, wasFocused, isFocused) -> {
+            if (isFocused) {
+                searchBar.getStyleClass().add("search-bar-focused");
+            } else {
+                searchBar.getStyleClass().remove("search-bar-focused");
+            }
+        });
+
+        // Wire debounce: restart timer on each keystroke, fire search on completion
+        searchDebounce.setOnFinished(event -> executeSearch());
+
+        searchField.textProperty().addListener((obs, oldText, newText) -> {
+            searchDebounce.playFromStart();
+        });
     }
 
     // ==================== Public API ====================
@@ -218,9 +305,9 @@ public class TaskGroupDetailController implements Initializable {
      * Loads a task group and displays the first page of its tasks.
      *
      * <p>Called by {@link MainController} each time the user navigates to
-     * this page. Resets pagination to page 0, clears previously displayed
-     * data (including screencast sessions), and loads fresh data from the
-     * database.</p>
+     * this page. Resets pagination and search state to defaults, clears
+     * previously displayed data (including screencast sessions), and loads
+     * fresh data from the database.</p>
      *
      * @param groupId the database ID of the task group to load
      */
@@ -230,6 +317,11 @@ public class TaskGroupDetailController implements Initializable {
         clearPage();
         this.currentGroupId = groupId;
         this.currentPage = 0;
+        this.currentSearchQuery = "";
+
+        // Clear search field without triggering the debounce
+        searchDebounce.stop();
+        searchField.setText("");
 
         loadGroupHeader(groupId);
         loadCurrentPage();
@@ -281,15 +373,56 @@ public class TaskGroupDetailController implements Initializable {
         }
     }
 
+    // ==================== Search ====================
+
+    /**
+     * Executes a search based on the current text in the search field.
+     *
+     * <p>Called by the debounce timer after the user stops typing. Resets
+     * pagination to page 0 and reloads with the new search filter. If the
+     * search text hasn't changed since the last execution, the reload is
+     * skipped to avoid unnecessary database queries.</p>
+     *
+     * <p>Running tasks that are filtered out by the search continue executing
+     * normally. Their callbacks point to detached rows (harmless — JavaFX ignores
+     * updates to detached nodes), and {@link org.nodriver4j.services.TaskLogger}
+     * persists all state to the database. When the task reappears (search cleared
+     * or changed), the row is rebuilt from DB state and callbacks are re-wired.</p>
+     */
+    private void executeSearch() {
+        String query = searchField.getText().trim();
+
+        // Skip if query hasn't changed
+        if (query.equals(currentSearchQuery)) {
+            return;
+        }
+
+        currentSearchQuery = query;
+        currentPage = 0;
+        loadCurrentPage();
+
+        System.out.println("[TaskGroupDetailController] Search executed: '"
+                + (query.isEmpty() ? "(cleared)" : query) + "'");
+    }
+
+    /**
+     * Checks whether a search filter is currently active.
+     *
+     * @return true if the current search query is non-empty
+     */
+    private boolean isSearchActive() {
+        return !currentSearchQuery.isEmpty();
+    }
+
     // ==================== FXML Actions — Task Operations ====================
 
     /**
      * Opens the Create Task dialog and creates tasks from the selected profiles.
      *
-     * <p>New tasks are saved to the database. If the user is on the last page,
-     * the page is reloaded so newly created tasks appear (up to page size). If
-     * not on the last page, only the total count and pagination controls are
-     * refreshed.</p>
+     * <p>New tasks are saved to the database. If the user is on the last page
+     * and no search is active, the page is reloaded so newly created tasks
+     * appear (up to page size). Otherwise, only the total count and pagination
+     * controls are refreshed.</p>
      */
     @FXML
     private void onAddTaskClicked() {
@@ -313,7 +446,7 @@ public class TaskGroupDetailController implements Initializable {
                     ? proxyRepository.findByGroupId(proxyGroupId)
                     : List.of();
 
-            // Check if on last page before saving
+            // Check if on last page before saving (only relevant when not searching)
             boolean wasOnLastPage = isOnLastPage();
 
             // Create a TaskEntity for each selected profile
@@ -335,10 +468,10 @@ public class TaskGroupDetailController implements Initializable {
             taskRepository.saveAll(tasks);
 
             // Refresh view
-            if (wasOnLastPage) {
+            if (wasOnLastPage && !isSearchActive()) {
                 loadCurrentPage();
             } else {
-                totalCount = taskRepository.countByGroupId(currentGroupId);
+                refreshCounts();
                 updateViewState();
             }
 
@@ -349,11 +482,11 @@ public class TaskGroupDetailController implements Initializable {
     /**
      * Starts all idle tasks in the group.
      *
-     * <p>Operates on <b>all</b> tasks in the group, not just the visible page.
-     * For visible rows, {@link #requestStart(TaskRow)} is called for immediate
-     * UI feedback. For off-screen tasks, the service is called directly with
-     * null callbacks — state is persisted to the database and reflected when
-     * the user navigates to that page.</p>
+     * <p>Operates on <b>all</b> tasks in the group, not just the visible page
+     * or the current search results. For visible rows, {@link #requestStart(TaskRow)}
+     * is called for immediate UI feedback. For off-screen tasks, the service is
+     * called directly with null callbacks — state is persisted to the database and
+     * reflected when the user navigates to that page.</p>
      */
     @FXML
     private void onStartAllClicked() {
@@ -386,10 +519,11 @@ public class TaskGroupDetailController implements Initializable {
     /**
      * Stops all active tasks in the group.
      *
-     * <p>Operates on <b>all</b> tasks in the group, not just the visible page.
-     * Screencast sessions are closed on the FX thread first, then visible rows
-     * are optimistically updated to STOPPED. A single background thread handles
-     * the actual browser shutdown for all active tasks.</p>
+     * <p>Operates on <b>all</b> tasks in the group, not just the visible page
+     * or the current search results. Screencast sessions are closed on the FX
+     * thread first, then visible rows are optimistically updated to STOPPED. A
+     * single background thread handles the actual browser shutdown for all
+     * active tasks.</p>
      */
     @FXML
     private void onStopAllClicked() {
@@ -431,9 +565,9 @@ public class TaskGroupDetailController implements Initializable {
      * Opens the Change Proxies dialog and reassigns proxies across all
      * tasks in the group.
      *
-     * <p>Operates on <b>all</b> tasks in the group, not just the visible page.
-     * After reassignment, the current page is reloaded to reflect proxy changes
-     * on visible rows.</p>
+     * <p>Operates on <b>all</b> tasks in the group, not just the visible page
+     * or the current search results. After reassignment, the current page is
+     * reloaded to reflect proxy changes on visible rows.</p>
      */
     @FXML
     private void onChangeProxiesClicked() {
@@ -443,7 +577,7 @@ public class TaskGroupDetailController implements Initializable {
                 changeProxiesButton.getScene().getWindow(),
                 proxyGroupRepository,
                 proxyRepository,
-                (int) totalCount
+                (int) unfilteredCount
         );
 
         dialog.showAndWait().ifPresent(result -> {
@@ -495,16 +629,16 @@ public class TaskGroupDetailController implements Initializable {
      * Loads the current page of tasks from the database.
      *
      * <p>Clears all displayed rows (but NOT screencast sessions), queries
-     * the database for the current page, and rebuilds rows. For any task
-     * that is currently active, UI callbacks are re-wired on
-     * {@link TaskExecutionService} so live updates target the new row.
-     * Screencast view browser state is also restored.</p>
+     * the database for the current page (filtered by search if active),
+     * and rebuilds rows. For any task that is currently active, UI callbacks
+     * are re-wired on {@link TaskExecutionService} so live updates target
+     * the new row. Screencast view browser state is also restored.</p>
      */
     private void loadCurrentPage() {
         clearRows();
 
         try {
-            totalCount = taskRepository.countByGroupId(currentGroupId);
+            refreshCounts();
 
             if (totalCount == 0) {
                 updateViewState();
@@ -517,7 +651,14 @@ public class TaskGroupDetailController implements Initializable {
             }
 
             int offset = currentPage * PAGE_SIZE;
-            List<TaskEntity> tasks = taskRepository.findByGroupId(currentGroupId, PAGE_SIZE, offset);
+            List<TaskEntity> tasks;
+
+            if (isSearchActive()) {
+                tasks = taskRepository.findByGroupIdAndSearch(
+                        currentGroupId, currentSearchQuery, PAGE_SIZE, offset);
+            } else {
+                tasks = taskRepository.findByGroupId(currentGroupId, PAGE_SIZE, offset);
+            }
 
             // Bulk-load profiles and proxies to avoid N+1 queries
             Map<Long, ProfileEntity> profileMap = buildProfileMap(tasks);
@@ -558,7 +699,8 @@ public class TaskGroupDetailController implements Initializable {
             }
 
             System.out.println("[TaskGroupDetailController] Loaded page " + (currentPage + 1)
-                    + " (" + tasks.size() + " tasks) for group " + currentGroupId);
+                    + " (" + tasks.size() + " tasks) for group " + currentGroupId
+                    + (isSearchActive() ? " [search: '" + currentSearchQuery + "']" : ""));
 
         } catch (Database.DatabaseException e) {
             System.err.println("[TaskGroupDetailController] Failed to load tasks: " + e.getMessage());
@@ -677,13 +819,13 @@ public class TaskGroupDetailController implements Initializable {
 
             taskRepository.save(clone);
 
-            // Check if on last page before refreshing
+            // Check if on last page before refreshing (only relevant when not searching)
             boolean wasOnLastPage = isOnLastPage();
 
-            if (wasOnLastPage) {
+            if (wasOnLastPage && !isSearchActive()) {
                 loadCurrentPage();
             } else {
-                totalCount = taskRepository.countByGroupId(currentGroupId);
+                refreshCounts();
                 updateViewState();
             }
 
@@ -720,15 +862,15 @@ public class TaskGroupDetailController implements Initializable {
                     task.customStatus()
             );
 
-            dialog.showAndWait().ifPresent(result -> {
+            dialog.showAndWait().ifPresent(editResult -> {
                 // Handle proxy change
                 Long oldProxyId = task.proxyId();
                 Long newProxyId;
 
-                if (result.proxyString() != null) {
+                if (editResult.proxyString() != null) {
                     ProxyEntity newProxy = ProxyEntity.builder()
                             .groupId(null)
-                            .fromProxyString(result.proxyString())
+                            .fromProxyString(editResult.proxyString())
                             .build();
                     proxyRepository.save(newProxy);
                     newProxyId = newProxy.id();
@@ -738,7 +880,7 @@ public class TaskGroupDetailController implements Initializable {
 
                 // Update task
                 task.proxyId(newProxyId);
-                task.customStatus(result.customStatus());
+                task.customStatus(editResult.customStatus());
                 task.touchUpdatedAt();
                 taskRepository.save(task);
 
@@ -1026,7 +1168,8 @@ public class TaskGroupDetailController implements Initializable {
      * Clears all displayed task rows from the UI.
      *
      * <p>Does NOT close screencast sessions — they persist across page
-     * navigations. Used when navigating between pages within the same group.</p>
+     * navigations and search changes. Used when navigating between pages
+     * or when the search filter changes.</p>
      */
     private void clearRows() {
         taskRows.clear();
@@ -1052,6 +1195,25 @@ public class TaskGroupDetailController implements Initializable {
         scriptNameLabel.setText("Script");
 
         currentGroupId = -1;
+    }
+
+    // ==================== Count Helpers ====================
+
+    /**
+     * Refreshes both filtered and unfiltered counts from the database.
+     *
+     * <p>When no search is active, both counts are the same. When a search
+     * is active, {@code unfilteredCount} reflects the total group size and
+     * {@code totalCount} reflects the number of matching tasks.</p>
+     */
+    private void refreshCounts() {
+        unfilteredCount = taskRepository.countByGroupId(currentGroupId);
+
+        if (isSearchActive()) {
+            totalCount = taskRepository.countByGroupIdAndSearch(currentGroupId, currentSearchQuery);
+        } else {
+            totalCount = unfilteredCount;
+        }
     }
 
     // ==================== Pagination Helpers ====================

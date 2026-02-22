@@ -1,14 +1,16 @@
 package org.nodriver4j.ui.controllers;
 
+import javafx.animation.PauseTransition;
 import javafx.fxml.FXML;
 import javafx.fxml.Initializable;
-import javafx.scene.control.Alert;
-import javafx.scene.control.Button;
-import javafx.scene.control.Label;
-import javafx.scene.control.ScrollPane;
+import javafx.scene.control.*;
 import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
+import javafx.util.Duration;
+import org.kordamp.ikonli.fontawesome5.FontAwesomeSolid;
+import org.kordamp.ikonli.javafx.FontIcon;
 import org.nodriver4j.persistence.Database;
 import org.nodriver4j.persistence.entity.ProfileEntity;
 import org.nodriver4j.persistence.entity.ProfileGroupEntity;
@@ -32,6 +34,10 @@ import java.util.ResourceBundle;
  * at a time. Navigation arrows allow moving between pages, and a range label
  * shows the current position (e.g., "1–50 of 847").</p>
  *
+ * <p>Includes a live search bar with 500ms debounce that filters profiles by
+ * matching against the email address and profile name. Search is performed at
+ * the database level using SQL LIKE queries.</p>
+ *
  * <p>This controller is paired with {@code profile-group-detail.fxml}.
  * Navigation to this page is handled by {@link MainController#showProfileGroupDetail(long)},
  * which calls {@link #loadGroup(long)} to populate the page with the
@@ -45,6 +51,16 @@ import java.util.ResourceBundle;
  *   <li>Arrow buttons are disabled (not hidden) when at the first/last page</li>
  *   <li>Pagination controls are visible even for single-page groups (arrows disabled)</li>
  *   <li>Pagination controls are hidden only when the group is empty</li>
+ * </ul>
+ *
+ * <h2>Search Behavior</h2>
+ * <ul>
+ *   <li>Live search with 500ms debounce — queries fire after the user stops typing</li>
+ *   <li>Searches against email address and profile name (OR match)</li>
+ *   <li>Entering a search term resets pagination to page 0</li>
+ *   <li>Clearing the search field restores the unfiltered view</li>
+ *   <li>The profile count label shows filtered context (e.g., "12 of 847 profiles")</li>
+ *   <li>Search state is reset when navigating to a different group</li>
  * </ul>
  *
  * <h2>Delete Behavior</h2>
@@ -61,6 +77,7 @@ import java.util.ResourceBundle;
  * <ul>
  *   <li>Load and display one page of profiles for a specific group</li>
  *   <li>Manage pagination state (current page, total count)</li>
+ *   <li>Manage search state (query string, debounce timer, filtered count)</li>
  *   <li>Update page header with group name and total profile count</li>
  *   <li>Update pagination bar with range label and arrow states</li>
  *   <li>Handle back button navigation</li>
@@ -94,6 +111,11 @@ public class ProfileGroupDetailController implements Initializable {
      */
     private static final int PAGE_SIZE = 50;
 
+    /**
+     * Debounce delay for live search in milliseconds.
+     */
+    private static final double SEARCH_DEBOUNCE_MS = 500;
+
     // ==================== FXML Injected Fields ====================
 
     @FXML
@@ -104,6 +126,12 @@ public class ProfileGroupDetailController implements Initializable {
 
     @FXML
     private Label profileCountLabel;
+
+    @FXML
+    private HBox searchBar;
+
+    @FXML
+    private TextField searchField;
 
     @FXML
     private HBox paginationBar;
@@ -157,9 +185,27 @@ public class ProfileGroupDetailController implements Initializable {
     private int currentPage;
 
     /**
-     * The total number of profiles in the current group (from DB).
+     * The total number of profiles matching the current view (filtered or unfiltered).
      */
     private long totalCount;
+
+    /**
+     * The total number of profiles in the group (always unfiltered).
+     * Used for the subtitle label when a search is active.
+     */
+    private long unfilteredCount;
+
+    // ==================== Search State ====================
+
+    /**
+     * The current search query. Empty string means no filter.
+     */
+    private String currentSearchQuery = "";
+
+    /**
+     * Debounce timer for live search. Restarted on each keystroke.
+     */
+    private final PauseTransition searchDebounce = new PauseTransition(Duration.millis(SEARCH_DEBOUNCE_MS));
 
     // ==================== Callbacks ====================
 
@@ -182,6 +228,39 @@ public class ProfileGroupDetailController implements Initializable {
     public void initialize(URL location, ResourceBundle resources) {
         System.out.println("[ProfileGroupDetailController] Initialized");
         SmoothScrollHelper.apply(scrollPane);
+
+        setupSearchBar();
+    }
+
+    /**
+     * Configures the search bar: adds the search icon, wires the debounce
+     * listener, and sets up focus forwarding from the container HBox.
+     */
+    private void setupSearchBar() {
+        // Add search icon to the right side of the search bar
+        FontIcon searchIcon = new FontIcon(FontAwesomeSolid.SEARCH);
+        searchIcon.setIconSize(14);
+        searchIcon.setIconColor(Color.web("#737373"));
+        searchBar.getChildren().add(searchIcon);
+
+        // Forward clicks on the HBox container to the TextField
+        searchBar.setOnMouseClicked(event -> searchField.requestFocus());
+
+        // Toggle focused style class on the parent HBox when TextField gains/loses focus
+        searchField.focusedProperty().addListener((obs, wasFocused, isFocused) -> {
+            if (isFocused) {
+                searchBar.getStyleClass().add("search-bar-focused");
+            } else {
+                searchBar.getStyleClass().remove("search-bar-focused");
+            }
+        });
+
+        // Wire debounce: restart timer on each keystroke, fire search on completion
+        searchDebounce.setOnFinished(event -> executeSearch());
+
+        searchField.textProperty().addListener((obs, oldText, newText) -> {
+            searchDebounce.playFromStart();
+        });
     }
 
     // ==================== Public API ====================
@@ -190,14 +269,20 @@ public class ProfileGroupDetailController implements Initializable {
      * Loads a profile group and displays the first page of its profiles.
      *
      * <p>Called by {@link MainController#showProfileGroupDetail(long)} each
-     * time this page is displayed. Resets pagination to page 0, clears any
-     * previously loaded data, and reloads from the database.</p>
+     * time this page is displayed. Resets pagination and search state to
+     * defaults, clears any previously loaded data, and reloads from the
+     * database.</p>
      *
      * @param groupId the database ID of the profile group to display
      */
     public void loadGroup(long groupId) {
         this.currentGroupId = groupId;
         this.currentPage = 0;
+        this.currentSearchQuery = "";
+
+        // Clear search field without triggering the debounce
+        searchDebounce.stop();
+        searchField.setText("");
 
         System.out.println("[ProfileGroupDetailController] Loading group " + groupId);
 
@@ -286,15 +371,50 @@ public class ProfileGroupDetailController implements Initializable {
         }
     }
 
+    // ==================== Search ====================
+
+    /**
+     * Executes a search based on the current text in the search field.
+     *
+     * <p>Called by the debounce timer after the user stops typing. Resets
+     * pagination to page 0 and reloads with the new search filter. If the
+     * search text hasn't changed since the last execution, the reload is
+     * skipped to avoid unnecessary database queries.</p>
+     */
+    private void executeSearch() {
+        String query = searchField.getText().trim();
+
+        // Skip if query hasn't changed
+        if (query.equals(currentSearchQuery)) {
+            return;
+        }
+
+        currentSearchQuery = query;
+        currentPage = 0;
+        loadCurrentPage();
+
+        System.out.println("[ProfileGroupDetailController] Search executed: '"
+                + (query.isEmpty() ? "(cleared)" : query) + "'");
+    }
+
+    /**
+     * Checks whether a search filter is currently active.
+     *
+     * @return true if the current search query is non-empty
+     */
+    private boolean isSearchActive() {
+        return !currentSearchQuery.isEmpty();
+    }
+
     // ==================== Page Loading ====================
 
     /**
      * Loads the current page of profiles from the database.
      *
      * <p>Clears all currently displayed cards, queries the database for
-     * the current page's worth of profiles, and rebuilds the card list.
-     * Also refreshes the total count and updates all view state including
-     * the pagination controls.</p>
+     * the current page's worth of profiles (filtered by search if active),
+     * and rebuilds the card list. Also refreshes the total count and updates
+     * all view state including the pagination controls.</p>
      *
      * <p>If the current page index has become invalid (e.g., due to
      * deletions reducing the total page count), the page is clamped
@@ -304,7 +424,15 @@ public class ProfileGroupDetailController implements Initializable {
         clearCards();
 
         try {
-            totalCount = profileRepository.countByGroupId(currentGroupId);
+            // Always fetch unfiltered count for the subtitle
+            unfilteredCount = profileRepository.countByGroupId(currentGroupId);
+
+            // Fetch filtered count (same as unfiltered when no search is active)
+            if (isSearchActive()) {
+                totalCount = profileRepository.countByGroupIdAndSearch(currentGroupId, currentSearchQuery);
+            } else {
+                totalCount = unfilteredCount;
+            }
 
             if (totalCount == 0) {
                 updateViewState();
@@ -317,8 +445,14 @@ public class ProfileGroupDetailController implements Initializable {
             }
 
             int offset = currentPage * PAGE_SIZE;
-            List<ProfileEntity> profiles = profileRepository.findByGroupId(
-                    currentGroupId, PAGE_SIZE, offset);
+            List<ProfileEntity> profiles;
+
+            if (isSearchActive()) {
+                profiles = profileRepository.findByGroupIdAndSearch(
+                        currentGroupId, currentSearchQuery, PAGE_SIZE, offset);
+            } else {
+                profiles = profileRepository.findByGroupId(currentGroupId, PAGE_SIZE, offset);
+            }
 
             for (ProfileEntity profile : profiles) {
                 ProfileCard card = buildCard(profile);
@@ -327,7 +461,8 @@ public class ProfileGroupDetailController implements Initializable {
             }
 
             System.out.println("[ProfileGroupDetailController] Loaded page " + (currentPage + 1)
-                    + " (" + profiles.size() + " profiles) for group '" + currentGroupName + "'");
+                    + " (" + profiles.size() + " profiles) for group '" + currentGroupName + "'"
+                    + (isSearchActive() ? " [search: '" + currentSearchQuery + "']" : ""));
 
         } catch (Database.DatabaseException e) {
             System.err.println("[ProfileGroupDetailController] Failed to load profiles: "
@@ -491,12 +626,21 @@ public class ProfileGroupDetailController implements Initializable {
     /**
      * Updates the view to show either the empty state or the card grid,
      * and updates the profile count label and pagination controls.
+     *
+     * <p>When a search is active, the profile count label shows the filtered
+     * count in context (e.g., "12 of 847 profiles"). When no search is active,
+     * it shows just the total (e.g., "847 profiles").</p>
      */
     private void updateViewState() {
         boolean hasProfiles = totalCount > 0;
 
-        // Update subtitle with total count
-        profileCountLabel.setText(totalCount + (totalCount == 1 ? " profile" : " profiles"));
+        // Update subtitle with count
+        if (isSearchActive()) {
+            String profileWord = unfilteredCount == 1 ? " profile" : " profiles";
+            profileCountLabel.setText(totalCount + " of " + unfilteredCount + profileWord);
+        } else {
+            profileCountLabel.setText(totalCount + (totalCount == 1 ? " profile" : " profiles"));
+        }
 
         // Toggle empty state vs grid
         emptyState.setVisible(!hasProfiles);

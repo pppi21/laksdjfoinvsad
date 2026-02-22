@@ -131,6 +131,15 @@ public class ProfileRepository implements Repository<ProfileEntity> {
     private static final String SELECT_BY_GROUP_ID_PAGINATED_SQL =
             "SELECT " + SELECT_COLUMNS + " FROM profiles WHERE group_id = ? ORDER BY id ASC LIMIT ? OFFSET ?";
 
+    private static final String SELECT_BY_GROUP_ID_SEARCH_PAGINATED_SQL =
+            "SELECT " + SELECT_COLUMNS + " FROM profiles WHERE group_id = ? " +
+                    "AND (email_address LIKE ? OR profile_name LIKE ?) " +
+                    "ORDER BY id ASC LIMIT ? OFFSET ?";
+
+    private static final String COUNT_BY_GROUP_ID_SEARCH_SQL =
+            "SELECT COUNT(*) FROM profiles WHERE group_id = ? " +
+                    "AND (email_address LIKE ? OR profile_name LIKE ?)";
+
     // ==================== Create / Update ====================
 
     @Override
@@ -328,6 +337,78 @@ public class ProfileRepository implements Repository<ProfileEntity> {
         }
 
         return profiles;
+    }
+
+    /**
+     * Finds profiles belonging to a specific group matching a search query, with pagination.
+     *
+     * <p>The search matches against the email address and profile name using a
+     * case-insensitive LIKE query. Results are ordered by ID ascending,
+     * preserving the original import order.</p>
+     *
+     * @param groupId the profile group ID
+     * @param query   the search string to match against email and profile name
+     * @param limit   the maximum number of profiles to return
+     * @param offset  the number of profiles to skip
+     * @return list of matching profiles for the requested page (empty list if none)
+     */
+    public List<ProfileEntity> findByGroupIdAndSearch(long groupId, String query, int limit, int offset) {
+        List<ProfileEntity> profiles = new ArrayList<>();
+
+        try (Connection conn = Database.connection();
+             PreparedStatement stmt = conn.prepareStatement(SELECT_BY_GROUP_ID_SEARCH_PAGINATED_SQL)) {
+
+            String pattern = "%" + query + "%";
+            stmt.setLong(1, groupId);
+            stmt.setString(2, pattern);
+            stmt.setString(3, pattern);
+            stmt.setInt(4, limit);
+            stmt.setInt(5, offset);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    profiles.add(mapRow(rs));
+                }
+            }
+
+        } catch (SQLException e) {
+            throw new Database.DatabaseException(
+                    "Failed to search profiles by group ID: " + groupId, e);
+        }
+
+        return profiles;
+    }
+
+    /**
+     * Counts profiles in a specific group matching a search query.
+     *
+     * <p>The search matches against the email address and profile name using a
+     * case-insensitive LIKE query.</p>
+     *
+     * @param groupId the profile group ID
+     * @param query   the search string to match against email and profile name
+     * @return the count of matching profiles
+     */
+    public long countByGroupIdAndSearch(long groupId, String query) {
+        try (Connection conn = Database.connection();
+             PreparedStatement stmt = conn.prepareStatement(COUNT_BY_GROUP_ID_SEARCH_SQL)) {
+
+            String pattern = "%" + query + "%";
+            stmt.setLong(1, groupId);
+            stmt.setString(2, pattern);
+            stmt.setString(3, pattern);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getLong(1);
+                }
+            }
+            return 0;
+
+        } catch (SQLException e) {
+            throw new Database.DatabaseException(
+                    "Failed to count searched profiles by group ID: " + groupId, e);
+        }
     }
 
     /**

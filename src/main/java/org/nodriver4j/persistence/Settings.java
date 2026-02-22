@@ -85,10 +85,9 @@ public final class Settings {
      */
     public Settings() {
         // Browser defaults
-        this.chromePath = "";
         this.defaultHeadless = false;
         this.defaultFingerprintEnabled = true;
-        this.defaultResourceBlocking = true;
+        this.defaultResourceBlocking = false;
         this.defaultWebrtcPolicy = "disable_non_proxied_udp";
 
         // Warming
