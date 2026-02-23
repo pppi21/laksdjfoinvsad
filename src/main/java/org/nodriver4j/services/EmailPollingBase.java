@@ -15,28 +15,28 @@ import java.util.List;
  * <p>Subclasses define <strong>what</strong> to search for
  * ({@link #buildCriteria}) and <strong>how</strong> to extract a result
  * ({@link #extractFromEmail}). This class handles the polling loop,
- * timeout enforcement, and shared configuration.</p>
+ * timeout enforcement, shared connection lifecycle, and configuration.</p>
+ *
+ * <h2>Connection Lifecycle</h2>
+ * <p>Instances accept IMAP credentials at construction time but do not
+ * open a connection immediately. On the first {@link #poll()} call, a
+ * shared {@link GmailClient} is acquired via
+ * {@link GmailClient#shared(String, String)}. The shared instance is
+ * reference-counted and may be reused across multiple extractors that
+ * share the same catchall account. Call {@link #close()} (or use
+ * try-with-resources) to release the shared connection when finished.</p>
  *
  * <h2>Usage</h2>
  * <pre>{@code
- * public class MyExtractor extends EmailPollingBase<String> {
- *
- *     public MyExtractor(GmailClient gmailClient) {
- *         super(gmailClient);
- *     }
- *
- *     @Override
- *     protected EmailSearchCriteria buildCriteria(Instant since) { ... }
- *
- *     @Override
- *     protected String extractFromEmail(EmailMessage message) { ... }
+ * try (MyExtractor extractor = new MyExtractor("user@gmail.com", "catchall@gmail.com", "app-pass")) {
+ *     String result = extractor.poll();
  * }
  * }</pre>
  *
  * @param <T> the type of result extracted from an email (e.g. OTP string, URL)
  * @see GmailClient
  */
-public abstract class EmailPollingBase<T> {
+public abstract class EmailPollingBase<T> implements AutoCloseable {
 
     // ==================== Timing Defaults ====================
 
@@ -45,57 +45,59 @@ public abstract class EmailPollingBase<T> {
 
     // ==================== Fields ====================
 
-    private final GmailClient gmailClient;
+    private final String email;
+    private final String catchallEmail;
+    private final String appPassword;
     private final Duration pollInterval;
-    private final String folder;
-    private final String recipient;
+
+    /**
+     * Lazily acquired shared GmailClient. Set on the first {@link #poll()} call,
+     * released on {@link #close()}.
+     */
+    private GmailClient gmailClient;
 
     // ==================== Constructors ====================
 
     /**
-     * Creates an extractor with default settings (5s poll interval, INBOX).
+     * Creates an extractor with default settings (5s poll interval).
      *
-     * @param gmailClient the connected GmailClient to use
-     * @throws IllegalArgumentException if gmailClient is null
+     * @param email         the profile email address (used for recipient matching)
+     * @param catchallEmail the catchall email for IMAP authentication
+     * @param appPassword   the app password for IMAP authentication
+     * @throws IllegalArgumentException if any argument is null or blank
      */
-    protected EmailPollingBase(GmailClient gmailClient) {
-        this(gmailClient, DEFAULT_POLL_INTERVAL, "INBOX");
+    protected EmailPollingBase(String email, String catchallEmail, String appPassword) {
+        this(email, catchallEmail, appPassword, DEFAULT_POLL_INTERVAL);
     }
 
     /**
      * Creates an extractor with a custom poll interval.
      *
-     * @param gmailClient  the connected GmailClient to use
-     * @param pollInterval how often to check for new emails
-     * @throws IllegalArgumentException if gmailClient is null or pollInterval is negative
+     * @param email         the profile email address (used for recipient matching)
+     * @param catchallEmail the catchall email for IMAP authentication
+     * @param appPassword   the app password for IMAP authentication
+     * @param pollInterval  how often to check for new emails
+     * @throws IllegalArgumentException if any argument is null/blank or pollInterval is negative
      */
-    protected EmailPollingBase(GmailClient gmailClient, Duration pollInterval) {
-        this(gmailClient, pollInterval, "INBOX");
-    }
-
-    /**
-     * Creates an extractor with full customization.
-     *
-     * @param gmailClient  the connected GmailClient to use
-     * @param pollInterval how often to check for new emails
-     * @param folder       the folder to search (e.g., "INBOX", "Spam")
-     * @throws IllegalArgumentException if gmailClient is null or pollInterval is negative
-     */
-    protected EmailPollingBase(GmailClient gmailClient, Duration pollInterval, String folder) {
-        if (gmailClient == null) {
-            throw new IllegalArgumentException("GmailClient cannot be null");
+    protected EmailPollingBase(String email, String catchallEmail, String appPassword,
+                               Duration pollInterval) {
+        if (email == null || email.isBlank()) {
+            throw new IllegalArgumentException("Email cannot be null or blank");
+        }
+        if (catchallEmail == null || catchallEmail.isBlank()) {
+            throw new IllegalArgumentException("Catchall email cannot be null or blank");
+        }
+        if (appPassword == null || appPassword.isBlank()) {
+            throw new IllegalArgumentException("App password cannot be null or blank");
         }
         if (pollInterval == null || pollInterval.isNegative()) {
             throw new IllegalArgumentException("Poll interval must be a positive duration");
         }
-        if (folder == null || folder.isBlank()) {
-            folder = "INBOX";
-        }
 
-        this.gmailClient = gmailClient;
+        this.email = email;
+        this.catchallEmail = catchallEmail;
+        this.appPassword = appPassword;
         this.pollInterval = pollInterval;
-        this.folder = folder;
-        this.recipient = gmailClient.email();
     }
 
     // ==================== Abstract Methods ====================
@@ -138,14 +140,18 @@ public abstract class EmailPollingBase<T> {
      *
      * @return the extracted result
      * @throws EmailExtractionException if no result is found within the timeout
-     * @throws IllegalStateException    if GmailClient is not connected
+     * @throws GmailClientException     if connection fails
      */
-    public T poll() throws EmailExtractionException {
+    public T poll() throws EmailExtractionException, GmailClientException {
         return poll(DEFAULT_TIMEOUT);
     }
 
     /**
      * Polls for a matching email and extracts a result.
+     *
+     * <p>On the first call, acquires a shared {@link GmailClient} via
+     * {@link GmailClient#shared(String, String)}. The shared connection
+     * remains open until {@link #close()} is called.</p>
      *
      * <p>Records the current time (minus a small buffer) as the monitoring
      * start time. Only emails received after this point are considered,
@@ -154,22 +160,17 @@ public abstract class EmailPollingBase<T> {
      * @param timeout maximum time to wait for a matching email
      * @return the extracted result
      * @throws EmailExtractionException if no result is found within the timeout
-     * @throws IllegalStateException    if GmailClient is not connected
+     * @throws GmailClientException     if the shared connection fails to connect
      */
-    public T poll(Duration timeout) throws EmailExtractionException {
-        if (!gmailClient.isConnected()) {
-            throw new IllegalStateException("GmailClient is not connected. Call connect() first.");
-        }
+    public T poll(Duration timeout) throws EmailExtractionException, GmailClientException {
         if (timeout == null || timeout.isNegative() || timeout.isZero()) {
             throw new IllegalArgumentException("Timeout must be a positive duration");
         }
 
+        ensureConnected();
+
         Instant monitoringStartTime = Instant.now().minusSeconds(2);
         Instant deadline = Instant.now().plus(timeout);
-
-        System.out.println("[" + extractorName() + "] Starting extraction, monitoring from: " + monitoringStartTime);
-        System.out.println("[" + extractorName() + "] Timeout: " + timeout.toSeconds() + "s, polling every " +
-                pollInterval.toSeconds() + "s");
 
         int pollCount = 0;
 
@@ -179,11 +180,11 @@ public abstract class EmailPollingBase<T> {
             try {
                 T result = pollOnce(monitoringStartTime);
                 if (result != null) {
-                    System.out.println("[" + extractorName() + "] ✓ Result extracted after " + pollCount + " poll(s)");
                     return result;
                 }
             } catch (GmailClientException e) {
-                System.err.println("[" + extractorName() + "] Poll #" + pollCount + " failed: " + e.getMessage());
+                System.err.println("[" + extractorName() + "] Poll #" + pollCount +
+                        " failed: " + e.getMessage());
             }
 
             Duration remainingTime = Duration.between(Instant.now(), deadline);
@@ -209,18 +210,14 @@ public abstract class EmailPollingBase<T> {
      */
     private T pollOnce(Instant monitoringStartTime) throws GmailClientException {
         EmailSearchCriteria criteria = buildCriteria(monitoringStartTime);
-        List<EmailMessage> messages = gmailClient.fetchMessages(folder, criteria);
+        List<EmailMessage> messages = gmailClient.fetchMessages(criteria);
 
         if (messages.isEmpty()) {
-            System.out.println("[" + extractorName() + "] No matching emails found");
             return null;
         }
 
-        System.out.println("[" + extractorName() + "] Found " + messages.size() + " matching email(s)");
-
         for (EmailMessage message : messages) {
             if (message.receivedDate().isBefore(monitoringStartTime)) {
-                System.out.println("[" + extractorName() + "] Skipping old email from: " + message.receivedDate());
                 continue;
             }
 
@@ -231,6 +228,38 @@ public abstract class EmailPollingBase<T> {
         }
 
         return null;
+    }
+
+    // ==================== Connection Lifecycle ====================
+
+    /**
+     * Acquires a shared {@link GmailClient} if one has not been acquired yet.
+     *
+     * <p>The shared instance is already connected when returned by
+     * {@link GmailClient#shared(String, String)}. This method is
+     * idempotent — calling it multiple times is safe.</p>
+     *
+     * @throws GmailClientException if the connection fails
+     */
+    private void ensureConnected() throws GmailClientException {
+        if (gmailClient == null) {
+            gmailClient = GmailClient.shared(catchallEmail, appPassword);
+        }
+    }
+
+    /**
+     * Releases the shared {@link GmailClient} connection.
+     *
+     * <p>Decrements the reference count on the shared instance. When the
+     * last consumer releases, the underlying IMAP connection is closed.
+     * Safe to call multiple times — subsequent calls are no-ops.</p>
+     */
+    @Override
+    public void close() {
+        if (gmailClient != null) {
+            gmailClient.close();
+            gmailClient = null;
+        }
     }
 
     // ==================== Utility ====================
@@ -251,26 +280,32 @@ public abstract class EmailPollingBase<T> {
 
     // ==================== Accessors ====================
 
-    public GmailClient gmailClient() {
-        return gmailClient;
+    /**
+     * Returns the profile email address used for recipient matching.
+     *
+     * @return the profile email
+     */
+    public String recipient() {
+        return email;
+    }
+
+    /**
+     * Returns the catchall email used for IMAP authentication.
+     *
+     * @return the catchall email
+     */
+    public String catchallEmail() {
+        return catchallEmail;
     }
 
     public Duration pollInterval() {
         return pollInterval;
     }
 
-    public String folder() {
-        return folder;
-    }
-
-    public String recipient() {
-        return recipient;
-    }
-
     @Override
     public String toString() {
-        return String.format("%s{folder=%s, pollInterval=%ss, email=%s}",
-                extractorName(), folder, pollInterval.toSeconds(), gmailClient.email());
+        return String.format("%s{pollInterval=%ss, email=%s, catchall=%s}",
+                extractorName(), pollInterval.toSeconds(), email, catchallEmail);
     }
 
     // ==================== Exception ====================
