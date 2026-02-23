@@ -128,7 +128,6 @@ public class UberOtpExtractor extends EmailPollingBase<String> {
         return EmailSearchCriteria.builder()
                 .subject(UBER_SUBJECT)
                 .recipient(recipient())
-                .senderDomain(UBER_SENDER_DOMAIN)
                 .since(since)
                 .build();
     }

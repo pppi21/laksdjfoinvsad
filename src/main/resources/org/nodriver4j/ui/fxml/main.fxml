@@ -13,6 +13,8 @@
     Main application layout with sidebar navigation and content area.
     Controller: MainController
 -->
+<?import javafx.scene.image.Image?>
+<?import javafx.scene.image.ImageView?>
 <HBox xmlns="http://javafx.com/javafx/21"
       xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="org.nodriver4j.ui.controllers.MainController"
@@ -23,7 +25,11 @@
 
         <!-- App Logo Placeholder -->
         <VBox styleClass="sidebar-header" alignment="CENTER">
-            <Region styleClass="logo-placeholder" prefWidth="48" prefHeight="48" maxWidth="48" maxHeight="48"/>
+            <ImageView fitWidth="48" fitHeight="48" preserveRatio="true">
+                <image>
+                    <Image url="@../icon.png"/>
+                </image>
+            </ImageView>
         </VBox>
 
         <!-- Navigation Items -->

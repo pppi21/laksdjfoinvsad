@@ -520,6 +520,8 @@ public class GmailClient implements AutoCloseable {
                         : null;
 
                 List<EmailMessage> allMessages = executeFetch(ALL_MAIL_FOLDER, broadCriteria);
+                System.err.println("[GmailClient] Broad cache fetch from " + ALL_MAIL_FOLDER
+                        + ": " + allMessages.size() + " messages (since=" + broadSince + ")");
                 this.cachedFetch = new CachedFetch(List.copyOf(allMessages), broadSince, Instant.now());
             } finally {
                 fetchSemaphore.release();
@@ -551,14 +553,27 @@ public class GmailClient implements AutoCloseable {
         }
 
         List<EmailMessage> results = new ArrayList<>();
+        int subjectFail = 0, senderFail = 0, recipientFail = 0, timestampFail = 0;
 
         for (EmailMessage message : messages) {
-            if (matchesSubjectCriteria(message, criteria)
-                    && matchesSenderCriteria(message, criteria)
-                    && matchesRecipientCriteria(message, criteria)
-                    && matchesTimestampCriteria(message, criteria)) {
-                results.add(message);
-            }
+            if (!matchesSubjectCriteria(message, criteria)) { subjectFail++; continue; }
+            if (!matchesSenderCriteria(message, criteria))  { senderFail++;  continue; }
+            if (!matchesRecipientCriteria(message, criteria)){ recipientFail++; continue; }
+            if (!matchesTimestampCriteria(message, criteria)){ timestampFail++; continue; }
+            results.add(message);
+        }
+
+        if (!messages.isEmpty() && results.isEmpty()) {
+            System.err.println("[GmailClient] filterCached: " + messages.size()
+                    + " messages → 0 results. Eliminated by — subject: " + subjectFail
+                    + ", sender: " + senderFail + ", recipient: " + recipientFail
+                    + ", timestamp: " + timestampFail);
+            System.err.println("[GmailClient] Criteria: " + criteria);
+            EmailMessage sample = messages.getFirst();
+            System.err.println("[GmailClient] Sample msg — subject=\"" + sample.subject()
+                    + "\", sender=\"" + sample.sender()
+                    + "\", recipient=\"" + sample.recipient()
+                    + "\", received=" + sample.receivedDate());
         }
 
         results.sort((a, b) -> b.receivedDate().compareTo(a.receivedDate()));
@@ -754,6 +769,7 @@ public class GmailClient implements AutoCloseable {
         }
 
         String recipient = message.recipient();
+        System.out.println(recipient);
         if (recipient == null) {
             return false;
         }
