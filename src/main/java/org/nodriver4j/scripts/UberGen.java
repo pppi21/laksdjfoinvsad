@@ -101,8 +101,6 @@ public class UberGen implements AutomationScript {
             logger.log("Signing up with email...");
             signUpWithEmail();
 
-            profile.notes("Password");
-
             logger.log("Waiting for email OTP...");
             enterEmailOTP();
 
@@ -135,9 +133,11 @@ public class UberGen implements AutomationScript {
 
         } catch (UnexpectedNavigationException | GmailClient.GmailClientException | TimeoutException e) {
             logger.error("Attempt failed: " + e.getMessage());
+        } catch (Exception e) {
+            page.screenshot();
+            System.out.println("Unexpected error: " + e.getMessage());
         }
 
-        page.screenshot();
         throw new RuntimeException("Signup failed unexpectedly for: " + profile.emailAddress());
     }
 
