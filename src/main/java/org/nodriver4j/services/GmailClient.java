@@ -7,6 +7,8 @@ import jakarta.mail.search.*;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * Generic IMAP client for Gmail using app password authentication.
@@ -14,9 +16,17 @@ import java.util.*;
  * <p>This client provides a simplified interface for connecting to Gmail via IMAP
  * and fetching messages with flexible search criteria.</p>
  *
+ * <h2>Thread Safety</h2>
+ * <p>A single {@code GmailClient} instance can be safely shared across multiple
+ * threads. Connection lifecycle methods ({@link #connect()}, {@link #disconnect()})
+ * acquire an exclusive write lock, while {@link #fetchMessages} acquires a shared
+ * read lock — allowing multiple concurrent fetches against the same IMAP Store.
+ * A {@link Semaphore} additionally caps the number of concurrent folder
+ * open/search/close cycles to avoid triggering Gmail's IMAP rate limits.</p>
+ *
  * <h2>Usage Example</h2>
  * <pre>{@code
- * try (GmailClient client = new GmailClient("user@gmail.com", "app-password")) {
+ * try (GmailClient client = new GmailClient("user@gmail.com", "catchall@gmail.com", "app-password")) {
  *     client.connect();
  *
  *     EmailSearchCriteria criteria = GmailClient.EmailSearchCriteria.builder()
@@ -35,9 +45,9 @@ import java.util.*;
  *
  * <h2>Sender Filtering Modes</h2>
  * <ul>
- *   <li><strong>Exact match:</strong> {@code senderExact("noreply@uber.com")} - matches exactly</li>
- *   <li><strong>Domain match:</strong> {@code senderDomain("icloud.com")} - matches *@icloud.com</li>
- *   <li><strong>Domain contains:</strong> {@code senderDomainContains("icloud")} - matches *@*.icloud.* (subdomains)</li>
+ *   <li><strong>Exact match:</strong> {@code senderExact("noreply@uber.com")} — matches exactly</li>
+ *   <li><strong>Domain match:</strong> {@code senderDomain("icloud.com")} — matches *@icloud.com</li>
+ *   <li><strong>Domain contains:</strong> {@code senderDomainContains("icloud")} — matches *@*.icloud.* (subdomains)</li>
  * </ul>
  *
  * @see EmailSearchCriteria
@@ -48,9 +58,35 @@ public class GmailClient implements AutoCloseable {
     private static final String GMAIL_IMAP_HOST = "imap.gmail.com";
     private static final int GMAIL_IMAP_PORT = 993;
 
+    /**
+     * Maximum number of concurrent folder open/search/close cycles allowed
+     * per GmailClient instance. Gmail caps IMAP connections at 15 per account;
+     * this limits concurrent folder operations well below that threshold to
+     * avoid triggering undocumented command-rate throttling.
+     */
+    private static final int MAX_CONCURRENT_FETCHES = 7;
+
     private final String email;
     private final String catchallEmail;
     private final String appPassword;
+
+    /**
+     * Guards all access to {@link #session}, {@link #store}, and {@link #connected}.
+     *
+     * <p>Read lock: held during {@link #fetchMessages} and {@link #isConnected()} —
+     * multiple threads can fetch concurrently.</p>
+     * <p>Write lock: held during {@link #connect()} and {@link #disconnect()} —
+     * exclusive access while mutating connection state.</p>
+     */
+    private final ReentrantReadWriteLock connectionLock = new ReentrantReadWriteLock();
+
+    /**
+     * Limits the number of threads that can execute an IMAP folder
+     * open/search/close cycle at the same time. Layered on top of the
+     * read lock — a thread must hold both the read lock AND a semaphore
+     * permit before touching a folder.
+     */
+    private final Semaphore fetchSemaphore = new Semaphore(MAX_CONCURRENT_FETCHES, true);
 
     private Session session;
     private Store store;
@@ -62,9 +98,10 @@ public class GmailClient implements AutoCloseable {
      * <p>Note: This does not establish a connection. Call {@link #connect()} before
      * fetching messages.</p>
      *
-     * @param email       the Gmail address
-     * @param appPassword the app password (not the account password)
-     * @throws IllegalArgumentException if email or appPassword is null/blank
+     * @param email         the Gmail address (the profile's email for recipient matching)
+     * @param catchallEmail the catchall email used for IMAP authentication
+     * @param appPassword   the app password (not the account password)
+     * @throws IllegalArgumentException if any argument is null or blank
      */
     public GmailClient(String email, String catchallEmail, String appPassword) {
         if (email == null || email.isBlank()) {
@@ -87,14 +124,19 @@ public class GmailClient implements AutoCloseable {
     /**
      * Establishes a connection to Gmail's IMAP server.
      *
+     * <p>This method is idempotent — calling it on an already-connected client
+     * is a no-op. Acquires the write lock to ensure exclusive access during
+     * connection setup.</p>
+     *
      * @throws GmailClientException if connection or authentication fails
      */
     public void connect() throws GmailClientException {
-        if (connected) {
-            return;
-        }
-
+        connectionLock.writeLock().lock();
         try {
+            if (connected) {
+                return;
+            }
+
             Properties props = new Properties();
             props.put("mail.store.protocol", "imaps");
             props.put("mail.imaps.host", GMAIL_IMAP_HOST);
@@ -107,48 +149,68 @@ public class GmailClient implements AutoCloseable {
             store.connect(GMAIL_IMAP_HOST, GMAIL_IMAP_PORT, catchallEmail, appPassword);
 
             connected = true;
-            System.out.println("[GmailClient] Connected to Gmail IMAP on " + catchallEmail + " for: " + email);
 
         } catch (AuthenticationFailedException e) {
             throw new GmailClientException("Authentication failed. Check email and app password.", e);
         } catch (MessagingException e) {
             throw new GmailClientException("Failed to connect to Gmail IMAP server.", e);
+        } finally {
+            connectionLock.writeLock().unlock();
         }
     }
 
     /**
      * Disconnects from the Gmail IMAP server.
+     *
+     * <p>Acquires the write lock to ensure no fetches are in progress
+     * when the store is closed. Safe to call multiple times.</p>
      */
     public void disconnect() {
-        if (!connected || store == null) {
-            return;
-        }
-
+        connectionLock.writeLock().lock();
         try {
-            store.close();
-            System.out.println("[GmailClient] Disconnected from Gmail IMAP");
-        } catch (MessagingException e) {
-            System.err.println("[GmailClient] Error during disconnect: " + e.getMessage());
+            if (!connected || store == null) {
+                return;
+            }
+
+            try {
+                store.close();
+            } catch (MessagingException e) {
+                System.err.println("[GmailClient] Error during disconnect: " + e.getMessage());
+            } finally {
+                connected = false;
+                store = null;
+                session = null;
+            }
         } finally {
-            connected = false;
-            store = null;
-            session = null;
+            connectionLock.writeLock().unlock();
         }
     }
 
     /**
      * Checks if the client is currently connected.
      *
+     * <p>Acquires the read lock for a consistent view of connection state.</p>
+     *
      * @return true if connected to Gmail IMAP
      */
     public boolean isConnected() {
-        return connected && store != null && store.isConnected();
+        connectionLock.readLock().lock();
+        try {
+            return connected && store != null && store.isConnected();
+        } finally {
+            connectionLock.readLock().unlock();
+        }
     }
 
     // ==================== Message Fetching ====================
 
     /**
      * Fetches messages from a folder matching the specified criteria.
+     *
+     * <p>Acquires the read lock (concurrent fetches allowed) and a semaphore
+     * permit (capping concurrent folder operations at {@value #MAX_CONCURRENT_FETCHES}).
+     * If the semaphore cannot be acquired because the calling thread is interrupted,
+     * the interrupt flag is preserved and an exception is thrown.</p>
      *
      * @param folderName the folder to search (e.g., "INBOX", "Spam", "[Gmail]/All Mail")
      * @param criteria   the search criteria (can be null for all messages)
@@ -159,57 +221,31 @@ public class GmailClient implements AutoCloseable {
     public List<EmailMessage> fetchMessages(String folderName, EmailSearchCriteria criteria)
             throws GmailClientException {
 
-        ensureConnected();
+        connectionLock.readLock().lock();
+        try {
+            ensureConnected();
 
-        if (folderName == null || folderName.isBlank()) {
-            folderName = "INBOX";
-        }
-
-        List<EmailMessage> results = new ArrayList<>();
-
-        try (Folder folder = store.getFolder(folderName)) {
-            folder.open(Folder.READ_ONLY);
-
-            // Build IMAP search term
-            SearchTerm searchTerm = buildSearchTerm(criteria);
-
-            // Fetch messages
-            Message[] messages;
-            if (searchTerm != null) {
-                messages = folder.search(searchTerm);
-            } else {
-                messages = folder.getMessages();
+            if (folderName == null || folderName.isBlank()) {
+                folderName = "INBOX";
             }
 
-            System.out.println("[GmailClient] Found " + messages.length + " messages in " + folderName);
-
-            // Convert to EmailMessage and apply additional filters
-            for (Message message : messages) {
-                try {
-                    EmailMessage emailMessage = convertMessage(message);
-
-                    // Apply sender filters that IMAP can't handle natively
-                    if (matchesSenderCriteria(emailMessage, criteria) && matchesRecipientCriteria(emailMessage, criteria)) {
-                        // Apply timestamp filter (IMAP SINCE only works at day granularity)
-                        if (criteria == null || criteria.since == null ||
-                                emailMessage.receivedDate().isAfter(criteria.since) ||
-                                emailMessage.receivedDate().equals(criteria.since)) {
-                            results.add(emailMessage);
-                        }
-                    }
-                } catch (Exception e) {
-                    System.err.println("[GmailClient] Failed to parse message: " + e.getMessage());
-                }
+            // Acquire semaphore to cap concurrent folder operations
+            try {
+                fetchSemaphore.acquire();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new GmailClientException("Interrupted while waiting for fetch permit", e);
             }
 
-            // Sort by received date, newest first
-            results.sort((a, b) -> b.receivedDate().compareTo(a.receivedDate()));
+            try {
+                return executeFetch(folderName, criteria);
+            } finally {
+                fetchSemaphore.release();
+            }
 
-        } catch (MessagingException e) {
-            throw new GmailClientException("Failed to fetch messages from folder: " + folderName, e);
+        } finally {
+            connectionLock.readLock().unlock();
         }
-
-        return results;
     }
 
     /**
@@ -224,28 +260,88 @@ public class GmailClient implements AutoCloseable {
     }
 
     /**
+     * Executes the actual IMAP folder open/search/close cycle.
+     *
+     * <p>Called only while holding both the read lock and a semaphore permit.</p>
+     *
+     * @param folderName the folder to search
+     * @param criteria   the search criteria (may be null)
+     * @return list of matching messages, newest first
+     * @throws GmailClientException if the IMAP operation fails
+     */
+    private List<EmailMessage> executeFetch(String folderName, EmailSearchCriteria criteria)
+            throws GmailClientException {
+
+        List<EmailMessage> results = new ArrayList<>();
+
+        try (Folder folder = store.getFolder(folderName)) {
+            folder.open(Folder.READ_ONLY);
+
+            SearchTerm searchTerm = buildSearchTerm(criteria);
+
+            Message[] messages;
+            if (searchTerm != null) {
+                messages = folder.search(searchTerm);
+            } else {
+                messages = folder.getMessages();
+            }
+
+            for (Message message : messages) {
+                try {
+                    EmailMessage emailMessage = convertMessage(message);
+
+                    if (matchesSenderCriteria(emailMessage, criteria)
+                            && matchesRecipientCriteria(emailMessage, criteria)) {
+
+                        // Apply timestamp filter (IMAP SINCE only works at day granularity)
+                        if (criteria == null || criteria.since == null
+                                || !emailMessage.receivedDate().isBefore(criteria.since)) {
+                            results.add(emailMessage);
+                        }
+                    }
+                } catch (Exception e) {
+                    System.err.println("[GmailClient] Failed to parse message: " + e.getMessage());
+                }
+            }
+
+            results.sort((a, b) -> b.receivedDate().compareTo(a.receivedDate()));
+
+        } catch (MessagingException e) {
+            throw new GmailClientException("Failed to fetch messages from folder: " + folderName, e);
+        }
+
+        return results;
+    }
+
+    /**
      * Lists available folders in the mailbox.
      *
      * @return list of folder names
      * @throws GmailClientException if listing fails
      */
     public List<String> listFolders() throws GmailClientException {
-        ensureConnected();
-
-        List<String> folderNames = new ArrayList<>();
-
+        connectionLock.readLock().lock();
         try {
-            Folder defaultFolder = store.getDefaultFolder();
-            Folder[] folders = defaultFolder.list("*");
+            ensureConnected();
 
-            for (Folder folder : folders) {
-                folderNames.add(folder.getFullName());
+            List<String> folderNames = new ArrayList<>();
+
+            try {
+                Folder defaultFolder = store.getDefaultFolder();
+                Folder[] folders = defaultFolder.list("*");
+
+                for (Folder folder : folders) {
+                    folderNames.add(folder.getFullName());
+                }
+            } catch (MessagingException e) {
+                throw new GmailClientException("Failed to list folders", e);
             }
-        } catch (MessagingException e) {
-            throw new GmailClientException("Failed to list folders", e);
-        }
 
-        return folderNames;
+            return folderNames;
+
+        } finally {
+            connectionLock.readLock().unlock();
+        }
     }
 
     // ==================== Search Term Building ====================
@@ -261,7 +357,6 @@ public class GmailClient implements AutoCloseable {
 
         List<SearchTerm> terms = new ArrayList<>();
 
-        // Subject filter
         if (criteria.subject != null && !criteria.subject.isBlank()) {
             terms.add(new SubjectTerm(criteria.subject));
         }
@@ -270,12 +365,10 @@ public class GmailClient implements AutoCloseable {
             terms.add(new RecipientStringTerm(Message.RecipientType.TO, criteria.recipient));
         }
 
-        // Exact sender filter (IMAP can handle this)
         if (criteria.senderExact != null && !criteria.senderExact.isBlank()) {
             terms.add(new FromStringTerm(criteria.senderExact));
         }
 
-        // Since date filter (IMAP only supports day granularity)
         if (criteria.since != null) {
             Date sinceDate = Date.from(criteria.since);
             terms.add(new ReceivedDateTerm(ComparisonTerm.GE, sinceDate));
@@ -286,35 +379,29 @@ public class GmailClient implements AutoCloseable {
         }
 
         if (terms.size() == 1) {
-            return terms.get(0);
+            return terms.getFirst();
         }
 
         return new AndTerm(terms.toArray(new SearchTerm[0]));
     }
 
+    // ==================== Post-Fetch Filtering ====================
+
     /**
-     * Checks if an email matches the sender criteria.
-     * Handles domain and domain-contains matching that IMAP can't do natively.
+     * Checks if an email matches the recipient criteria.
+     * Handles exact matching that IMAP may not enforce precisely.
      */
     private boolean matchesRecipientCriteria(EmailMessage message, EmailSearchCriteria criteria) {
-        if (criteria == null) {
+        if (criteria == null || criteria.recipient == null || criteria.recipient.isBlank()) {
             return true;
         }
 
         String recipient = message.recipient();
-        System.out.println(recipient);
         if (recipient == null) {
             return false;
         }
 
-        recipient = recipient.toLowerCase();
-
-        // Exact match (already filtered by IMAP, but double-check)
-        if (criteria.recipient != null && !criteria.recipient.isBlank()) {
-            return recipient.equals(criteria.recipient.toLowerCase());
-        }
-
-        return true;
+        return recipient.equalsIgnoreCase(criteria.recipient);
     }
 
     /**
@@ -327,13 +414,11 @@ public class GmailClient implements AutoCloseable {
         }
 
         String sender = message.sender();
-        System.out.println(sender + criteria.senderExact + criteria.senderDomain);
         if (sender == null) {
             return false;
         }
 
         sender = sender.toLowerCase();
-
 
         // Exact match (already filtered by IMAP, but double-check)
         if (criteria.senderExact != null && !criteria.senderExact.isBlank()) {
@@ -375,44 +460,32 @@ public class GmailClient implements AutoCloseable {
      */
     private EmailMessage convertMessage(Message message) throws MessagingException, IOException {
         String subject = message.getSubject();
-        System.out.println(subject);
 
         Address[] toAddress = message.getRecipients(Message.RecipientType.TO);
-        String recipient = extractBetweenBrackets((toAddress != null && toAddress.length > 0)
-                ? toAddress[0].toString()
-                : null);
+        String recipient = extractBetweenBrackets(
+                (toAddress != null && toAddress.length > 0) ? toAddress[0].toString() : null);
 
-        System.out.println(recipient);
-
-        // Extract sender
         Address[] fromAddresses = message.getFrom();
         String sender = (fromAddresses != null && fromAddresses.length > 0)
                 ? extractBetweenBrackets(fromAddresses[0].toString())
                 : null;
-        System.out.println(sender);
 
-        // Extract received date
         Date receivedDate = message.getReceivedDate();
-        Instant receivedInstant = (receivedDate != null)
-                ? receivedDate.toInstant()
-                : Instant.now();
-        System.out.println(receivedInstant);
+        Instant receivedInstant = (receivedDate != null) ? receivedDate.toInstant() : Instant.now();
 
-        // Extract body content
         String htmlBody = null;
         String textBody = null;
 
         Object content = message.getContent();
 
-        if (content instanceof String) {
-            // Plain text or HTML directly
+        if (content instanceof String stringContent) {
             if (message.isMimeType("text/html")) {
-                htmlBody = (String) content;
+                htmlBody = stringContent;
             } else {
-                textBody = (String) content;
+                textBody = stringContent;
             }
-        } else if (content instanceof MimeMultipart) {
-            BodyContent bodyContent = extractBodyFromMultipart((MimeMultipart) content);
+        } else if (content instanceof MimeMultipart multipart) {
+            BodyContent bodyContent = extractBodyFromMultipart(multipart);
             htmlBody = bodyContent.html;
             textBody = bodyContent.text;
         }
@@ -436,9 +509,8 @@ public class GmailClient implements AutoCloseable {
                 text = (String) part.getContent();
             } else if (part.isMimeType("text/html") && html == null) {
                 html = (String) part.getContent();
-            } else if (part.getContent() instanceof MimeMultipart) {
-                // Recursively handle nested multipart
-                BodyContent nested = extractBodyFromMultipart((MimeMultipart) part.getContent());
+            } else if (part.getContent() instanceof MimeMultipart nestedMultipart) {
+                BodyContent nested = extractBodyFromMultipart(nestedMultipart);
                 if (nested.html != null && html == null) {
                     html = nested.html;
                 }
@@ -458,7 +530,17 @@ public class GmailClient implements AutoCloseable {
 
     // ==================== Utility Methods ====================
 
+    /**
+     * Extracts the email address from between angle brackets.
+     *
+     * <p>Given {@code "John Doe <john@example.com>"}, returns {@code "john@example.com"}.
+     * If no brackets are found, returns an empty string.</p>
+     */
     private static String extractBetweenBrackets(String input) {
+        if (input == null) {
+            return "";
+        }
+
         int start = input.indexOf('<');
         int end = input.indexOf('>');
 
@@ -466,20 +548,24 @@ public class GmailClient implements AutoCloseable {
             return input.substring(start + 1, end);
         }
 
-        return ""; // or return null, depending on your preference
+        return "";
     }
 
     /**
      * Ensures the client is connected, throwing if not.
+     *
+     * <p>Must be called while holding at least the read lock.</p>
+     *
+     * @throws IllegalStateException if not connected
      */
     private void ensureConnected() {
-        if (!isConnected()) {
+        if (!connected || store == null || !store.isConnected()) {
             throw new IllegalStateException("GmailClient is not connected. Call connect() first.");
         }
     }
 
     /**
-     * Returns the email address this client is authenticated with.
+     * Returns the profile email address this client is associated with.
      *
      * @return the email address
      */
@@ -487,6 +573,11 @@ public class GmailClient implements AutoCloseable {
         return email;
     }
 
+    /**
+     * Returns the catchall email used for IMAP authentication.
+     *
+     * @return the catchall email
+     */
     public String catchallEmail() {
         return catchallEmail;
     }
@@ -507,6 +598,7 @@ public class GmailClient implements AutoCloseable {
      * Immutable container for email message data.
      *
      * @param subject      the email subject line
+     * @param recipient    the recipient address
      * @param sender       the sender address (may include display name)
      * @param htmlBody     the HTML body content, or null if not available
      * @param textBody     the plain text body content, or null if not available
@@ -644,6 +736,12 @@ public class GmailClient implements AutoCloseable {
                 return this;
             }
 
+            /**
+             * Filters by recipient address (exact match).
+             *
+             * @param recipient the recipient email address
+             * @return this builder
+             */
             public Builder recipient(String recipient) {
                 this.recipient = recipient;
                 return this;
