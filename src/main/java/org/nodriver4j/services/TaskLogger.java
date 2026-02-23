@@ -128,6 +128,7 @@ public class TaskLogger {
      * @param message the message to display
      */
     public void log(String message) {
+        System.out.println("[" + taskId + "] " + message);
         write(message, TaskEntity.LOG_DEFAULT);
     }
 
@@ -137,6 +138,7 @@ public class TaskLogger {
      * @param message the error message to display
      */
     public void error(String message) {
+        System.out.println("[" + taskId + "] " + message);
         write(message, TaskEntity.LOG_ERROR);
     }
 
@@ -146,6 +148,7 @@ public class TaskLogger {
      * @param message the success message to display
      */
     public void success(String message) {
+        System.out.println("[" + taskId + "] " + message);
         write(message, TaskEntity.LOG_SUCCESS);
     }
 

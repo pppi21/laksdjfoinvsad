@@ -131,11 +131,17 @@ public class UberGen implements AutomationScript {
                 return;
             }
 
-        } catch (UnexpectedNavigationException | GmailClient.GmailClientException | TimeoutException e) {
-            logger.error("Attempt failed: " + e.getMessage());
-        } catch (Exception e) {
-            page.screenshot();
-            System.out.println("Unexpected error: " + e.getMessage());
+        } catch (GmailClient.GmailClientException e) {
+            logger.error("IMAP connection failed: " + e.getMessage());
+            System.err.println("[UberGen] IMAP failure for " + profile.emailAddress()
+                    + " (catchall: " + profile.catchallEmail() + "): " + e.getMessage());
+            if (e.getCause() != null) {
+                System.err.println("[UberGen] Cause: " + e.getCause());
+            }
+        } catch (UnexpectedNavigationException e) {
+            logger.error("Unexpected navigation: " + e.url());
+        } catch (TimeoutException e) {
+            logger.error("Timeout: " + e.getMessage());
         }
 
         throw new RuntimeException("Signup failed unexpectedly for: " + profile.emailAddress());
@@ -197,8 +203,14 @@ public class UberGen implements AutomationScript {
     // ==================== Email OTP ====================
 
     private void enterEmailOTP() throws GmailClient.GmailClientException {
+        String catchall = profile.catchallEmail();
+        String imap = profile.imapPassword();
+
+        logger.log("IMAP credentials — catchall: " + catchall
+                + ", password: " + (imap == null ? "NULL" : imap.length() + " chars"));
+
         try (UberOtpExtractor extractor = new UberOtpExtractor(
-                profile.emailAddress(), profile.catchallEmail(), profile.imapPassword())) {
+                profile.emailAddress(), catchall, imap)) {
 
             for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
                 try {
@@ -215,6 +227,15 @@ public class UberGen implements AutomationScript {
 
                 } catch (EmailPollingBase.EmailExtractionException | InterruptedException | TimeoutException e) {
                     logger.log("OTP attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
+                } catch (GmailClient.GmailClientException e) {
+                    logger.log("OTP attempt " + attempt + "/" + ATTEMPTS
+                            + " — IMAP error: " + e.getMessage()
+                            + (e.getCause() != null ? " [cause: " + e.getCause().getClass().getSimpleName() + "]" : ""));
+
+                    // Auth failures won't resolve by retrying with the same credentials
+                    if (e.getMessage() != null && e.getMessage().contains("Authentication failed")) {
+                        throw e;
+                    }
                 }
             }
             throw new RuntimeException("Email OTP failed: Maximum " + ATTEMPTS + " attempts reached");
