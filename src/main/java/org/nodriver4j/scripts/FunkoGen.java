@@ -10,11 +10,11 @@ import java.security.SecureRandom;
 import java.util.concurrent.TimeoutException;
 
 /**
- * Automation script for Uber Eats account generation.
+ * Automation script for Funko account generation.
  *
- * <p>Navigates to Uber Eats via Google search, signs up with the profile's
- * email address, enters the email OTP, fills in the name, accepts terms,
- * and verifies successful account creation.</p>
+ * <p>Navigates to Funko's registration page, signs up with the profile's
+ * email address, verifies the account via email link, logs in, and enters
+ * the exclusive access draw.</p>
  *
  * <h2>Lifecycle</h2>
  * <p>Instances are created by {@link ScriptRegistry} via the no-arg constructor.
@@ -63,7 +63,6 @@ public class FunkoGen implements AutomationScript {
     private static final String SPECIAL_CHARS = "!@#$%^&*";
     private static final String ALL_CHARS = UPPERCASE_CHARS + LOWERCASE_CHARS + DIGIT_CHARS + SPECIAL_CHARS;
     private static final int PASSWORD_LENGTH = 16;
-
 
     // ==================== Instance Fields ====================
 
@@ -186,24 +185,24 @@ public class FunkoGen implements AutomationScript {
     // ==================== Email Verification ====================
 
     private void fetchVerificationLink() throws GmailClient.GmailClientException {
-        GmailClient gmail = new GmailClient(profile.emailAddress(), profile.catchallEmail(), profile.imapPassword());
-        gmail.connect();
-        FunkoVerificationExtractor extractor = new FunkoVerificationExtractor(gmail);
+        try (FunkoVerificationExtractor extractor = new FunkoVerificationExtractor(
+                profile.emailAddress(), profile.catchallEmail(), profile.imapPassword())) {
 
-        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
-            try {
-                String link = extractor.extractVerificationLink(); // Polls for up to 60 seconds
-                logger.log("Retrieved email verification...");
-                page.navigate(link);
-                return;
+            for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+                try {
+                    String link = extractor.extractVerificationLink();
+                    logger.log("Retrieved email verification...");
+                    page.navigate(link);
+                    return;
 
-            } catch (EmailPollingBase.EmailExtractionException e) {
-                logger.log("Verification attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
-            } catch (TimeoutException e) {
-                throw new RuntimeException(e);
+                } catch (EmailPollingBase.EmailExtractionException e) {
+                    logger.log("Verification attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
+                } catch (TimeoutException e) {
+                    throw new RuntimeException(e);
+                }
             }
+            throw new RuntimeException("Email verification failed: Maximum " + ATTEMPTS + " attempts reached");
         }
-        throw new RuntimeException("Email verification failed: Maximum " + ATTEMPTS + " attempts reached");
     }
 
     // ==================== Login ====================
@@ -232,7 +231,7 @@ public class FunkoGen implements AutomationScript {
         throw new RuntimeException("login failed: Maximum " + ATTEMPTS + " attempts reached");
     }
 
-    // ==================== Login ====================
+    // ==================== Draw Entry ====================
 
     private void enterDraw() throws RuntimeException {
 
@@ -268,7 +267,6 @@ public class FunkoGen implements AutomationScript {
         throw new TimeoutException("Failed to fill field after " + ATTEMPTS + " attempts: " + selector);
     }
 
-
     // ==================== Utilities ====================
 
     /**
@@ -288,18 +286,15 @@ public class FunkoGen implements AutomationScript {
         SecureRandom random = new SecureRandom();
         char[] passwordChars = new char[PASSWORD_LENGTH];
 
-        // Ensure at least one of each required character type
         passwordChars[0] = UPPERCASE_CHARS.charAt(random.nextInt(UPPERCASE_CHARS.length()));
         passwordChars[1] = LOWERCASE_CHARS.charAt(random.nextInt(LOWERCASE_CHARS.length()));
         passwordChars[2] = DIGIT_CHARS.charAt(random.nextInt(DIGIT_CHARS.length()));
         passwordChars[3] = SPECIAL_CHARS.charAt(random.nextInt(SPECIAL_CHARS.length()));
 
-        // Fill remaining positions with random characters from all sets
         for (int i = 4; i < PASSWORD_LENGTH; i++) {
             passwordChars[i] = ALL_CHARS.charAt(random.nextInt(ALL_CHARS.length()));
         }
 
-        // Shuffle to randomize positions of required characters
         for (int i = PASSWORD_LENGTH - 1; i > 0; i--) {
             int j = random.nextInt(i + 1);
             char temp = passwordChars[i];

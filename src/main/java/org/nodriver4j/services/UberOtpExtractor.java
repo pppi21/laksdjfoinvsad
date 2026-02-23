@@ -17,10 +17,8 @@ import java.util.regex.Pattern;
  *
  * <h2>Usage Example</h2>
  * <pre>{@code
- * try (GmailClient gmail = new GmailClient("user@gmail.com", "catchall@gmail.com", "app-password")) {
- *     gmail.connect();
- *
- *     UberOtpExtractor extractor = new UberOtpExtractor(gmail);
+ * try (UberOtpExtractor extractor = new UberOtpExtractor(
+ *         "user@gmail.com", "catchall@gmail.com", "app-password")) {
  *
  *     // Trigger Uber to send verification email...
  *     page.click(signUpButton);
@@ -72,33 +70,27 @@ public class UberOtpExtractor extends EmailPollingBase<String> {
     // ==================== Constructors ====================
 
     /**
-     * Creates an UberOtpExtractor with default settings (5s poll, INBOX).
+     * Creates an UberOtpExtractor with default settings (5s poll interval).
      *
-     * @param gmailClient the connected GmailClient to use
+     * @param email         the profile email address (used for recipient matching)
+     * @param catchallEmail the catchall email for IMAP authentication
+     * @param appPassword   the app password for IMAP authentication
      */
-    public UberOtpExtractor(GmailClient gmailClient) {
-        super(gmailClient);
+    public UberOtpExtractor(String email, String catchallEmail, String appPassword) {
+        super(email, catchallEmail, appPassword);
     }
 
     /**
      * Creates an UberOtpExtractor with a custom poll interval.
      *
-     * @param gmailClient  the connected GmailClient to use
-     * @param pollInterval how often to check for new emails
+     * @param email         the profile email address (used for recipient matching)
+     * @param catchallEmail the catchall email for IMAP authentication
+     * @param appPassword   the app password for IMAP authentication
+     * @param pollInterval  how often to check for new emails
      */
-    public UberOtpExtractor(GmailClient gmailClient, Duration pollInterval) {
-        super(gmailClient, pollInterval);
-    }
-
-    /**
-     * Creates an UberOtpExtractor with full customization.
-     *
-     * @param gmailClient  the connected GmailClient to use
-     * @param pollInterval how often to check for new emails
-     * @param folder       the folder to search (e.g., "INBOX", "Spam")
-     */
-    public UberOtpExtractor(GmailClient gmailClient, Duration pollInterval, String folder) {
-        super(gmailClient, pollInterval, folder);
+    public UberOtpExtractor(String email, String catchallEmail, String appPassword,
+                            Duration pollInterval) {
+        super(email, catchallEmail, appPassword, pollInterval);
     }
 
     // ==================== Public API ====================
@@ -109,10 +101,10 @@ public class UberOtpExtractor extends EmailPollingBase<String> {
      * <p>Uses the default timeout of 60 seconds.</p>
      *
      * @return the 4-digit OTP code
-     * @throws EmailExtractionException if OTP cannot be extracted within timeout
-     * @throws IllegalStateException    if GmailClient is not connected
+     * @throws EmailExtractionException         if OTP cannot be extracted within timeout
+     * @throws GmailClient.GmailClientException if connection fails
      */
-    public String extractOtp() throws EmailExtractionException {
+    public String extractOtp() throws EmailExtractionException, GmailClient.GmailClientException {
         return poll();
     }
 
@@ -121,10 +113,11 @@ public class UberOtpExtractor extends EmailPollingBase<String> {
      *
      * @param timeout maximum time to wait for the OTP email
      * @return the 4-digit OTP code
-     * @throws EmailExtractionException if OTP cannot be extracted within timeout
-     * @throws IllegalStateException    if GmailClient is not connected
+     * @throws EmailExtractionException         if OTP cannot be extracted within timeout
+     * @throws GmailClient.GmailClientException if connection fails
      */
-    public String extractOtp(Duration timeout) throws EmailExtractionException {
+    public String extractOtp(Duration timeout) throws EmailExtractionException,
+            GmailClient.GmailClientException {
         return poll(timeout);
     }
 
@@ -149,28 +142,21 @@ public class UberOtpExtractor extends EmailPollingBase<String> {
         }
 
         if (body == null || body.isBlank()) {
-            System.err.println("[" + extractorName() + "] Email has no body content");
             return null;
         }
 
         // Try primary pattern
         Matcher matcher = OTP_PATTERN.matcher(body);
         if (matcher.find()) {
-            String otp = matcher.group(1);
-            System.out.println("[" + extractorName() + "] Extracted OTP using primary pattern: " + otp);
-            return otp;
+            return matcher.group(1);
         }
 
         // Try fallback pattern
-        System.out.println("[" + extractorName() + "] Primary pattern failed, trying fallback...");
         matcher = OTP_FALLBACK_PATTERN.matcher(body);
         if (matcher.find()) {
-            String otp = matcher.group(1);
-            System.out.println("[" + extractorName() + "] Extracted OTP using fallback pattern: " + otp);
-            return otp;
+            return matcher.group(1);
         }
 
-        System.err.println("[" + extractorName() + "] Could not find OTP in email body");
         return null;
     }
 

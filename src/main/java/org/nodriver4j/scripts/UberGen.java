@@ -197,28 +197,28 @@ public class UberGen implements AutomationScript {
     // ==================== Email OTP ====================
 
     private void enterEmailOTP() throws GmailClient.GmailClientException {
-        GmailClient gmail = new GmailClient(profile.emailAddress(), profile.catchallEmail(), profile.imapPassword());
-        gmail.connect();
-        UberOtpExtractor extractor = new UberOtpExtractor(gmail);
+        try (UberOtpExtractor extractor = new UberOtpExtractor(
+                profile.emailAddress(), profile.catchallEmail(), profile.imapPassword())) {
 
-        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
-            try {
-                if (attempt > 1) {
-                    page.click(EMAIL_OTP_RESEND_BUTTON);
+            for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+                try {
+                    if (attempt > 1) {
+                        page.click(EMAIL_OTP_RESEND_BUTTON);
+                        page.sleep(1500);
+                        page.click(EMAIL_OTP_RESEND_CONFIRM_BUTTON);
+                    }
+                    String otp = extractor.extractOtp();
+                    logger.log("Retrieved email OTP: " + otp);
+                    fillFormField(EMAIL_OTP_TEXT, otp, false);
                     page.sleep(1500);
-                    page.click(EMAIL_OTP_RESEND_CONFIRM_BUTTON);
-                }
-                String otp = extractor.extractOtp(); // Polls for up to 60 seconds
-                logger.log("Retrieved email OTP: " + otp);
-                fillFormField(EMAIL_OTP_TEXT, otp, false);
-                page.sleep(1500);
-                return;
+                    return;
 
-            } catch (EmailPollingBase.EmailExtractionException | InterruptedException | TimeoutException e) {
-                logger.log("OTP attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
+                } catch (EmailPollingBase.EmailExtractionException | InterruptedException | TimeoutException e) {
+                    logger.log("OTP attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
+                }
             }
+            throw new RuntimeException("Email OTP failed: Maximum " + ATTEMPTS + " attempts reached");
         }
-        throw new RuntimeException("Email OTP failed: Maximum " + ATTEMPTS + " attempts reached");
     }
 
     // ==================== Phone ====================

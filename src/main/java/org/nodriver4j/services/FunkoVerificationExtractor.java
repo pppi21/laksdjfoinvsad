@@ -17,10 +17,8 @@ import java.util.regex.Pattern;
  *
  * <h2>Usage Example</h2>
  * <pre>{@code
- * try (GmailClient gmail = new GmailClient("user@gmail.com", "catchall@gmail.com", "app-password")) {
- *     gmail.connect();
- *
- *     FunkoVerificationExtractor extractor = new FunkoVerificationExtractor(gmail);
+ * try (FunkoVerificationExtractor extractor = new FunkoVerificationExtractor(
+ *         "user@gmail.com", "catchall@gmail.com", "app-password")) {
  *
  *     // Trigger Funko to send verification email...
  *     page.click(createAccountButton);
@@ -80,33 +78,27 @@ public class FunkoVerificationExtractor extends EmailPollingBase<String> {
     // ==================== Constructors ====================
 
     /**
-     * Creates a FunkoVerificationExtractor with default settings (5s poll, INBOX).
+     * Creates a FunkoVerificationExtractor with default settings (5s poll interval).
      *
-     * @param gmailClient the connected GmailClient to use
+     * @param email         the profile email address (used for recipient matching)
+     * @param catchallEmail the catchall email for IMAP authentication
+     * @param appPassword   the app password for IMAP authentication
      */
-    public FunkoVerificationExtractor(GmailClient gmailClient) {
-        super(gmailClient);
+    public FunkoVerificationExtractor(String email, String catchallEmail, String appPassword) {
+        super(email, catchallEmail, appPassword);
     }
 
     /**
      * Creates a FunkoVerificationExtractor with a custom poll interval.
      *
-     * @param gmailClient  the connected GmailClient to use
-     * @param pollInterval how often to check for new emails
+     * @param email         the profile email address (used for recipient matching)
+     * @param catchallEmail the catchall email for IMAP authentication
+     * @param appPassword   the app password for IMAP authentication
+     * @param pollInterval  how often to check for new emails
      */
-    public FunkoVerificationExtractor(GmailClient gmailClient, Duration pollInterval) {
-        super(gmailClient, pollInterval);
-    }
-
-    /**
-     * Creates a FunkoVerificationExtractor with full customization.
-     *
-     * @param gmailClient  the connected GmailClient to use
-     * @param pollInterval how often to check for new emails
-     * @param folder       the folder to search (e.g., "INBOX", "Spam")
-     */
-    public FunkoVerificationExtractor(GmailClient gmailClient, Duration pollInterval, String folder) {
-        super(gmailClient, pollInterval, folder);
+    public FunkoVerificationExtractor(String email, String catchallEmail, String appPassword,
+                                      Duration pollInterval) {
+        super(email, catchallEmail, appPassword, pollInterval);
     }
 
     // ==================== Public API ====================
@@ -117,10 +109,11 @@ public class FunkoVerificationExtractor extends EmailPollingBase<String> {
      * <p>Uses the default timeout of 60 seconds.</p>
      *
      * @return the verification URL
-     * @throws EmailExtractionException if the link cannot be extracted within timeout
-     * @throws IllegalStateException    if GmailClient is not connected
+     * @throws EmailExtractionException         if the link cannot be extracted within timeout
+     * @throws GmailClient.GmailClientException if connection fails
      */
-    public String extractVerificationLink() throws EmailExtractionException {
+    public String extractVerificationLink() throws EmailExtractionException,
+            GmailClient.GmailClientException {
         return poll();
     }
 
@@ -129,10 +122,11 @@ public class FunkoVerificationExtractor extends EmailPollingBase<String> {
      *
      * @param timeout maximum time to wait for the verification email
      * @return the verification URL
-     * @throws EmailExtractionException if the link cannot be extracted within timeout
-     * @throws IllegalStateException    if GmailClient is not connected
+     * @throws EmailExtractionException         if the link cannot be extracted within timeout
+     * @throws GmailClient.GmailClientException if connection fails
      */
-    public String extractVerificationLink(Duration timeout) throws EmailExtractionException {
+    public String extractVerificationLink(Duration timeout) throws EmailExtractionException,
+            GmailClient.GmailClientException {
         return poll(timeout);
     }
 
@@ -156,28 +150,21 @@ public class FunkoVerificationExtractor extends EmailPollingBase<String> {
         }
 
         if (body == null || body.isBlank()) {
-            System.err.println("[" + extractorName() + "] Email has no body content");
             return null;
         }
 
         // Try primary pattern (trk.send.funko.com domain)
         Matcher matcher = VERIFICATION_LINK_PATTERN.matcher(body);
         if (matcher.find()) {
-            String url = matcher.group(1);
-            System.out.println("[" + extractorName() + "] Extracted verification link using primary pattern: " + url);
-            return url;
+            return matcher.group(1);
         }
 
         // Try fallback pattern (any domain with VERIFY ACCOUNT text)
-        System.out.println("[" + extractorName() + "] Primary pattern failed, trying fallback...");
         matcher = VERIFICATION_LINK_FALLBACK_PATTERN.matcher(body);
         if (matcher.find()) {
-            String url = matcher.group(1);
-            System.out.println("[" + extractorName() + "] Extracted verification link using fallback pattern: " + url);
-            return url;
+            return matcher.group(1);
         }
 
-        System.err.println("[" + extractorName() + "] Could not find verification link in email body");
         return null;
     }
 
