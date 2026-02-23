@@ -18,6 +18,7 @@ import org.nodriver4j.persistence.entity.ProxyEntity;
 import org.nodriver4j.persistence.entity.TaskEntity;
 import org.nodriver4j.persistence.entity.TaskGroupEntity;
 import org.nodriver4j.persistence.repository.*;
+import org.nodriver4j.scripts.ScriptRegistry;
 import org.nodriver4j.services.ScreencastService;
 import org.nodriver4j.services.TaskExecutionService;
 import org.nodriver4j.ui.components.TaskRow;
@@ -725,7 +726,7 @@ public class TaskGroupDetailController implements Initializable {
             if (groupOpt.isPresent()) {
                 TaskGroupEntity group = groupOpt.get();
                 groupNameLabel.setText(group.name());
-                scriptNameLabel.setText(group.scriptName());
+                scriptNameLabel.setText(ScriptRegistry.displayName(group.scriptName()));
             } else {
                 System.err.println("[TaskGroupDetailController] Group not found: " + groupId);
                 groupNameLabel.setText("Unknown Group");

@@ -8,6 +8,7 @@ import javafx.scene.paint.Color;
 import javafx.stage.Modality;
 import javafx.stage.StageStyle;
 import javafx.stage.Window;
+import org.nodriver4j.scripts.ScriptRegistry;
 
 import java.util.List;
 
@@ -42,17 +43,6 @@ import java.util.List;
  * }</pre>
  */
 public class CreateTaskGroupDialog extends Dialog<CreateTaskGroupDialog.TaskGroupData> {
-
-    // ==================== Available Scripts ====================
-
-    /**
-     * Hardcoded list of available automation scripts.
-     * Future: Load from service layer or configuration.
-     */
-    private static final List<String> AVAILABLE_SCRIPTS = List.of(
-            "UberGen",
-            "FunkoGen"
-    );
 
     // ==================== UI Components ====================
 
@@ -123,7 +113,7 @@ public class CreateTaskGroupDialog extends Dialog<CreateTaskGroupDialog.TaskGrou
             if (buttonType == createButtonType) {
                 return new TaskGroupData(
                         nameField.getText().trim(),
-                        scriptComboBox.getValue()
+                        ScriptRegistry.internalName(scriptComboBox.getValue())
                 );
             }
             return null;
@@ -183,7 +173,7 @@ public class CreateTaskGroupDialog extends Dialog<CreateTaskGroupDialog.TaskGrou
 
     private ComboBox<String> createScriptComboBox() {
         ComboBox<String> comboBox = new ComboBox<>();
-        comboBox.getItems().addAll(AVAILABLE_SCRIPTS);
+        comboBox.getItems().addAll(ScriptRegistry.displayNames());
         comboBox.setPromptText("Select a script...");
         comboBox.setPrefHeight(40);
         comboBox.setMaxWidth(Double.MAX_VALUE);

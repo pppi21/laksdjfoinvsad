@@ -1,6 +1,7 @@
 package org.nodriver4j.ui.components;
 
 import javafx.scene.control.Label;
+import org.nodriver4j.scripts.ScriptRegistry;
 
 /**
  * A card component that displays task group information.
@@ -77,7 +78,7 @@ public class TaskGroupCard extends GroupCard {
         getStyleClass().add("task-group-card");
 
         // ---- Content area: script name ----
-        scriptLabel = new Label(scriptName);
+        scriptLabel = new Label(ScriptRegistry.displayName(scriptName));
         scriptLabel.getStyleClass().add("group-card-subtitle");
         contentBox().getChildren().add(scriptLabel);
 
@@ -142,7 +143,7 @@ public class TaskGroupCard extends GroupCard {
      */
     public void setScriptName(String script) {
         this.scriptName = script;
-        scriptLabel.setText(script);
+        scriptLabel.setText(ScriptRegistry.displayName(script));
     }
 
     // ==================== Getters ====================
