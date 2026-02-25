@@ -1,6 +1,6 @@
 # Task Manager (Startup page)
-This page handles Task group creation. The distinction between task groups is 
-their name and the script they're running. A simple shell UI has already been 
+This page handles Task group creation. The distinction between task groups is
+their name and the script they're running. A simple shell UI has already been
 made for this page.
 ## Task Group Page
     This page can be accessed by clicking on any group in the task manager. 
@@ -35,7 +35,7 @@ made for this page.
     status, and proxy info) that displays live log messages from the
     backend. As automation events unfold during a browser session, the
     script pushes short log messages to the UI. Only the most recent
-    message is shown at any time — there is no scrollback or history.
+    message is shown at any time â€” there is no scrollback or history.
 
     The font size should be comparable to the task name/email for easy
     readability. Log messages support three color states:
@@ -51,14 +51,14 @@ made for this page.
     remains visible until the task is started again.
 
     Button order (left to right):
-    1. Start/Stop â€” Toggles between play and stop icons. Start launches the
+    1. Start/Stop Ã¢â‚¬â€ Toggles between play and stop icons. Start launches the
        automation script; stop terminates it.
-    2. View Browser / Manual Browser â€” These share the same slot:
+    2. View Browser / Manual Browser Ã¢â‚¬â€ These share the same slot:
        - View Browser (eye icon): Only visible while a task is running. Opens a
          read-only window that streams the headless browser's visual output so the
          user can observe what the automation is doing without making the browser
          headed. The user cannot interact with the page or close the browser through
-         this window â€” it is purely a visual debugging/monitoring tool. The icon
+         this window Ã¢â‚¬â€ it is purely a visual debugging/monitoring tool. The icon
          toggles to a crossed-out eye while the view window is open.
        - Manual Browser (Chrome icon): Only visible while the task is NOT running.
          Opens a fully headed browser session with all the same characteristics as
@@ -66,11 +66,11 @@ made for this page.
          automation script running. Sets the task status to MANUAL, which greys
          out the Chrome icon and shows the Stop button to close the session.
          Closing the manual browser returns the task to STOPPED status.
-    3. Clone â€” Makes an identical copy of the task and appends it to the task list.
-    4. Edit â€” Triggers a popup similar to the task creation dialog, but only allows
+    3. Clone Ã¢â‚¬â€ Makes an identical copy of the task and appends it to the task list.
+    4. Edit Ã¢â‚¬â€ Triggers a popup similar to the task creation dialog, but only allows
        a single profile to be selected and lets the user enter a new proxy as a
        string. The user can also set a custom status string.
-    5. Delete â€” Removes the task with an inline confirmation (Yes/No).
+    5. Delete Ã¢â‚¬â€ Removes the task with an inline confirmation (Yes/No).
 
     One key feature that we need to adjust our backend to support is preserving the
     browser userdata until a task is deleted. The user should be able to stop a browser
@@ -82,8 +82,8 @@ made for this page.
 This page allow the user to create proxy groups. The page will be formatted
 the exact same way as Task Manager, but some features will be different.
 One difference will be the popup that appears after the plus button. Obviously
-the user will choose a name for the group. Instead of choosing a script, the user 
-will choose a .txt file with one proxy per line. The user can also select which 
+the user will choose a name for the group. Instead of choosing a script, the user
+will choose a .txt file with one proxy per line. The user can also select which
 format his proxies are in (e.g. host:port:user:pass or user:pass@host:port).
 Just like task manager, the groups can be deleted from the manager page.
 The primary architectural difference between Task Manager and Proxy manager is
@@ -174,7 +174,7 @@ depending on the task's status.
 - Active icon: EYE_SLASH (shown while the view window is open)
 - Color: #389deb (blue) for both icons
 - Action: Opens a read-only window that streams the headless browser's
-  visual output in real time. This is a monitoring/debugging tool â€” the
+  visual output in real time. This is a monitoring/debugging tool Ã¢â‚¬â€ the
   user can see exactly what the automation script is doing on the page.
   The window does NOT make the browser headed. The user cannot click any
   elements on the page, interact with form fields, or close the browser
@@ -190,12 +190,12 @@ depending on the task's status.
 - Action: Opens a fully headed (visible) browser session using the same
   proxy, fingerprint, and userdata directory as the scripted task, but
   without the automation script running. This lets the user manually
-  interact with sites using the task's identity â€” useful for manual
+  interact with sites using the task's identity Ã¢â‚¬â€ useful for manual
   account setup, debugging login issues, or verifying cookies. On click
   the task status changes to MANUAL.
 - Enabled: Only while the task is NOT running and NOT already in manual
   mode. Hidden when the task status is RUNNING. Visible but disabled
-  (greyed out) when the task status is MANUAL â€” the Chrome icon stays
+  (greyed out) when the task status is MANUAL Ã¢â‚¬â€ the Chrome icon stays
   visible to indicate a manual session is active, but cannot be clicked.
   The Stop button (slot 1) is used to close the manual browser instead.
 
@@ -206,10 +206,10 @@ depending on the task's status.
 - When a task transitions to MANUAL: the View Browser button stays hidden,
   the Manual Browser button remains visible but is disabled (greyed out),
   and the Start/Stop button shows the Stop icon.
-- When a task transitions from RUNNING â†’ STOPPED: the View Browser button
+- When a task transitions from RUNNING Ã¢â€ â€™ STOPPED: the View Browser button
   is hidden, the Manual Browser button becomes visible and enabled, and
   any active view browser state is reset.
-- When a task transitions from MANUAL â†’ STOPPED: the Manual Browser button
+- When a task transitions from MANUAL Ã¢â€ â€™ STOPPED: the Manual Browser button
   is re-enabled (no longer greyed out) and the Start/Stop button shows the
   Play icon.
 
@@ -223,7 +223,7 @@ depending on the task's status.
   directory, and no custom status. It is effectively a new task that
   shares the same configuration.
 - Enabled: Always, regardless of task status. Cloning a running task
-  does not clone the running state â€” the new task starts idle.
+  does not clone the running state Ã¢â‚¬â€ the new task starts idle.
 
 ## 4. Edit
 - Icon: EDIT
@@ -236,8 +236,8 @@ depending on the task's status.
   2. Set a custom status string (max 20 characters) that displays to the
      right of the task name/email in the row. Useful for tagging tasks
      with notes like "OTP needed" or "Verified".
-  The edit dialog does NOT allow changing the profile â€” that is fixed at
-  task creation time.
+     The edit dialog does NOT allow changing the profile Ã¢â‚¬â€ that is fixed at
+     task creation time.
 - Enabled: Only while the task is NOT running or in manual mode. Disabled
   (greyed out at 30% opacity) while the task is running or in manual mode
   to prevent edits while a browser session is active.
@@ -254,8 +254,8 @@ depending on the task's status.
     deleted from disk, and the TaskRow is removed from the UI.
   - "No" (grey background): Cancels the deletion and restores the
     trash icon.
-  The delete slot has a fixed width (90px) so the Yes/No buttons do
-  not shift neighboring buttons when they appear.
+    The delete slot has a fixed width (90px) so the Yes/No buttons do
+    not shift neighboring buttons when they appear.
 - Enabled: Only while the task is NOT running or in manual mode. Disabled
   (greyed out at 30% opacity) while the task is running or in manual mode.
   If the task enters a running or manual state while the confirmation is

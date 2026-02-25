@@ -263,8 +263,9 @@ public final class PerimeterXSolver {
      * Finds the visible captcha iframe's frameId and backendNodeId using CDP DOM inspection.
      *
      * <p>PerimeterX uses a closed shadow root containing multiple iframes, only one of which
-     * is visible (has {@code display: block} in its style). This method pierces the shadow
-     * DOM to find that visible iframe.</p>
+     * is visible (has {@code display: block} in its style). This method uses the custom
+     * {@code DOM.getShadowRoot} CDP command to directly access the closed shadow root,
+     * then inspects its children to find the visible iframe.</p>
      *
      * @param page the Page containing the captcha
      * @return IframeInfo with frameId and backendNodeId, or null if not found
@@ -273,15 +274,14 @@ public final class PerimeterXSolver {
     private static IframeInfo findCaptchaIframeInfo(Page page) throws TimeoutException {
         CDPClient cdp = page.cdpClient();
 
-        // Get document root with shadow piercing
+        // Step 1: Get document root
         JsonObject docParams = new JsonObject();
-        docParams.addProperty("pierce", true);
         docParams.addProperty("depth", 0);
 
         JsonObject docResult = cdp.send("DOM.getDocument", docParams);
         int rootNodeId = docResult.getAsJsonObject("root").get("nodeId").getAsInt();
 
-        // Query for #px-captcha
+        // Step 2: Query for #px-captcha
         JsonObject queryParams = new JsonObject();
         queryParams.addProperty("nodeId", rootNodeId);
         queryParams.addProperty("selector", PX_CAPTCHA_SELECTOR);
@@ -295,43 +295,42 @@ public final class PerimeterXSolver {
 
         int captchaNodeId = queryResult.get("nodeId").getAsInt();
 
-        // Describe the node with shadow piercing to get iframe children
+        // Step 3: Get the closed shadow root directly via custom CDP command
+        JsonObject shadowParams = new JsonObject();
+        shadowParams.addProperty("nodeId", captchaNodeId);
+
+        JsonObject shadowResult = cdp.send("DOM.getShadowRoot", shadowParams);
+
+        if (!shadowResult.has("shadowRoot") || shadowResult.get("shadowRoot").isJsonNull()) {
+            System.err.println("[PerimeterXSolver] #px-captcha has no shadow root");
+            return null;
+        }
+
+        int shadowRootNodeId = shadowResult.getAsJsonObject("shadowRoot").get("nodeId").getAsInt();
+
+        // Step 4: Describe the shadow root to get its children (the iframes)
         JsonObject describeParams = new JsonObject();
-        describeParams.addProperty("nodeId", captchaNodeId);
+        describeParams.addProperty("nodeId", shadowRootNodeId);
+        describeParams.addProperty("depth", 1);
         describeParams.addProperty("pierce", true);
-        describeParams.addProperty("depth", 2);
 
         JsonObject describeResult = cdp.send("DOM.describeNode", describeParams);
 
         if (!describeResult.has("node")) {
-            System.err.println("[PerimeterXSolver] DOM.describeNode returned no node");
+            System.err.println("[PerimeterXSolver] DOM.describeNode returned no node for shadow root");
             return null;
         }
 
-        JsonObject node = describeResult.getAsJsonObject("node");
+        JsonObject shadowNode = describeResult.getAsJsonObject("node");
 
-        // Navigate to shadow root
-        if (!node.has("shadowRoots")) {
-            System.err.println("[PerimeterXSolver] #px-captcha has no shadowRoots");
-            return null;
-        }
-
-        JsonArray shadowRoots = node.getAsJsonArray("shadowRoots");
-        if (shadowRoots.isEmpty()) {
-            System.err.println("[PerimeterXSolver] shadowRoots array is empty");
-            return null;
-        }
-
-        JsonObject shadowRoot = shadowRoots.get(0).getAsJsonObject();
-
-        if (!shadowRoot.has("children")) {
+        if (!shadowNode.has("children")) {
             System.err.println("[PerimeterXSolver] Shadow root has no children");
             return null;
         }
 
-        JsonArray children = shadowRoot.getAsJsonArray("children");
+        JsonArray children = shadowNode.getAsJsonArray("children");
 
-        // Find the iframe with display: block
+        // Step 5: Find the iframe with display: block
         for (JsonElement child : children) {
             JsonObject childNode = child.getAsJsonObject();
 
@@ -347,7 +346,6 @@ public final class PerimeterXSolver {
                 continue;
             }
 
-            // Must have backendNodeId for DOM.getBoxModel
             if (!childNode.has("backendNodeId")) {
                 System.err.println("[PerimeterXSolver] Iframe missing backendNodeId");
                 continue;
