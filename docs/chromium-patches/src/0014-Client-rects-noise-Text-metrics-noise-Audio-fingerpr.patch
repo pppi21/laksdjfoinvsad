@@ -1,0 +1,397 @@
+From ad97f04e60fe98073b50baa2ff86c9ae40f36b02 Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Wed, 25 Feb 2026 22:13:41 -0800
+Subject: [PATCH 14/14] Client rects noise, Text metrics noise, Audio
+ fingerprinting, Canvas fingerprinting. All detected by fingerprinting
+ software unfortunately
+
+---
+ components/nodriver4j/nodriver4j_switches.cc  |  5 +---
+ components/nodriver4j/nodriver4j_switches.h   |  1 -
+ .../renderer_host/render_process_host_impl.cc |  1 -
+ .../blink/renderer/core/dom/document.cc       | 27 +++++++++++++++++
+ .../blink/renderer/core/dom/document.h        |  6 ++++
+ .../blink/renderer/core/dom/element.cc        | 12 ++++++++
+ third_party/blink/renderer/core/dom/range.cc  | 17 +++++++++--
+ .../renderer/core/html/canvas/text_metrics.cc | 16 ++++++++++
+ .../renderer/core/html/canvas/text_metrics.h  |  2 ++
+ .../canvas2d/base_rendering_context_2d.cc     | 16 ++++++++--
+ .../blink/renderer/modules/webaudio/BUILD.gn  |  1 +
+ .../modules/webaudio/offline_audio_context.cc | 29 +++++++++++++++++--
+ ui/gfx/geometry/quad_f.cc                     |  7 +++++
+ ui/gfx/geometry/quad_f.h                      |  4 +++
+ 14 files changed, 130 insertions(+), 14 deletions(-)
+
+diff --git a/components/nodriver4j/nodriver4j_switches.cc b/components/nodriver4j/nodriver4j_switches.cc
+index ae909de77a..9ce74adc5f 100644
+--- a/components/nodriver4j/nodriver4j_switches.cc
++++ b/components/nodriver4j/nodriver4j_switches.cc
+@@ -9,10 +9,7 @@ const char kFingerprintingClientRectsNoise[] = "fingerprinting-client-rects-nois
+ // Enable fingerprinting deception for measureText
+ const char kFingerprintingCanvasMeasureTextNoise[] = "fingerprinting-canvas-measuretext-noise";
+ 
+-// Enable fingerprinting deception for Canvas image data
+-const char kFingerprintingCanvasImageDataNoise[] = "fingerprinting-canvas-image-data-noise";
+-
+-// Specify the browser brand (e.g. "Google Chrome")
++// Specify the browser brand (e.g. "Chrome")
+ const char kFingerprintBrand[] = "fingerprint-brand";
+ 
+ // Specify the browser major version (e.g. "145")
+diff --git a/components/nodriver4j/nodriver4j_switches.h b/components/nodriver4j/nodriver4j_switches.h
+index 06822d26d2..f15b97c432 100644
+--- a/components/nodriver4j/nodriver4j_switches.h
++++ b/components/nodriver4j/nodriver4j_switches.h
+@@ -9,7 +9,6 @@ namespace switches {
+ // Bromite noise flags
+ COMPONENT_EXPORT(NODRIVER4J) extern const char kFingerprintingClientRectsNoise[];
+ COMPONENT_EXPORT(NODRIVER4J) extern const char kFingerprintingCanvasMeasureTextNoise[];
+-COMPONENT_EXPORT(NODRIVER4J) extern const char kFingerprintingCanvasImageDataNoise[];
+ 
+ // Browser brand and version
+ COMPONENT_EXPORT(NODRIVER4J) extern const char kFingerprintBrand[];
+diff --git a/content/browser/renderer_host/render_process_host_impl.cc b/content/browser/renderer_host/render_process_host_impl.cc
+index 4bc0b3dfdc..bf30c9ba3b 100644
+--- a/content/browser/renderer_host/render_process_host_impl.cc
++++ b/content/browser/renderer_host/render_process_host_impl.cc
+@@ -3720,7 +3720,6 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
+       switches::kFileUrlPathAlias,
+       switches::kFingerprintingClientRectsNoise,
+       switches::kFingerprintingCanvasMeasureTextNoise,
+-      switches::kFingerprintingCanvasImageDataNoise,
+       switches::kFingerprintBrand,
+       switches::kFingerprintBrandVersion,
+       switches::kFingerprintBrandVersionLong,
+diff --git a/third_party/blink/renderer/core/dom/document.cc b/third_party/blink/renderer/core/dom/document.cc
+index 2c45b403ad..d5fb904ad6 100644
+--- a/third_party/blink/renderer/core/dom/document.cc
++++ b/third_party/blink/renderer/core/dom/document.cc
+@@ -406,6 +406,8 @@
+ #include "third_party/blink/renderer/platform/wtf/text/text_encoding_registry.h"
+ #include "third_party/blink/renderer/platform/wtf/text/utf16.h"
+ #include "third_party/perfetto/include/perfetto/tracing/track_event_args.h"
++#include "base/command_line.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
+ 
+ namespace blink {
+ 
+@@ -1040,6 +1042,23 @@ Document::Document(const DocumentInit& initializer,
+       data_(MakeGarbageCollected<DocumentData>(GetExecutionContext())) {
+   TRACE_EVENT("blink", "Document::Document", perfetto::Flow::FromPointer(this));
+   DCHECK(agent_);
++  const base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
++  if (command_line->HasSwitch(switches::kCanvasFingerprint)) {
++    std::string seed_str = command_line->GetSwitchValueASCII(switches::kCanvasFingerprint);
++
++    std::string combined_x = seed_str + "offset_x";
++    std::string combined_y = seed_str + "offset_y";
++
++    uint32_t hash_val_x = static_cast<uint32_t>(std::hash<std::string>{}(combined_x));
++    uint32_t hash_val_y = static_cast<uint32_t>(std::hash<std::string>{}(combined_y));
++
++    double norm_x = hash_val_x / 4294967295.0 - 0.5;
++    double norm_y = hash_val_y / 4294967295.0 - 0.5;
++
++    // ±0.001 pixel offset
++    noise_factor_x_ = norm_x * 0.002;
++    noise_factor_y_ = norm_y * 0.002;
++  }
+   if (base::FeatureList::IsEnabled(features::kDelayAsyncScriptExecution) &&
+       features::kDelayAsyncScriptExecutionDelayByDefaultParam.Get()) {
+     script_runner_delayer_->Activate();
+@@ -7836,6 +7855,14 @@ int Document::GetImmediateChildFrameCreationCount() const {
+   return data_->immediate_child_frame_creation_count_;
+ }
+ 
++double Document::GetNoiseFactorX() {
++  return noise_factor_x_;
++}
++
++double Document::GetNoiseFactorY() {
++  return noise_factor_y_;
++}
++
+ DOMWindow* Document::defaultView() const {
+   return dom_window_;
+ }
+diff --git a/third_party/blink/renderer/core/dom/document.h b/third_party/blink/renderer/core/dom/document.h
+index 1142374d68..769a4b0644 100644
+--- a/third_party/blink/renderer/core/dom/document.h
++++ b/third_party/blink/renderer/core/dom/document.h
+@@ -572,6 +572,10 @@ class CORE_EXPORT Document : public ContainerNode,
+     has_xml_declaration_ = has_xml_declaration ? 1 : 0;
+   }
+ 
++  // Values for get*ClientRect fingerprint deception
++  double GetNoiseFactorX();
++  double GetNoiseFactorY();
++
+   V8VisibilityState visibilityState() const;
+   String visibilityStateAsString() const;
+   bool IsPageVisible() const;
+@@ -2839,6 +2843,8 @@ class CORE_EXPORT Document : public ContainerNode,
+   bool is_freezing_in_progress_ = false;
+ 
+   base::ElapsedTimer start_time_;
++  double noise_factor_x_ = 0;
++  double noise_factor_y_ = 0;
+ 
+   // The script runner is used to run scripts of the following scheduling types:
+   // - ScriptSchedulingType::kAsync
+diff --git a/third_party/blink/renderer/core/dom/element.cc b/third_party/blink/renderer/core/dom/element.cc
+index acff6bee19..0277c78c5b 100644
+--- a/third_party/blink/renderer/core/dom/element.cc
++++ b/third_party/blink/renderer/core/dom/element.cc
+@@ -294,6 +294,8 @@
+ #include "third_party/blink/renderer/platform/wtf/wtf_size_t.h"
+ #include "ui/accessibility/ax_mode.h"
+ #include "ui/gfx/geometry/rect_conversions.h"
++#include "base/command_line.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
+ 
+ namespace blink {
+ 
+@@ -3419,6 +3421,12 @@ DOMRectList* Element::getClientRects() {
+     GetDocument().AdjustRectForScrollAndAbsoluteZoom(rect,
+                                                      *element_layout_object);
+   }
++  const base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
++  if (command_line->HasSwitch(switches::kCanvasFingerprint)) {
++    for (auto& rect : rects) {
++      rect.Offset(GetDocument().GetNoiseFactorX(), GetDocument().GetNoiseFactorY());
++    }
++  }
+   return MakeGarbageCollected<DOMRectList>(rects);
+ }
+ 
+@@ -3465,6 +3473,10 @@ gfx::RectF Element::GetBoundingClientRectNoLifecycleUpdate() const {
+   DCHECK(element_layout_object);
+   GetDocument().AdjustRectForScrollAndAbsoluteZoom(result,
+                                                    *element_layout_object);
++  const base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
++  if (command_line->HasSwitch(switches::kCanvasFingerprint)) {
++    result.Offset(GetDocument().GetNoiseFactorX(), GetDocument().GetNoiseFactorY());
++  }
+   return result;
+ }
+ 
+diff --git a/third_party/blink/renderer/core/dom/range.cc b/third_party/blink/renderer/core/dom/range.cc
+index a9e08db4dc..7a1a28034d 100644
+--- a/third_party/blink/renderer/core/dom/range.cc
++++ b/third_party/blink/renderer/core/dom/range.cc
+@@ -67,6 +67,8 @@
+ #include "third_party/blink/renderer/platform/wtf/text/strcat.h"
+ #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
+ #include "ui/gfx/geometry/quad_f.h"
++#include "base/command_line.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
+ 
+ namespace blink {
+ 
+@@ -1655,15 +1657,24 @@ DOMRectList* Range::getClientRects() const {
+ 
+   Vector<gfx::QuadF> quads;
+   GetBorderAndTextQuads(quads);
++  const base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
++  if (command_line->HasSwitch(switches::kCanvasFingerprint)) {
++    for (gfx::QuadF& quad : quads) {
++      quad.Offset(owner_document_->GetNoiseFactorX(), owner_document_->GetNoiseFactorY());
++    }
++  }
+ 
+   return MakeGarbageCollected<DOMRectList>(quads);
+ }
+ 
+ DOMRect* Range::getBoundingClientRect() const {
+-  // TODO(crbug.com/1499981): This should be removed once synchronized scrolling
+-  // impact is understood.
+   SyncScrollAttemptHeuristic::DidAccessScrollOffset();
+-  return DOMRect::FromRectF(BoundingRect());
++  auto rect = BoundingRect();
++  const base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
++  if (command_line->HasSwitch(switches::kCanvasFingerprint)) {
++    rect.Offset(owner_document_->GetNoiseFactorX(), owner_document_->GetNoiseFactorY());
++  }
++  return DOMRect::FromRectF(rect);
+ }
+ 
+ // TODO(editing-dev): We should make
+diff --git a/third_party/blink/renderer/core/html/canvas/text_metrics.cc b/third_party/blink/renderer/core/html/canvas/text_metrics.cc
+index 2cb886e53a..821f91ca60 100644
+--- a/third_party/blink/renderer/core/html/canvas/text_metrics.cc
++++ b/third_party/blink/renderer/core/html/canvas/text_metrics.cc
+@@ -90,6 +90,22 @@ TextMetrics::TextMetrics(const Font* font,
+   Update(font, direction, baseline, align, text, text_painter);
+ }
+ 
++void TextMetrics::Shuffle(const double factor) {
++  width_ *= (1.0 + factor);
++  actual_bounding_box_left_ *= (1.0 + factor);
++  actual_bounding_box_right_ *= (1.0 + factor);
++
++  font_bounding_box_ascent_ *= (1.0 + factor);
++  font_bounding_box_descent_ *= (1.0 + factor);
++  actual_bounding_box_ascent_ *= (1.0 + factor);
++  actual_bounding_box_descent_ *= (1.0 + factor);
++  em_height_ascent_ *= (1.0 + factor);
++  em_height_descent_ *= (1.0 + factor);
++  baselines_->setAlphabetic(baselines_->alphabetic() * (1.0 + factor));
++  baselines_->setHanging(baselines_->hanging() * (1.0 + factor));
++  baselines_->setIdeographic(baselines_->ideographic() * (1.0 + factor));
++}
++
+ void TextMetrics::Update(const Font* font,
+                          const TextDirection& direction,
+                          const V8CanvasTextBaseline::Enum baseline,
+diff --git a/third_party/blink/renderer/core/html/canvas/text_metrics.h b/third_party/blink/renderer/core/html/canvas/text_metrics.h
+index 3d2c354897..7b3147047c 100644
+--- a/third_party/blink/renderer/core/html/canvas/text_metrics.h
++++ b/third_party/blink/renderer/core/html/canvas/text_metrics.h
+@@ -110,6 +110,8 @@ class CORE_EXPORT TextMetrics final : public ScriptWrappable {
+     float x_position_;
+   };
+ 
++  void Shuffle(const double factor);
++
+  private:
+   void Update(const Font*,
+               const TextDirection& direction,
+diff --git a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc
+index 77c0269c0d..fba8bc13d3 100644
+--- a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc
++++ b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc
+@@ -1151,8 +1151,6 @@ void BaseRenderingContext2D::DrawTextInternal(
+ }
+ 
+ TextMetrics* BaseRenderingContext2D::measureText(const String& text) {
+-  // The style resolution required for fonts is not available in frame-less
+-  // documents.
+   HTMLCanvasElement* canvas = HostAsHTMLCanvasElement();
+ 
+   if (canvas) {
+@@ -1173,9 +1171,21 @@ TextMetrics* BaseRenderingContext2D::measureText(const String& text) {
+   TextDirection direction =
+       ToTextDirection(state.GetDirection(), host, computed_style);
+ 
+-  return MakeGarbageCollected<TextMetrics>(
++  TextMetrics* text_metrics = MakeGarbageCollected<TextMetrics>(
+       font, direction, state.GetTextBaseline(), state.GetTextAlign(), text,
+       host->GetPlainTextPainter());
++
++  const base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
++  if (command_line->HasSwitch(switches::kCanvasFingerprint) && text.length() > 0) {
++    std::string seed_str = command_line->GetSwitchValueASCII(switches::kCanvasFingerprint);
++    std::string combined = seed_str + "measuretext_noise";
++    uint32_t hash_val = static_cast<uint32_t>(std::hash<std::string>{}(combined));
++    double norm = (hash_val / 4294967295.0) - 0.5;
++    double noise = norm * 0.00001;
++    text_metrics->Shuffle(noise);
++  }
++
++  return text_metrics;
+ }
+ 
+ String BaseRenderingContext2D::lang() const {
+diff --git a/third_party/blink/renderer/modules/webaudio/BUILD.gn b/third_party/blink/renderer/modules/webaudio/BUILD.gn
+index 98967bedda..91cef78202 100644
+--- a/third_party/blink/renderer/modules/webaudio/BUILD.gn
++++ b/third_party/blink/renderer/modules/webaudio/BUILD.gn
+@@ -189,6 +189,7 @@ blink_modules_sources("webaudio") {
+     sources += [ "cpu/arm/oscillator_kernel_neon.cc" ]
+   }
+   deps = [
++    "//components/nodriver4j:nodriver4j_switches",
+     "//services/metrics/public/cpp:ukm_builders",
+     "//third_party/blink/renderer/modules/mediastream",
+     "//third_party/blink/renderer/modules/peerconnection",
+diff --git a/third_party/blink/renderer/modules/webaudio/offline_audio_context.cc b/third_party/blink/renderer/modules/webaudio/offline_audio_context.cc
+index 6b51eee83a..38a8c30e6c 100644
+--- a/third_party/blink/renderer/modules/webaudio/offline_audio_context.cc
++++ b/third_party/blink/renderer/modules/webaudio/offline_audio_context.cc
+@@ -48,6 +48,8 @@
+ #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
+ #include "third_party/blink/renderer/platform/wtf/math_extras.h"
+ #include "third_party/blink/renderer/platform/wtf/text/strcat.h"
++#include "base/command_line.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
+ 
+ namespace blink {
+ 
+@@ -159,6 +161,29 @@ OfflineAudioContext* OfflineAudioContext::Create(
+                 options->sampleRate(), render_quantum_frames, exception_state);
+ }
+ 
++// Generate a deterministic frame count adjustment based on the audio fingerprint seed
++static uint32_t GetAudioNoiseFrames(uint32_t number_of_frames) {
++  const base::CommandLine* command_line =
++      base::CommandLine::ForCurrentProcess();
++  if (!command_line->HasSwitch(switches::kAudioFingerprint))
++    return 0;
++
++  std::string seed_str =
++      command_line->GetSwitchValueASCII(switches::kAudioFingerprint);
++  if (seed_str.empty())
++    return 0;
++
++  std::string combined = seed_str + std::to_string(number_of_frames) + "audio";
++  uint32_t hash = static_cast<uint32_t>(std::hash<std::string>{}(combined));
++
++  // Noise is 1 to min(1% of frames, 1000)
++  uint32_t one_percent = number_of_frames / 100;
++  if (one_percent < 1) one_percent = 1;
++
++  uint32_t noise_limit = std::min(one_percent, 1000u);
++  return (hash % noise_limit) + 1;
++}
++
+ OfflineAudioContext::OfflineAudioContext(LocalDOMWindow* window,
+                                          unsigned number_of_channels,
+                                          uint32_t number_of_frames,
+@@ -168,9 +193,9 @@ OfflineAudioContext::OfflineAudioContext(LocalDOMWindow* window,
+     : BaseAudioContext(window,
+                        ContextType::kOfflineContext,
+                        render_quantum_frames),
+-      total_render_frames_(number_of_frames) {
++      total_render_frames_(number_of_frames + GetAudioNoiseFrames(number_of_frames)) {
+   destination_node_ = OfflineAudioDestinationNode::Create(
+-      this, number_of_channels, number_of_frames, sample_rate);
++      this, number_of_channels, total_render_frames_, sample_rate);
+   Initialize();
+ }
+ 
+diff --git a/ui/gfx/geometry/quad_f.cc b/ui/gfx/geometry/quad_f.cc
+index b6306c2cc5..abcd4abca5 100644
+--- a/ui/gfx/geometry/quad_f.cc
++++ b/ui/gfx/geometry/quad_f.cc
+@@ -137,6 +137,13 @@ void QuadF::Scale(float x_scale, float y_scale) {
+   p4_.Scale(x_scale, y_scale);
+ }
+ 
++void QuadF::Offset(float x_offset, float y_offset) {
++  p1_.Offset(x_offset, y_offset);
++  p2_.Offset(x_offset, y_offset);
++  p3_.Offset(x_offset, y_offset);
++  p4_.Offset(x_offset, y_offset);
++}
++
+ void QuadF::operator+=(const Vector2dF& rhs) {
+   p1_ += rhs;
+   p2_ += rhs;
+diff --git a/ui/gfx/geometry/quad_f.h b/ui/gfx/geometry/quad_f.h
+index c9d21e3519..cd2df6d509 100644
+--- a/ui/gfx/geometry/quad_f.h
++++ b/ui/gfx/geometry/quad_f.h
+@@ -106,6 +106,10 @@ class COMPONENT_EXPORT(GEOMETRY) QuadF {
+   // Scale each point in the quad by the scale factors along each axis.
+   void Scale(float x_scale, float y_scale);
+ 
++  // Offset each point in the quad by the offset values.
++  void Offset(float offset) { Offset(offset, offset); }
++  void Offset(float x_offset, float y_offset);
++
+   // Tests whether any part of the rectangle intersects with this quad.
+   // This only works for convex quads.
+   // This intersection is edge-inclusive and will return true even if the
+-- 
+2.45.1.windows.1
+

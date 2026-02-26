@@ -1157,7 +1157,6 @@ public class Browser implements AutoCloseable {
         if (config.hasProxy()) {
             Proxy proxy = config.proxyConfig();
             args.add("--proxy-server=" + proxy.toProxyServerArg());
-            System.out.println("[Browser] Proxy configured: " + proxy);
         }
 
         // Headless mode
@@ -1189,9 +1188,18 @@ public class Browser implements AutoCloseable {
             args.addAll(customArgs);
         }
 
+        /*
+        TODO Need to add --fingerprint-device-memory, --fingerprint-brand-version,
+         --fingerprint-brand-version-long, --fingerprint-brand,
+         --fingerprint-platform, --fingerprint-platform-version
+         and more...
+         */
+
+
         // Fingerprint arguments
         if (fingerprint != null) {
-            args.add("--fingerprint=" + fingerprint.seed());
+            args.add("--canvas-fingerprint=" + fingerprint.seed());
+            args.add("--audio-fingerprint=" + fingerprint.seed());
             args.add("--fingerprint-hardware-concurrency=" + fingerprint.hardwareConcurrency());
 
             if (fingerprint.gpuVendor() != null) {
