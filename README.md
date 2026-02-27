@@ -200,7 +200,7 @@ public static int keystrokeDelay(char currentChar, Character previousChar,
 
 ## 4. IMAP Connection Pooling with Batch-Cached Fetching
 
-When dozens of automation tasks run concurrently --- each polling for its own email (OTP codes, verification links) --- the naive approach of one IMAP connection per task quickly hits Gmail's rate limits. This implementation solves the problem with a **reference-counted shared connection pool** and a **broad-fetch-then-filter-in-memory** caching strategy that collapses N IMAP operations per poll cycle into 1.
+When dozens of automation tasks run concurrently --- each polling for its own email (OTP codes, verification links) --- the approach of one IMAP connection per task quickly hits Gmail's rate limits. This implementation solves the problem with a reference-counted shared connection pool and a broad fetch-then-filter-in-memory caching strategy that collapses N IMAP operations per poll cycle into 1.
 
 The shared instance factory uses a `ConcurrentHashMap` keyed by `catchallEmail:appPassword`. Multiple extractors sharing the same catchall account receive the same `GmailClient` instance. An `AtomicInteger` tracks consumers, and the IMAP connection is closed only when the last one releases:
 
