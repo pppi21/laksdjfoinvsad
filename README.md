@@ -1,14 +1,14 @@
-# nodriver4j — Technical Deep Dive
+# nodriver4j --- Details for admissions officer
 
-A browser automation framework built from scratch in Java, paired with a custom-patched Chromium build designed to be undetectable by modern anti-bot fingerprinting services. This document highlights the most technically complex and interesting aspects of the project.
+A browser automation framework built from scratch in Java, paired with a custom-patched Chromium build designed to be undetectable by modern anti-bot fingerprinting services. These are some highlights of the project that I think demostrate technical ability and knowledge of the domain.
 
 ---
 
-## 1. Canvas Fingerprint Noise — Anti-Aliased Edge Pixel Targeting
+## 1. Canvas Fingerprint Noise --- Anti-Aliased Edge Pixel Targeting
 
-Modern fingerprinting services (BrowserScan, CreepJS, FingerprintJS) hash the pixel output of canvas draw operations to identify browsers. The naive approach — adding random noise to every pixel — is trivially detected because it disrupts the visual coherence of the image.
+Modern fingerprinting services (BrowserScan, CreepJS, FingerprintJS) hash the pixel output of canvas draw operations to identify browsers. The typical approach, adding random noise to every pixel, is trivially detected because it disrupts the visual coherence of the image.
 
-This implementation takes a fundamentally different approach: it identifies **anti-aliased transition pixels** (where neighboring pixels differ by a small amount) and applies ±1 sub-channel noise only to those edge regions. This makes the modifications visually imperceptible and statistically indistinguishable from natural rendering variance across GPUs:
+This implementation takes a fundamentally different approach: it identifies anti-aliased transition pixels (where neighboring pixels differ by a small amount) and applies ±1 sub-channel noise only to those edge regions. This makes the modifications visually imperceptible and statistically indistinguishable from natural rendering variance across GPUs:
 
 ```cpp
 // Pass 1: Identify anti-aliased edge pixels (small neighbor difference)
@@ -23,7 +23,7 @@ for (int y = 0; y < h; y++) {
             if (*current != *right) {
                 int diff = std::abs(cr - rr) + std::abs(cg - rg) + std::abs(cb - rb);
                 // Small difference = anti-aliasing zone (1-80 total across RGB)
-                // Large difference = hard edge boundary — skip
+                // Large difference = hard edge boundary --- skip
                 if (diff >= 1 && diff <= 80) {
                     is_transition = true;
                 }
@@ -51,16 +51,16 @@ int dg = ((pixel_hash >> 10) & 1) ? 1 : -1;
 int db = ((pixel_hash >> 11) & 1) ? 1 : -1;
 ```
 
-This covers all four canvas pixel extraction surfaces: `toDataURL()`, `toBlob()`, `getImageData()`, and WebGL `readPixels()` — the same seed produces the same fingerprint every time, but different seeds produce different fingerprints, enabling profile rotation.
+This covers all four canvas pixel extraction surfaces: `toDataURL()`, `toBlob()`, `getImageData()`, and WebGL `readPixels()` --- the same seed produces the same fingerprint every time, but different seeds produce different fingerprints, enabling consistent profiles between browser sessions.
 
 ---
 
-## 2. Custom CDP Command — `DOM.getShadowRoot`
+## 2. Custom CDP Command --- `DOM.getShadowRoot`
 
-Closed Shadow DOMs are intentionally inaccessible from page JavaScript (`element.shadowRoot` returns `null`). Rather than adding a non-standard property like `fakeShadowRoot` to `Element.prototype` (which would be detected by scripts that hash prototype property names), this patch adds an entirely new CDP command that operates at the DevTools protocol layer — completely invisible to page JavaScript:
+Closed Shadow DOMs are intentionally inaccessible from page JavaScript (`element.shadowRoot` returns `null`). Rather than adding a non-standard property like `fakeShadowRoot` to `Element.prototype` (which would be detected by scripts that hash prototype property names), this patch adds an entirely new CDP command that operates at the DevTools protocol layer --- completely invisible to page JavaScript:
 
 ```
-// DOM.pdl — Protocol Definition Language
+// DOM.pdl --- Protocol Definition Language
 experimental command getShadowRoot
   parameters
     optional NodeId nodeId
@@ -97,10 +97,10 @@ protocol::Response InspectorDOMAgent::getShadowRoot(
 }
 ```
 
-This means the Java automation app can access any closed Shadow DOM via a simple `CDP.send("DOM.getShadowRoot", ...)` call, with zero page-side footprint. This is used in practice to solve PerimeterX captchas, where the challenge lives inside a closed shadow root containing multiple iframes — only one of which is visible:
+This means the Java automation app can access any closed Shadow DOM via a simple `CDP.send("DOM.getShadowRoot", ...)` call, with zero page-side footprint. This is used in practice to solve PerimeterX captchas, where the challenge lives inside a closed shadow root containing multiple iframes --- only one of which contains a valid captcha:
 
 ```java
-// Java side — piercing the closed shadow root via the custom CDP command
+// Java side --- piercing the closed shadow root via the custom CDP command
 JsonObject shadowParams = new JsonObject();
 shadowParams.addProperty("nodeId", captchaNodeId);
 
@@ -121,7 +121,9 @@ JsonObject describeResult = cdp.send("DOM.describeNode", describeParams);
 
 ## 3. Fitts's Law & Bezier Curve Human Simulation
 
-Mouse movement in automation is a solved problem in the trivial sense — move from A to B. Making that movement indistinguishable from a human is not. This implementation applies **Fitts's Law**, a well-established model from human-computer interaction research, to calculate how many steps a movement path should contain based on distance and target size. Larger, closer targets get fewer steps (faster movement); smaller, distant targets get more (slower, more careful movement):
+Mouse movement in automation is a solved problem in the trivial sense --- move from A to B. Making that movement indistinguishable from a human is not. This implementation applies **Fitts's Law**, a well-established model from human-computer interaction research, to calculate how many steps a movement path should contain based on distance and target size. Larger, closer targets get fewer steps (faster movement); smaller, distant targets get more (slower, more careful movement):
+
+**Refactor of https://github.com/Xetera/ghost-cursor by the way. This was not an original idea, just a semi-unique implementation.**
 
 ```java
 /**
@@ -155,7 +157,7 @@ private static Vector calculateControlPoint(Vector start, Vector end,
 }
 ```
 
-The spread (how far control points deviate from a straight line) is clamped between 2px and 200px based on the distance — short movements are nearly straight, long movements have wide arcs. The final step count combines Fitts's Law with a speed factor:
+The spread (how far control points deviate from a straight line) is clamped between 2px and 200px based on the distance --- short movements are nearly straight, long movements have wide arcs. The final step count combines Fitts's Law with a speed factor:
 
 ```java
 double baseTime = speed * MIN_STEPS;            // speed ∈ [0, 1]
@@ -166,9 +168,9 @@ int steps = (int) Math.ceil(
 steps = Math.max(steps, MIN_STEPS);             // floor of 25 points
 ```
 
-For distant targets (>500px), the system also simulates **overshoot and correction** — the mouse moves past the target to a random point within 120px, then makes a second, tighter Bezier movement back. This mirrors a well-documented pattern in human motor control.
+For distant targets (>500px), the system also simulates **overshoot and correction** --- the mouse moves past the target to a random point within 120px, then makes a second, tighter Bezier movement back. This mirrors a well-documented pattern in human motor control.
 
-Typing simulation uses a similar depth of modeling. Keystroke delays follow a **Gaussian distribution** centered in the configured range, and timing adjusts based on character context — common English bigrams (`th`, `he`, `in`, `er`) are typed 30% faster, repeated characters 20% faster, and characters after punctuation 20% slower:
+Typing simulation uses a similar depth of modeling. Keystroke delays follow a **Gaussian distribution** centered in the configured range, and timing adjusts based on character context --- common English bigrams (`th`, `he`, `in`, `er`) are typed 30% faster, repeated characters 20% faster, and characters after punctuation 20% slower:
 
 ```java
 public static int keystrokeDelay(char currentChar, Character previousChar,
@@ -180,11 +182,11 @@ public static int keystrokeDelay(char currentChar, Character previousChar,
                            + Character.toLowerCase(currentChar);
 
         if (isCommonBigram(bigram)) {
-            multiplier = 0.7;   // 30% faster — trained muscle memory
+            multiplier = 0.7;   // 30% faster --- trained muscle memory
         } else if (previousChar == currentChar) {
-            multiplier = 0.8;   // 20% faster — finger already in position
+            multiplier = 0.8;   // 20% faster --- finger already in position
         } else if (previousChar == ' ' || isPunctuation(previousChar)) {
-            multiplier = 1.2;   // 20% slower — cognitive pause after word boundary
+            multiplier = 1.2;   // 20% slower --- cognitive pause after word boundary
         }
     }
 
@@ -198,7 +200,7 @@ public static int keystrokeDelay(char currentChar, Character previousChar,
 
 ## 4. IMAP Connection Pooling with Batch-Cached Fetching
 
-When dozens of automation tasks run concurrently — each polling for its own email (OTP codes, verification links) — the naive approach of one IMAP connection per task quickly hits Gmail's rate limits. This implementation solves the problem with a **reference-counted shared connection pool** and a **broad-fetch-then-filter-in-memory** caching strategy that collapses N IMAP operations per poll cycle into 1.
+When dozens of automation tasks run concurrently --- each polling for its own email (OTP codes, verification links) --- the naive approach of one IMAP connection per task quickly hits Gmail's rate limits. This implementation solves the problem with a **reference-counted shared connection pool** and a **broad-fetch-then-filter-in-memory** caching strategy that collapses N IMAP operations per poll cycle into 1.
 
 The shared instance factory uses a `ConcurrentHashMap` keyed by `catchallEmail:appPassword`. Multiple extractors sharing the same catchall account receive the same `GmailClient` instance. An `AtomicInteger` tracks consumers, and the IMAP connection is closed only when the last one releases:
 
@@ -238,9 +240,9 @@ public void release() {
 }
 ```
 
-Note that `connect()` and `disconnect()` are deliberately called **outside** the pool lock — network I/O under a global lock would serialize all pool operations across all accounts.
+Note that `connect()` and `disconnect()` are deliberately called **outside** the pool lock --- network I/O under a global lock would serialize all pool operations across all accounts.
 
-The batch caching layer is where the real throughput gain comes from. Instead of each extractor running its own IMAP folder-open/search/close cycle, one thread performs a broad fetch against `[Gmail]/All Mail` (no subject or sender filter — just a `since` timestamp) and caches the results with a 3-second TTL. Every other extractor that polls within that window filters the cached results in-memory using its own criteria:
+The batch caching layer is where the real throughput gain comes from. Instead of each extractor running its own IMAP folder-open/search/close cycle, one thread performs a broad fetch against `[Gmail]/All Mail` (no subject or sender filter --- just a `since` timestamp) and caches the results with a 3-second TTL. Every other extractor that polls within that window filters the cached results in-memory using its own criteria:
 
 ```java
 private List<EmailMessage> fetchFromCacheOrRefresh(EmailSearchCriteria criteria)
@@ -270,7 +272,7 @@ private List<EmailMessage> fetchFromCacheOrRefresh(EmailSearchCriteria criteria)
             broadSince = cached.since;
         }
 
-        // One broad IMAP fetch — all other threads will read from this cache
+        // One broad IMAP fetch --- all other threads will read from this cache
         fetchSemaphore.acquire();
         try {
             EmailSearchCriteria broadCriteria = broadSince != null
@@ -313,10 +315,10 @@ The full system layers **four synchronization primitives**, each solving a disti
 
 | Primitive | Purpose |
 |---|---|
-| `ReentrantReadWriteLock` | Connection lifecycle (write lock) vs concurrent fetches (read lock) — multiple threads can fetch simultaneously, but `connect()`/`disconnect()` get exclusive access |
+| `ReentrantReadWriteLock` | Connection lifecycle (write lock) vs concurrent fetches (read lock) --- multiple threads can fetch simultaneously, but `connect()`/`disconnect()` get exclusive access |
 | `Semaphore(7)` | Caps concurrent IMAP folder operations below Gmail's 15-connection limit, preventing undocumented command-rate throttling |
-| `ReentrantLock` | Serializes cache refreshes — only one thread performs the broad IMAP fetch while others wait, then all read from the fresh cache |
-| `volatile` field | Enables lock-free fast-path cache reads via double-checked locking — the common case (cache hit) requires zero synchronization overhead |
+| `ReentrantLock` | Serializes cache refreshes --- only one thread performs the broad IMAP fetch while others wait, then all read from the fresh cache |
+| `volatile` field | Enables lock-free fast-path cache reads via double-checked locking --- the common case (cache hit) requires zero synchronization overhead |
 
 The in-memory filter applies the caller's full criteria (subject substring, recipient exact match, sender domain/exact/contains, timestamp) against the cached message list, mirroring the same logic used for direct IMAP search term construction:
 
@@ -341,3 +343,6 @@ private List<EmailMessage> filterCached(List<EmailMessage> messages,
 The result: dozens of extractors polling every 5 seconds against the same catchall account produce at most one IMAP operation every 3 seconds, regardless of how many extractors are active. The shared connection, reference counting, and cache coverage tracking ensure this works correctly across varying extractor lifecycles without leaking connections or serving stale data.
 
 ---
+
+
+(styled and formatted with AI in case it matters)
