@@ -3,7 +3,7 @@ package org.nodriver4j;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
-import org.nodriver4j.cdp.CDPClient;
+import org.nodriver4j.cdp.CDPSession;
 import org.nodriver4j.core.Browser;
 import org.nodriver4j.core.BrowserConfig;
 import org.nodriver4j.core.BrowserManager;
@@ -44,7 +44,7 @@ public class CDPDiagnostics {
 
         try (Browser browser = manager.createSession()) {
             Page page = browser.page();
-            CDPClient cdp = page.cdpClient();
+            CDPSession cdp = page.cdpSession();
 
             // Navigate to a page with the captcha
             String testUrl = "https://www.wayfair.com/";
@@ -107,7 +107,7 @@ public class CDPDiagnostics {
      * Test 1: Get the frame tree to see all frames in the page.
      * We want to see if the captcha iframes appear here.
      */
-    private static void runTest1_FrameTree(CDPClient cdp) {
+    private static void runTest1_FrameTree(CDPSession cdp) {
         try {
             JsonObject result = cdp.send("Page.getFrameTree", null);
             System.out.println("Frame Tree Result:");
@@ -124,7 +124,7 @@ public class CDPDiagnostics {
      *
      * We use depth=6 to go deep enough without getting the entire page.
      */
-    private static void runTest2_DOMPierce(CDPClient cdp) {
+    private static void runTest2_DOMPierce(CDPSession cdp) {
         try {
             // First, get the document with pierce enabled
             JsonObject params = new JsonObject();
@@ -145,7 +145,7 @@ public class CDPDiagnostics {
      * Test 3: Query specifically for the #px-captcha element and describe it.
      * This will give us its nodeId which we can use for further inspection.
      */
-    private static void runTest3_QueryCaptchaNode(CDPClient cdp) {
+    private static void runTest3_QueryCaptchaNode(CDPSession cdp) {
         try {
             // First get document root
             JsonObject docParams = new JsonObject();

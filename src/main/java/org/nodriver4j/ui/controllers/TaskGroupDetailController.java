@@ -12,6 +12,7 @@ import javafx.util.Duration;
 import org.kordamp.ikonli.fontawesome5.FontAwesomeSolid;
 import org.kordamp.ikonli.javafx.FontIcon;
 import org.nodriver4j.core.Browser;
+import org.nodriver4j.core.Page;
 import org.nodriver4j.persistence.Database;
 import org.nodriver4j.persistence.entity.ProfileEntity;
 import org.nodriver4j.persistence.entity.ProxyEntity;
@@ -31,6 +32,7 @@ import org.nodriver4j.ui.windows.ViewBrowserWindow;
 import java.net.URL;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.function.Consumer;
 
 /**
  * Controller for the Task Group Detail page.
@@ -767,19 +769,44 @@ public class TaskGroupDetailController implements Initializable {
                 return;
             }
 
-            ScreencastService service = new ScreencastService(browser.cdpClient());
             ViewBrowserWindow window = new ViewBrowserWindow("View Browser — Task #" + taskId);
+
+            // Start screencast on current page
+            ScreencastService service = new ScreencastService(browser.page().cdpSession());
+            service.start(frameBytes ->
+                    Platform.runLater(() -> window.updateFrame(frameBytes))
+            );
+
+            // Listen for page switches — swap the screencast to the new page
+            Consumer<Page> pageAttachListener = newPage -> {
+                System.out.println("[TaskGroupDetailController] Page switched, swapping screencast for task #" + taskId);
+
+                ScreencastSession existing = screencastSessions.get(taskId);
+                if (existing == null) return;
+
+                // Stop old screencast
+                existing.service().stop();
+
+                // Start new screencast on the newly attached page
+                ScreencastService newService = new ScreencastService(newPage.cdpSession());
+                newService.start(frameBytes ->
+                        Platform.runLater(() -> window.updateFrame(frameBytes))
+                );
+
+                // Update the tracked session (window and listener stay the same)
+                screencastSessions.put(taskId, new ScreencastSession(
+                        newService, window, existing.pageAttachListener()
+                ));
+            };
+
+            browser.onPageAttached(pageAttachListener);
 
             window.setOnClose(() -> {
                 closeScreencastSession(taskId);
                 findTaskRow(taskId).ifPresent(r -> r.setViewBrowserActive(false));
             });
 
-            screencastSessions.put(taskId, new ScreencastSession(service, window));
-
-            service.start(frameBytes ->
-                    Platform.runLater(() -> window.updateFrame(frameBytes))
-            );
+            screencastSessions.put(taskId, new ScreencastSession(service, window, pageAttachListener));
 
             window.show();
             row.setViewBrowserActive(true);
@@ -1031,8 +1058,9 @@ public class TaskGroupDetailController implements Initializable {
     /**
      * Closes and cleans up a screencast session for a task.
      *
-     * <p>Stops the screencast service and closes the view window.
-     * Safe to call even if no session exists for the given task.</p>
+     * <p>Stops the screencast service, removes the page-attach listener
+     * from the browser, and closes the view window. Safe to call even
+     * if no session exists for the given task.</p>
      *
      * @param taskId the task ID
      */
@@ -1040,6 +1068,17 @@ public class TaskGroupDetailController implements Initializable {
         ScreencastSession session = screencastSessions.remove(taskId);
         if (session == null) {
             return;
+        }
+
+        // Remove page-attach listener from browser
+        try {
+            Browser browser = TaskExecutionService.instance().browser(taskId);
+            if (browser != null && browser.isOpen()) {
+                browser.onPageAttached(null);
+            }
+        } catch (Exception e) {
+            System.err.println("[TaskGroupDetailController] Error removing page listener for task "
+                    + taskId + ": " + e.getMessage());
         }
 
         try {
@@ -1346,5 +1385,8 @@ public class TaskGroupDetailController implements Initializable {
     /**
      * Bundles the screencast service and view window for an active session.
      */
-    private record ScreencastSession(ScreencastService service, ViewBrowserWindow window) {}
-}
+    private record ScreencastSession(
+            ScreencastService service,
+            ViewBrowserWindow window,
+            Consumer<Page> pageAttachListener
+    ) {}}

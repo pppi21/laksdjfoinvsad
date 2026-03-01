@@ -548,8 +548,8 @@ public final class InteractionOptions {
         private double paddingPercentage = 20;
 
         // Typing - defaults based on average typing speed
-        private int keystrokeDelayMin = 50;
-        private int keystrokeDelayMax = 180;
+        private int keystrokeDelayMin = 60;
+        private int keystrokeDelayMax = 260;
         private boolean contextAwareTyping = true;
         private double thinkingPauseProbability = 0.02; // 2% chance per keystroke
         private int thinkingPauseMin = 300;

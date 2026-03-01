@@ -3,7 +3,7 @@ package org.nodriver4j.captcha;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import org.nodriver4j.cdp.CDPClient;
+import org.nodriver4j.cdp.CDPSession;
 import org.nodriver4j.core.InteractionOptions;
 import org.nodriver4j.core.Page;
 import org.nodriver4j.math.BoundingBox;
@@ -272,7 +272,7 @@ public final class PerimeterXSolver {
      * @throws TimeoutException if CDP operations timeout
      */
     private static IframeInfo findCaptchaIframeInfo(Page page) throws TimeoutException {
-        CDPClient cdp = page.cdpClient();
+        CDPSession cdp = page.cdpSession();
 
         // Step 1: Get document root
         JsonObject docParams = new JsonObject();
@@ -396,7 +396,7 @@ public final class PerimeterXSolver {
         evalParams.addProperty("expression", script);
         evalParams.addProperty("returnByValue", true);
 
-        JsonObject evalResult = page.cdpClient().send("Runtime.evaluate", evalParams);
+        JsonObject evalResult = page.cdpSession().send("Runtime.evaluate", evalParams);
 
         if (!evalResult.has("result")) {
             return null;
@@ -450,7 +450,7 @@ public final class PerimeterXSolver {
         evalParams.addProperty("expression", script);
         evalParams.addProperty("returnByValue", true);
 
-        JsonObject evalResult = page.cdpClient().send("Runtime.evaluate", evalParams);
+        JsonObject evalResult = page.cdpSession().send("Runtime.evaluate", evalParams);
 
         if (!evalResult.has("result")) {
             return DEFAULT_DURATION_MS;

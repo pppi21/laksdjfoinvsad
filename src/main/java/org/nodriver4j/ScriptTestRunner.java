@@ -127,7 +127,7 @@ public class ScriptTestRunner {
         }
 
         // Create screencast service (page-level CDP client)
-        ScreencastService screencast = new ScreencastService(browser.cdpClient());
+        ScreencastService screencast = new ScreencastService(browser.page().cdpSession());
 
         // Latch to keep main thread alive until the view window is closed
         CountDownLatch windowClosed = new CountDownLatch(1);

@@ -4,7 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import org.nodriver4j.cdp.CDPClient;
+import org.nodriver4j.cdp.CDPSession;
 import org.nodriver4j.math.BoundingBox;
 import org.nodriver4j.math.HumanBehavior;
 import org.nodriver4j.math.Vector;
@@ -50,7 +50,7 @@ public class Page {
 
     private static final int DEFAULT_NAVIGATION_TIMEOUT = 30000;
 
-    private final CDPClient cdp;
+    private CDPSession cdp;
     private final String targetId;
     private final InteractionOptions options;
     private final Browser browser;
@@ -123,7 +123,7 @@ public class Page {
      * @param cdp      the CDP client connected to this page's target
      * @param targetId the target ID for this page
      */
-    public Page(CDPClient cdp, String targetId, Browser browser) {
+    public Page(CDPSession cdp, String targetId, Browser browser) {
         this(cdp, targetId, browser, InteractionOptions.defaults());
     }
 
@@ -134,7 +134,7 @@ public class Page {
      * @param targetId the target ID for this page
      * @param options  the interaction options
      */
-    public Page(CDPClient cdp, String targetId, Browser browser, InteractionOptions options) {
+    public Page(CDPSession cdp, String targetId, Browser browser, InteractionOptions options) {
         this.cdp = cdp;
         this.targetId = targetId;
         this.browser = browser;
@@ -163,22 +163,11 @@ public class Page {
     }
 
     /**
-     * Gets the CDP client for this page.
+     * Gets the CDP session for this page.
      *
-     * @return the CDP client
+     * @return the CDP session
      */
-    public CDPClient cdpClient() {
-        return cdp;
-    }
-
-    /**
-     * Gets the CDP client for this page.
-     *
-     * @return the CDP client
-     * @deprecated Use {@link #cdpClient()} instead
-     */
-    @Deprecated
-    public CDPClient getCdpClient() {
+    public CDPSession cdpSession() {
         return cdp;
     }
 
@@ -230,6 +219,35 @@ public class Page {
             cdp.send("Network.enable", null);
             networkEnabled = true;
         }
+    }
+
+    /**
+     * Wires a CDP session into this page, making it functional for automation.
+     *
+     * <p>Package-private — called by {@link Browser#attachToPage(String)} after
+     * a successful {@code Target.attachToTarget} call.</p>
+     *
+     * @param session the CDP session for this page's target
+     * @throws IllegalArgumentException if session is null
+     */
+    void attachSession(CDPSession session) {
+        if (session == null) {
+            throw new IllegalArgumentException("CDPSession cannot be null");
+        }
+        this.cdp = session;
+    }
+
+    /**
+     * Checks whether this page has an attached CDP session.
+     *
+     * <p>An unattached page is tracked by the browser but cannot execute
+     * automation commands. Call {@link Browser#attachToPage(String)} to
+     * attach it.</p>
+     *
+     * @return true if a CDP session is wired and commands can be sent
+     */
+    public boolean isAttached() {
+        return cdp != null;
     }
 
     // ==================== Selector Type Detection ====================
@@ -2099,41 +2117,113 @@ public class Page {
      * @throws TimeoutException if the operation times out
      */
     public void type(String text) throws TimeoutException {
-        Character previousChar = null;
+        type(text, 1.0);
+    }
 
-        for (int i = 0; i < text.length(); i++) {
+    /**
+     * Types text into the focused element with human-like timing, scaled by a speed multiplier.
+     *
+     * <p>For multipliers below 2.0, each character is typed individually via keyDown/keyUp
+     * events with scaled delays. For multipliers of 2.0 and above, characters are inserted
+     * in bursts via {@code Input.insertText} to reduce CDP call frequency while maintaining
+     * the correct overall typing rate.</p>
+     *
+     * <p>Burst size is determined by {@code floor(multiplier)}, and any fractional remainder
+     * is applied as additional delay scaling. For example, a multiplier of 2.4 sends 2-character
+     * bursts at 20% faster delays than a 2.0 multiplier, achieving the correct 2.4x speed.</p>
+     *
+     * <p>Special characters like newlines ({@code \n}) are never included in bursts — they
+     * flush any pending burst and are dispatched individually as Enter key presses.</p>
+     *
+     * @param text            the text to type
+     * @param speedMultiplier typing speed multiplier (e.g., 2.0 = twice as fast, 0.5 = half speed)
+     * @throws TimeoutException         if the operation times out
+     * @throws IllegalArgumentException if speedMultiplier is not positive
+     */
+    public void type(String text, double speedMultiplier) throws TimeoutException {
+        if (speedMultiplier <= 0) {
+            throw new IllegalArgumentException("speedMultiplier must be positive, got: " + speedMultiplier);
+        }
+
+        int burstSize = Math.max(1, (int) Math.floor(speedMultiplier));
+        double delayMultiplier = speedMultiplier / burstSize;
+        boolean useBurstMode = burstSize >= 2;
+
+        int scaledKeystrokeMin = Math.max(1, (int) (options.getKeystrokeDelayMin() / delayMultiplier));
+        int scaledKeystrokeMax = Math.max(scaledKeystrokeMin, (int) (options.getKeystrokeDelayMax() / delayMultiplier));
+
+        Character previousChar = null;
+        int i = 0;
+
+        while (i < text.length()) {
             char c = text.charAt(i);
 
-            // Calculate delay
+            // Calculate delay based on current character context
             int delay;
             if (options.isContextAwareTyping()) {
-                delay = HumanBehavior.keystrokeDelay(c, previousChar,
-                        options.getKeystrokeDelayMin(), options.getKeystrokeDelayMax());
+                delay = HumanBehavior.keystrokeDelay(c, previousChar, scaledKeystrokeMin, scaledKeystrokeMax);
             } else {
-                delay = HumanBehavior.keystrokeDelay(
-                        options.getKeystrokeDelayMin(), options.getKeystrokeDelayMax());
+                delay = HumanBehavior.keystrokeDelay(scaledKeystrokeMin, scaledKeystrokeMax);
             }
 
-            // Occasional thinking pause
+            // Occasional thinking pause (scaled by delay multiplier)
             int thinkingPause = HumanBehavior.thinkingPause(
                     options.getThinkingPauseProbability(),
                     options.getThinkingPauseMin(),
                     options.getThinkingPauseMax());
             if (thinkingPause > 0) {
-                sleep(thinkingPause);
+                sleep((int) Math.max(1, thinkingPause / delayMultiplier));
             }
 
-            // Type the character
-            boolean needsShift = isShiftRequired(c);
-            String key = String.valueOf(c);
-            pressKey(key, false, false, needsShift);
+            // Dispatch character(s)
+            if (c == '\n') {
+                pressKey("Enter", false, false, false);
+                previousChar = c;
+                i++;
+            } else if (useBurstMode) {
+                // Collect a burst of printable characters
+                StringBuilder burst = new StringBuilder();
+                burst.append(c);
+                int j = i + 1;
+                while (j < text.length() && burst.length() < burstSize) {
+                    char next = text.charAt(j);
+                    if (next == '\n') {
+                        break;
+                    }
+                    burst.append(next);
+                    j++;
+                }
 
+                insertText(burst.toString());
+                previousChar = burst.charAt(burst.length() - 1);
+                i = j;
+            } else {
+                // Single character mode (multiplier < 2.0)
+                boolean needsShift = isShiftRequired(c);
+                String key = String.valueOf(c);
+                pressKey(key, false, false, needsShift);
+                previousChar = c;
+                i++;
+            }
 
-            // Inter-key delay
             sleep(delay);
-
-            previousChar = c;
         }
+    }
+
+    /**
+     * Inserts text directly into the focused element via CDP's Input.insertText.
+     *
+     * <p>Unlike {@link #pressKey}, this does not dispatch individual keyDown/keyUp events.
+     * It inserts the text atomically as a single CDP call, making it suitable for
+     * burst typing where per-character key events would overwhelm the CDP connection.</p>
+     *
+     * @param text the text to insert
+     * @throws TimeoutException if the CDP call times out
+     */
+    private void insertText(String text) throws TimeoutException {
+        JsonObject params = new JsonObject();
+        params.addProperty("text", text);
+        cdp.send("Input.insertText", params);
     }
 
     /**
@@ -2249,6 +2339,8 @@ public class Page {
         String textToInsert = null;
         if (!ctrl && !alt && isPrintableCharacter(key)) {
             textToInsert = key;
+        } else if ("Enter".equals(key)) {
+            textToInsert = "\r";
         }
 
         JsonObject keyDown = new JsonObject();
@@ -2605,9 +2697,27 @@ public class Page {
      */
     public void fillFormField(String selector, String value, long preTypeDelay, long postTypeDelay)
             throws TimeoutException, InterruptedException {
+        fillFormField(selector, value, preTypeDelay, postTypeDelay, 1.0);
+    }
+
+    /**
+     * Fills a form field with click, delay, type, delay pattern at a scaled typing speed.
+     *
+     * <p>Supports both XPath and CSS selectors. XPath selectors start with "/" or "(".</p>
+     *
+     * @param selector        the XPath or CSS selector
+     * @param value           the value to type
+     * @param preTypeDelay    delay before typing (ms)
+     * @param postTypeDelay   delay after typing (ms)
+     * @param speedMultiplier typing speed multiplier (e.g., 2.0 = twice as fast)
+     * @throws TimeoutException     if the operation times out
+     * @throws InterruptedException if interrupted during sleep
+     */
+    public void fillFormField(String selector, String value, long preTypeDelay, long postTypeDelay,
+                              double speedMultiplier) throws TimeoutException, InterruptedException {
         click(selector);
         sleep(preTypeDelay);
-        type(value);
+        type(value, speedMultiplier);
         sleep(postTypeDelay);
     }
 

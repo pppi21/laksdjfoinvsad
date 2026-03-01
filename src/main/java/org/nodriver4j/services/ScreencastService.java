@@ -1,7 +1,7 @@
 package org.nodriver4j.services;
 
 import com.google.gson.JsonObject;
-import org.nodriver4j.cdp.CDPClient;
+import org.nodriver4j.cdp.CDPSession;
 
 import java.util.Base64;
 import java.util.concurrent.TimeoutException;
@@ -61,11 +61,11 @@ import java.util.function.Consumer;
  * <ul>
  *   <li>UI display or JavaFX concerns (delegated to the caller / ViewBrowserWindow)</li>
  *   <li>Task tracking or browser lifecycle (delegated to TaskExecutionService)</li>
- *   <li>CDP connection management (receives a CDPClient from the caller)</li>
+ *   <li>CDP connection management (receives a CDPSession from the caller)</li>
  *   <li>Threading to the JavaFX thread (caller wraps callback accordingly)</li>
  * </ul>
  *
- * @see CDPClient
+ * @see CDPSession
  */
 public class ScreencastService {
 
@@ -87,7 +87,7 @@ public class ScreencastService {
 
     // ==================== Instance Fields ====================
 
-    private final CDPClient cdpClient;
+    private final CDPSession cdpSession;
     private final AtomicBoolean active = new AtomicBoolean(false);
 
     /**
@@ -100,19 +100,20 @@ public class ScreencastService {
     // ==================== Constructor ====================
 
     /**
-     * Creates a new ScreencastService for the given CDP client.
+     * Creates a new ScreencastService for the given CDP session.
      *
-     * <p>The CDP client should be a <b>page-level</b> connection, since
-     * {@code Page.startScreencast} is a page domain command.</p>
+     * <p>The CDP session should target the page whose screencast
+     * is desired, since {@code Page.startScreencast} is a page
+     * domain command.</p>
      *
-     * @param cdpClient the page-level CDP client to use
-     * @throws IllegalArgumentException if cdpClient is null
+     * @param cdpSession the CDP session for the target page
+     * @throws IllegalArgumentException if cdpSession is null
      */
-    public ScreencastService(CDPClient cdpClient) {
-        if (cdpClient == null) {
-            throw new IllegalArgumentException("CDPClient cannot be null");
+    public ScreencastService(CDPSession cdpSession) {
+        if (cdpSession == null) {
+            throw new IllegalArgumentException("CDPSession cannot be null");
         }
-        this.cdpClient = cdpClient;
+        this.cdpSession = cdpSession;
     }
 
     // ==================== Start / Stop ====================
@@ -157,7 +158,7 @@ public class ScreencastService {
         // Register the frame event listener before sending the start command
         // to avoid missing the first frame
         frameListener = params -> handleFrame(params, onFrame);
-        cdpClient.addEventListener(EVENT_SCREENCAST_FRAME, frameListener);
+        cdpSession.addEventListener(EVENT_SCREENCAST_FRAME, frameListener);
 
         // Send Page.startScreencast
         JsonObject params = new JsonObject();
@@ -167,12 +168,12 @@ public class ScreencastService {
         params.addProperty("maxHeight", maxHeight);
 
         try {
-            cdpClient.send("Page.startScreencast", params);
+            cdpSession.send("Page.startScreencast", params);
             System.out.println("[ScreencastService] Started (format=" + format +
                     ", quality=" + quality + ", maxSize=" + maxWidth + "×" + maxHeight + ")");
         } catch (TimeoutException e) {
             // Roll back — remove listener and reset state
-            cdpClient.removeEventListener(EVENT_SCREENCAST_FRAME, frameListener);
+            cdpSession.removeEventListener(EVENT_SCREENCAST_FRAME, frameListener);
             frameListener = null;
             active.set(false);
             throw new RuntimeException("Failed to start screencast: " + e.getMessage(), e);
@@ -192,7 +193,7 @@ public class ScreencastService {
 
         // Remove listener first to stop processing frames immediately
         if (frameListener != null) {
-            cdpClient.removeEventListener(EVENT_SCREENCAST_FRAME, frameListener);
+            cdpSession.removeEventListener(EVENT_SCREENCAST_FRAME, frameListener);
             frameListener = null;
         }
 
@@ -200,7 +201,7 @@ public class ScreencastService {
         // removed the listener. Use sendAsync to avoid blocking if the
         // browser is closing or unresponsive.
         try {
-            cdpClient.sendAsync("Page.stopScreencast", null);
+            cdpSession.sendAsync("Page.stopScreencast", null);
             System.out.println("[ScreencastService] Stopped");
         } catch (Exception e) {
             // Non-fatal — the browser may already be closing
@@ -259,7 +260,7 @@ public class ScreencastService {
     private void acknowledgeFrame(int sessionId) {
         JsonObject ackParams = new JsonObject();
         ackParams.addProperty("sessionId", sessionId);
-        cdpClient.sendAsync("Page.screencastFrameAck", ackParams);
+        cdpSession.sendAsync("Page.screencastFrameAck", ackParams);
     }
 
     // ==================== State Queries ====================
