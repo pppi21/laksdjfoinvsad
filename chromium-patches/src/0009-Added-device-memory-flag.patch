@@ -1,0 +1,123 @@
+From ee65c320fb13642ec241107548c5e2afc1a79135 Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Tue, 24 Feb 2026 15:35:08 -0800
+Subject: [PATCH 09/18] Added device memory flag
+
+---
+ components/nodriver4j/nodriver4j_switches.cc  |  3 ++
+ components/nodriver4j/nodriver4j_switches.h   |  1 +
+ .../renderer_host/render_process_host_impl.cc |  1 +
+ .../approximated_device_memory.cc             | 52 +++++++++++++++++++
+ 4 files changed, 57 insertions(+)
+
+diff --git a/components/nodriver4j/nodriver4j_switches.cc b/components/nodriver4j/nodriver4j_switches.cc
+index 2bb52fea81..ae909de77a 100644
+--- a/components/nodriver4j/nodriver4j_switches.cc
++++ b/components/nodriver4j/nodriver4j_switches.cc
+@@ -27,6 +27,9 @@ const char kFingerprintGpuVendor[] = "fingerprint-gpu-vendor";
+ // Specify the GPU renderer string for WebGL
+ const char kFingerprintGpuRenderer[] = "fingerprint-gpu-renderer";
+ 
++// Override device memory (GB) reported to websites
++const char kFingerprintDeviceMemory[] = "fingerprint-device-memory";
++
+ // Specify the number of CPU cores for navigator.hardwareConcurrency
+ const char kFingerprintHardwareConcurrency[] = "fingerprint-hardware-concurrency";
+ 
+diff --git a/components/nodriver4j/nodriver4j_switches.h b/components/nodriver4j/nodriver4j_switches.h
+index afbf418ae2..06822d26d2 100644
+--- a/components/nodriver4j/nodriver4j_switches.h
++++ b/components/nodriver4j/nodriver4j_switches.h
+@@ -21,6 +21,7 @@ COMPONENT_EXPORT(NODRIVER4J) extern const char kFingerprintGpuVendor[];
+ COMPONENT_EXPORT(NODRIVER4J) extern const char kFingerprintGpuRenderer[];
+ 
+ // Hardware
++COMPONENT_EXPORT(NODRIVER4J) extern const char kFingerprintDeviceMemory[];
+ COMPONENT_EXPORT(NODRIVER4J) extern const char kFingerprintHardwareConcurrency[];
+ 
+ // OS spoofing
+diff --git a/content/browser/renderer_host/render_process_host_impl.cc b/content/browser/renderer_host/render_process_host_impl.cc
+index 63d55a0125..4bc0b3dfdc 100644
+--- a/content/browser/renderer_host/render_process_host_impl.cc
++++ b/content/browser/renderer_host/render_process_host_impl.cc
+@@ -3726,6 +3726,7 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
+       switches::kFingerprintBrandVersionLong,
+       switches::kFingerprintGpuVendor,
+       switches::kFingerprintGpuRenderer,
++      switches::kFingerprintDeviceMemory,
+       switches::kFingerprintHardwareConcurrency,
+       switches::kFingerprintPlatform,
+       switches::kFingerprintPlatformVersion,
+diff --git a/third_party/blink/common/device_memory/approximated_device_memory.cc b/third_party/blink/common/device_memory/approximated_device_memory.cc
+index d67deb2184..e3aabedbc9 100644
+--- a/third_party/blink/common/device_memory/approximated_device_memory.cc
++++ b/third_party/blink/common/device_memory/approximated_device_memory.cc
+@@ -8,6 +8,10 @@
+ #include "base/feature_list.h"
+ #include "base/system/sys_info.h"
+ #include "third_party/blink/public/common/features.h"
++#include "base/command_line.h"
++#include "base/strings/string_number_conversions.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
++#include "base/version_info/version_info_values.h"
+ 
+ namespace blink {
+ 
+@@ -26,6 +30,54 @@ void ApproximatedDeviceMemory::Initialize() {
+ 
+ // static
+ float ApproximatedDeviceMemory::GetApproximatedDeviceMemory() {
++  const base::CommandLine* command_line =
++      base::CommandLine::ForCurrentProcess();
++
++  if (command_line->HasSwitch(switches::kFingerprintDeviceMemory)) {
++    int raw_value = 0;
++    base::StringToInt(
++        command_line->GetSwitchValueASCII(switches::kFingerprintDeviceMemory),
++        &raw_value);
++
++    if (raw_value <= 0)
++      return approximated_device_memory_gb_;
++
++    // Determine the valid value set based on spoofed Chrome version.
++    // Pre-147: {0.25, 0.5, 1, 2, 4, 8}
++    // 147+:    {2, 4, 8, 16, 32}
++    int spoofed_version = 0;
++    if (command_line->HasSwitch(switches::kFingerprintBrandVersion)) {
++      base::StringToInt(
++          command_line->GetSwitchValueASCII(switches::kFingerprintBrandVersion),
++          &spoofed_version);
++    } else {
++      // Fall back to real Chromium major version
++      std::string product_version = PRODUCT_VERSION;
++      size_t dot = product_version.find('.');
++      if (dot != std::string::npos) {
++        base::StringToInt(product_version.substr(0, dot), &spoofed_version);
++      }
++    }
++
++    float result;
++    if (spoofed_version >= 147) {
++      const float valid[] = {2.0f, 4.0f, 8.0f, 16.0f, 32.0f};
++      result = valid[0];
++      for (float v : valid) {
++        if (v <= static_cast<float>(raw_value))
++          result = v;
++      }
++    } else {
++      const float valid[] = {0.25f, 0.5f, 1.0f, 2.0f, 4.0f, 8.0f};
++      result = valid[0];
++      for (float v : valid) {
++        if (v <= static_cast<float>(raw_value))
++          result = v;
++      }
++    }
++    return result;
++  }
++
+   return approximated_device_memory_gb_;
+ }
+ 
+-- 
+2.45.1.windows.1
+

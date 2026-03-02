@@ -1,0 +1,19 @@
+From 6ec7f95a25ca9657eb02b4d386bf2906a0ad8f1b Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Mon, 23 Feb 2026 20:56:43 -0800
+Subject: [PATCH 03/18] rename branch + runtime.enable patches
+
+---
+ v8 | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/v8 b/v8
+index d466afe35f..84cfa60d14 160000
+--- a/v8
++++ b/v8
+@@ -1 +1 @@
+-Subproject commit d466afe35f42a66b781c31ee67ae947fd10498b7
++Subproject commit 84cfa60d147a79bf81f6fd863de249fad76d9c00
+-- 
+2.45.1.windows.1
+

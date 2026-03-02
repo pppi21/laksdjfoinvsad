@@ -1,0 +1,48 @@
+From 373ba9ee1219f71f57df35a81e43f18d2fbc4978 Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Tue, 24 Feb 2026 16:14:11 -0800
+Subject: [PATCH 10/18] Hardware concurrency spoof
+
+---
+ .../frame/navigator_concurrent_hardware.cc    | 19 ++++++++++++++++++-
+ 1 file changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc b/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc
+index f5c0db2d1b..ca0498c4e1 100644
+--- a/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc
++++ b/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc
+@@ -4,12 +4,29 @@
+ 
+ #include "third_party/blink/renderer/core/frame/navigator_concurrent_hardware.h"
+ 
++#include "base/command_line.h"
++#include "base/strings/string_number_conversions.h"
+ #include "base/system/sys_info.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
+ 
+ namespace blink {
+ 
+ unsigned NavigatorConcurrentHardware::hardwareConcurrency() const {
++  const base::CommandLine* command_line =
++      base::CommandLine::ForCurrentProcess();
++
++  if (command_line->HasSwitch(switches::kFingerprintHardwareConcurrency)) {
++    unsigned value = 0;
++    if (base::StringToUint(
++            command_line->GetSwitchValueASCII(
++                switches::kFingerprintHardwareConcurrency),
++            &value) &&
++        value > 0) {
++      return value;
++    }
++  }
++
+   return static_cast<unsigned>(base::SysInfo::NumberOfProcessors());
+ }
+ 
+-}  // namespace blink
++}  // namespace blink
+\ No newline at end of file
+-- 
+2.45.1.windows.1
+

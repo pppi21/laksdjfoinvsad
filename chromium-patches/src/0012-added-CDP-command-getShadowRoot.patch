@@ -1,0 +1,93 @@
+From b0dc5063575460321007ba8221b3c7fc079c6e34 Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Tue, 24 Feb 2026 21:48:42 -0800
+Subject: [PATCH 12/18] added CDP command getShadowRoot
+
+---
+ .../public/devtools_protocol/domains/DOM.pdl  | 16 +++++++++++++
+ .../core/inspector/inspector_dom_agent.cc     | 24 +++++++++++++++++++
+ .../core/inspector/inspector_dom_agent.h      |  6 +++++
+ 3 files changed, 46 insertions(+)
+
+diff --git a/third_party/blink/public/devtools_protocol/domains/DOM.pdl b/third_party/blink/public/devtools_protocol/domains/DOM.pdl
+index e42956a998..ee91a97ba1 100644
+--- a/third_party/blink/public/devtools_protocol/domains/DOM.pdl
++++ b/third_party/blink/public/devtools_protocol/domains/DOM.pdl
+@@ -804,6 +804,22 @@ domain DOM
+       # The anchor element of the given anchor query.
+       NodeId nodeId
+ 
++  # Returns the shadow root of the given element. Unlike other methods that
++  # include shadow roots as part of a larger response, this command directly
++  # returns the shadow root node (including closed shadow roots), making it
++  # suitable for automation scenarios that need targeted shadow DOM access.
++  experimental command getShadowRoot
++    parameters
++      # Identifier of the node to get the shadow root for.
++      optional NodeId nodeId
++      # Identifier of the backend node.
++      optional BackendNodeId backendNodeId
++      # JavaScript object id of the node wrapper.
++      optional Runtime.RemoteObjectId objectId
++    returns
++      # Shadow root of the element, if any.
++      optional Node shadowRoot
++
+   # When enabling, this API force-opens the popover identified by nodeId
+   # and keeps it open until disabled.
+   experimental command forceShowPopover
+diff --git a/third_party/blink/renderer/core/inspector/inspector_dom_agent.cc b/third_party/blink/renderer/core/inspector/inspector_dom_agent.cc
+index 50b9aece86..9673ce10e5 100644
+--- a/third_party/blink/renderer/core/inspector/inspector_dom_agent.cc
++++ b/third_party/blink/renderer/core/inspector/inspector_dom_agent.cc
+@@ -2040,6 +2040,30 @@ protocol::Response InspectorDOMAgent::getAnchorElement(
+   return protocol::Response::Success();
+ }
+ 
++protocol::Response InspectorDOMAgent::getShadowRoot(
++    std::optional<int> node_id,
++    std::optional<int> backend_node_id,
++    std::optional<String> object_id,
++    std::unique_ptr<protocol::DOM::Node>* shadow_root) {
++  Node* node = nullptr;
++  protocol::Response response =
++      AssertNode(node_id, backend_node_id, object_id, node);
++  if (!response.IsSuccess())
++    return response;
++
++  auto* element = DynamicTo<Element>(node);
++  if (!element)
++    return protocol::Response::ServerError("Node is not an Element");
++
++  ShadowRoot* root = element->GetShadowRoot();
++  if (root) {
++    *shadow_root = BuildObjectForNode(root, 0, false,
++                                      document_node_to_id_map_.Get());
++  }
++
++  return protocol::Response::Success();
++}
++
+ static void HidePopover(Node* node) {
+   if (auto* element = DynamicTo<HTMLElement>(node);
+       element && element->popoverOpen()) {
+diff --git a/third_party/blink/renderer/core/inspector/inspector_dom_agent.h b/third_party/blink/renderer/core/inspector/inspector_dom_agent.h
+index 75adb64ec6..ecf47396c2 100644
+--- a/third_party/blink/renderer/core/inspector/inspector_dom_agent.h
++++ b/third_party/blink/renderer/core/inspector/inspector_dom_agent.h
+@@ -274,6 +274,12 @@ class CORE_EXPORT InspectorDOMAgent final
+                                       std::optional<String> anchor_specifier,
+                                       int* out_node_id) override;
+ 
++  protocol::Response getShadowRoot(
++      std::optional<int> node_id,
++      std::optional<int> backend_node_id,
++      std::optional<String> object_id,
++      std::unique_ptr<protocol::DOM::Node>* shadow_root) override;
++
+   protocol::Response forceShowPopover(
+       int node_id,
+       bool enable,
+-- 
+2.45.1.windows.1
+

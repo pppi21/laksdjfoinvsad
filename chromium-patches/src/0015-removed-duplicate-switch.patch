@@ -1,0 +1,24 @@
+From 92a9725d180eeb94baf61d2e8b1eab9275cbe982 Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Sun, 1 Mar 2026 16:59:17 -0800
+Subject: [PATCH 15/18] removed duplicate switch
+
+---
+ content/browser/renderer_host/render_process_host_impl.cc | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/content/browser/renderer_host/render_process_host_impl.cc b/content/browser/renderer_host/render_process_host_impl.cc
+index bf30c9ba3b..52f5ac858a 100644
+--- a/content/browser/renderer_host/render_process_host_impl.cc
++++ b/content/browser/renderer_host/render_process_host_impl.cc
+@@ -3732,7 +3732,6 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
+       switches::kCanvasFingerprint,
+       switches::kAudioFingerprint,
+       switches::kForceDeviceScaleFactor,
+-      switches::kForceDeviceScaleFactor,
+       switches::kForceDisplayColorProfile,
+       switches::kForceHighContrast,
+       switches::kForceRasterColorProfile,
+-- 
+2.45.1.windows.1
+
