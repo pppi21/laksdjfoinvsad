@@ -1,7 +1,7 @@
 From 49b79273cd76cfd36ed2e051a5120eb5901c2f1c Mon Sep 17 00:00:00 2001
 From: Leo Rodarte <leorodarte07@gmail.com>
 Date: Mon, 23 Feb 2026 20:28:56 -0800
-Subject: [PATCH 02/14] Fixed commenting syntax mistake
+Subject: [PATCH 02/17] Fixed commenting syntax mistake
 
 ---
  components/nodriver4j/BUILD.gn | 2 +-
