@@ -1,0 +1,111 @@
+From 9fe5d9472c22eb52d76b7f0aff285a3bac9c9224 Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Sun, 1 Mar 2026 20:40:15 -0800
+Subject: [PATCH 18/18] =?UTF-8?q?Stage=202=20=E2=80=94=20Timezone=20&=20Lo?=
+ =?UTF-8?q?cale=20Spoofing=20finished?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ base/i18n/icu_util.cc                         | 20 ++++++++++---------
+ components/nodriver4j/nodriver4j_switches.cc  |  3 +++
+ components/nodriver4j/nodriver4j_switches.h   |  3 +++
+ .../renderer_host/render_process_host_impl.cc |  1 +
+ 4 files changed, 18 insertions(+), 9 deletions(-)
+
+diff --git a/base/i18n/icu_util.cc b/base/i18n/icu_util.cc
+index 6e6e12089d..c202a1d80f 100644
+--- a/base/i18n/icu_util.cc
++++ b/base/i18n/icu_util.cc
+@@ -23,6 +23,7 @@
+ #include "base/files/file_util.h"
+ #include "base/files/memory_mapped_file.h"
+ #include "base/logging.h"
++#include "base/command_line.h"
+ #include "base/metrics/histogram_functions.h"
+ #include "base/metrics/metrics_hashes.h"
+ #include "base/path_service.h"
+@@ -33,6 +34,8 @@
+ #include "third_party/icu/source/common/unicode/uclean.h"
+ #include "third_party/icu/source/common/unicode/udata.h"
+ #include "third_party/icu/source/common/unicode/utrace.h"
++#include "third_party/icu/source/common/unicode/unistr.h"
++#include "third_party/icu/source/i18n/unicode/timezone.h"
+ 
+ #if BUILDFLAG(IS_ANDROID)
+ #include "base/android/apk_assets.h"
+@@ -50,15 +53,6 @@
+ #include "base/fuchsia/intl_profile_watcher.h"
+ #endif
+ 
+-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA)
+-#include "third_party/icu/source/common/unicode/unistr.h"
+-#endif
+-
+-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA) || \
+-    BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_CASTOS))
+-#include "third_party/icu/source/i18n/unicode/timezone.h"
+-#endif
+-
+ namespace base::i18n {
+ 
+ namespace {
+@@ -314,6 +308,14 @@ bool InitializeICUFromDataFile() {
+ // On some platforms, the time zone must be explicitly initialized zone rather
+ // than relying on ICU's internal initialization.
+ void InitializeIcuTimeZone() {
++  const std::string tz =
++      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
++          "fingerprint-timezone");
++  if (!tz.empty()) {
++    icu::TimeZone::adoptDefault(
++        icu::TimeZone::createTimeZone(icu::UnicodeString::fromUTF8(tz)));
++    return;
++  }
+ #if BUILDFLAG(IS_FUCHSIA)
+   // The platform-specific mechanisms used by ICU's detectHostTimeZone() to
+   // determine the default time zone will not work on Fuchsia. Therefore,
+diff --git a/components/nodriver4j/nodriver4j_switches.cc b/components/nodriver4j/nodriver4j_switches.cc
+index cfc0ab0766..0614bfd4c3 100644
+--- a/components/nodriver4j/nodriver4j_switches.cc
++++ b/components/nodriver4j/nodriver4j_switches.cc
+@@ -42,6 +42,9 @@ const char kCanvasFingerprint[] = "canvas-fingerprint";
+ // Seed for deterministic audio fingerprint noise
+ const char kAudioFingerprint[] = "audio-fingerprint";
+ 
++// Specify the IANA timezone (e.g. "America/New_York", "Asia/Tokyo")
++const char kFingerprintTimezone[] = "fingerprint-timezone";
++
+ // Screen geometry override: "width,height,availWidth,availHeight,availTop,colorDepth"
+ const char kFingerprintScreen[] = "fingerprint-screen";
+ 
+diff --git a/components/nodriver4j/nodriver4j_switches.h b/components/nodriver4j/nodriver4j_switches.h
+index ba61ff141f..e29cccce38 100644
+--- a/components/nodriver4j/nodriver4j_switches.h
++++ b/components/nodriver4j/nodriver4j_switches.h
+@@ -27,6 +27,9 @@ COMPONENT_EXPORT(NODRIVER4J) extern const char kFingerprintHardwareConcurrency[]
+ COMPONENT_EXPORT(NODRIVER4J) extern const char kFingerprintPlatform[];
+ COMPONENT_EXPORT(NODRIVER4J) extern const char kFingerprintPlatformVersion[];
+ 
++// Timezone spoofing
++COMPONENT_EXPORT(NODRIVER4J) extern const char kFingerprintTimezone[];
++
+ // Canvas and audio fingerprint seeds
+ COMPONENT_EXPORT(NODRIVER4J) extern const char kCanvasFingerprint[];
+ COMPONENT_EXPORT(NODRIVER4J) extern const char kAudioFingerprint[];
+diff --git a/content/browser/renderer_host/render_process_host_impl.cc b/content/browser/renderer_host/render_process_host_impl.cc
+index f4b35429bc..833066d90f 100644
+--- a/content/browser/renderer_host/render_process_host_impl.cc
++++ b/content/browser/renderer_host/render_process_host_impl.cc
+@@ -3731,6 +3731,7 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
+       switches::kFingerprintPlatformVersion,
+       switches::kCanvasFingerprint,
+       switches::kAudioFingerprint,
++      switches::kFingerprintTimezone,
+       switches::kFingerprintScreen,
+       switches::kFingerprintScreenPosition,
+       switches::kFingerprintHistoryLength,
+-- 
+2.45.1.windows.1
+
