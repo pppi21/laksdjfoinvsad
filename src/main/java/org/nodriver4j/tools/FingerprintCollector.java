@@ -159,7 +159,7 @@ public class FingerprintCollector {
         // Generate random number for the rand parameter (mimics browser behavior)
         double rand = random.nextDouble();
 
-        String url = API_URL + "?rand=" + rand + "&tags=Chrome,Microsoft%20Windows";
+        String url = API_URL + "?rand=" + rand;
 
         // Note: "Connection" header is restricted by Java HttpClient (managed internally)
         HttpRequest request = HttpRequest.newBuilder()
