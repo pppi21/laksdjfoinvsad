@@ -1,7 +1,7 @@
 From f8e08ed8b6387cae6d6083b7dc9e1aae65fc7a06 Mon Sep 17 00:00:00 2001
 From: Leo Rodarte <leorodarte07@gmail.com>
 Date: Tue, 24 Feb 2026 15:02:29 -0800
-Subject: [PATCH 08/17] fixed incorrect UA string
+Subject: [PATCH 08/18] fixed incorrect UA string
 
 ---
  .../embedder_support/user_agent_utils.cc       | 18 ++++--------------

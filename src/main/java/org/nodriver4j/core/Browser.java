@@ -1362,7 +1362,7 @@ public class Browser implements AutoCloseable {
         args.add("--disable-ipc-flooding-protection");
         args.add("--disable-client-side-phishing-detection");
         args.add("--disable-background-networking");
-        args.add("--disable-features=BlockThirdPartyCookies,UseEcoQoSForBackgroundProcess");
+        args.add("--disable-features=BlockThirdPartyCookies,UseEcoQoSForBackgroundProcess,ReduceAcceptLanguage,ReduceAcceptLanguageHTTP");
         args.add("--disable-hang-monitor");
         args.add("--disable-domain-reliability");
         args.add("--metrics-recording-only");

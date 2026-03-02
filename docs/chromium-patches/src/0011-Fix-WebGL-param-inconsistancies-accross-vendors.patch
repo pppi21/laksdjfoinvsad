@@ -1,7 +1,7 @@
 From 929c41ca67fea6bc7dc9126a8abd2cbbd2b96b4d Mon Sep 17 00:00:00 2001
 From: Leo Rodarte <leorodarte07@gmail.com>
 Date: Tue, 24 Feb 2026 20:00:57 -0800
-Subject: [PATCH 11/17] Fix WebGL param inconsistancies accross vendors
+Subject: [PATCH 11/18] Fix WebGL param inconsistancies accross vendors
 
 ---
  .../blink/renderer/modules/webgl/BUILD.gn     |  1 +
