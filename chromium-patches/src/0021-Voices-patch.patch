@@ -1,0 +1,408 @@
+From 1dcce52276a0a4769dfe512f1412bbf5551e9183 Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Mon, 2 Mar 2026 19:17:28 -0800
+Subject: [PATCH 21/22] Voices patch
+
+---
+ components/nodriver4j/BUILD.gn                |   2 +
+ components/nodriver4j/default_voices.cc       | 202 ++++++++++++++++++
+ components/nodriver4j/default_voices.h        |  42 ++++
+ .../blink/renderer/modules/speech/BUILD.gn    |   1 +
+ .../modules/speech/speech_synthesis.cc        |  81 ++++++-
+ 5 files changed, 325 insertions(+), 3 deletions(-)
+ create mode 100644 components/nodriver4j/default_voices.cc
+ create mode 100644 components/nodriver4j/default_voices.h
+
+diff --git a/components/nodriver4j/BUILD.gn b/components/nodriver4j/BUILD.gn
+index 9288ff35fd..10dc3e3b17 100644
+--- a/components/nodriver4j/BUILD.gn
++++ b/components/nodriver4j/BUILD.gn
+@@ -3,6 +3,8 @@ component("nodriver4j_switches") {
+   sources = [
+     "nodriver4j_switches.h",
+     "nodriver4j_switches.cc",
++    "default_voices.h",
++    "default_voices.cc",
+   ]
+ 
+   defines = [ "IS_NODRIVER4J_IMPL" ]
+diff --git a/components/nodriver4j/default_voices.cc b/components/nodriver4j/default_voices.cc
+new file mode 100644
+index 0000000000..697b092408
+--- /dev/null
++++ b/components/nodriver4j/default_voices.cc
+@@ -0,0 +1,202 @@
++// components/nodriver4j/default_voices.cc
++//
++// Static per-platform voice lists for speechSynthesis.getVoices() spoofing.
++// Each platform array contains local OS voices followed by the shared set
++// of Google Network Speech remote voices (which Chrome loads via its
++// built-in component extension on all desktop platforms).
++//
++// Voice names and lang codes were collected from real Chrome instances:
++//   Windows 11 (24H2) — Chrome 140
++//   macOS 14 Sonoma / 15 Sequoia — Chrome 140
++//   Ubuntu 22.04 — Chrome 140
++//
++// The Google remote voice list is sourced from Chromium source:
++//   chrome/browser/resources/network_speech_synthesis/manifest.json
++
++#include "components/nodriver4j/default_voices.h"
++#include "base/strings/string_util.h"
++
++namespace nodriver4j {
++
++// ---------------------------------------------------------------------------
++// Windows 11 — local SAPI/OneCore voices + Google remote
++// ---------------------------------------------------------------------------
++static constexpr DefaultVoiceEntry kWindowsVoices[] = {
++    // --- Local voices (SAPI / OneCore) ---
++    {"Microsoft David - English (United States)", "en-US", true, true},
++    {"Microsoft Mark - English (United States)", "en-US", true, false},
++    {"Microsoft Zira - English (United States)", "en-US", true, false},
++
++    // --- Google Network Speech (remote) ---
++    {"Google Deutsch", "de-DE", false, false},
++    {"Google US English", "en-US", false, false},
++    {"Google UK English Female", "en-GB", false, false},
++    {"Google UK English Male", "en-GB", false, false},
++    {"Google español", "es-ES", false, false},
++    {"Google español de Estados Unidos", "es-US", false, false},
++    {"Google français", "fr-FR", false, false},
++    {"Google \xe0\xa4\xb9\xe0\xa4\xbf\xe0\xa4\xa8\xe0\xa5\x8d\xe0\xa4\xa6\xe0\xa5\x80", "hi-IN", false, false},  // Google हिन्दी
++    {"Google Bahasa Indonesia", "id-ID", false, false},
++    {"Google italiano", "it-IT", false, false},
++    {"Google \xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e", "ja-JP", false, false},  // Google 日本語
++    {"Google \xed\x95\x9c\xea\xb5\xad\xec\x9d\x98", "ko-KR", false, false},  // Google 한국의
++    {"Google Nederlands", "nl-NL", false, false},
++    {"Google polski", "pl-PL", false, false},
++    {"Google portugu\xc3\xaas do Brasil", "pt-BR", false, false},  // Google português do Brasil
++    {"Google \xd1\x80\xd1\x83\xd1\x81\xd1\x81\xd0\xba\xd0\xb8\xd0\xb9", "ru-RU", false, false},  // Google русский
++    {"Google \xe6\x99\xae\xe9\x80\x9a\xe8\xaf\x9d\xef\xbc\x88\xe4\xb8\xad\xe5\x9b\xbd\xe5\xa4\xa7\xe9\x99\x86\xef\xbc\x89", "zh-CN", false, false},  // Google 普通话（中国大陆）
++    {"Google \xe7\xb2\xa4\xe8\xaa\x9e\xef\xbc\x88\xe9\xa6\x99\xe6\xb8\xaf\xef\xbc\x89", "zh-HK", false, false},  // Google 粤語（香港）
++    {"Google \xe5\x9c\x8b\xe8\xaa\x9e\xef\xbc\x88\xe8\x87\xba\xe7\x81\xa3\xef\xbc\x89", "zh-TW", false, false},  // Google 國語（臺灣）
++};
++
++// ---------------------------------------------------------------------------
++// macOS 14 Sonoma / 15 Sequoia — NSSpeechSynthesizer voices + Google remote
++//
++// Based on the default compact voices shipped with macOS 14/15.
++// Novelty voices (Bad News, Bahh, Bells, etc.) are included because
++// Chrome exposes them and fingerprinting scripts check for them as
++// macOS indicators. Voices removed in Sonoma (Alex, Fiona, Diego,
++// Deranged, Ellen, Princess, Tarik, Veena, Victoria) are excluded.
++// Renamed voices use their current names (TingTing, Organ, Jester).
++// ---------------------------------------------------------------------------
++static constexpr DefaultVoiceEntry kMacOSVoices[] = {
++    // --- Local voices (NSSpeechSynthesizer compact) ---
++    // Human-language voices
++    {"Samantha", "en-US", true, true},
++    {"Agnes", "en-US", true, false},
++    {"Albert", "en-US", true, false},
++    {"Alice", "it-IT", true, false},
++    {"Alva", "sv-SE", true, false},
++    {"Amelie", "fr-CA", true, false},
++    {"Anna", "de-DE", true, false},
++    {"Bruce", "en-US", true, false},
++    {"Carmit", "he-IL", true, false},
++    {"Damayanti", "id-ID", true, false},
++    {"Daniel", "en-GB", true, false},
++    {"Fred", "en-US", true, false},
++    {"Ioana", "ro-RO", true, false},
++    {"Joana", "pt-PT", true, false},
++    {"Junior", "en-US", true, false},
++    {"Kanya", "th-TH", true, false},
++    {"Karen", "en-AU", true, false},
++    {"Kathy", "en-US", true, false},
++    {"Kyoko", "ja-JP", true, false},
++    {"Laura", "sk-SK", true, false},
++    {"Lekha", "hi-IN", true, false},
++    {"Luciana", "pt-BR", true, false},
++    {"Mariska", "hu-HU", true, false},
++    {"Mei-Jia", "zh-TW", true, false},
++    {"Melina", "el-GR", true, false},
++    {"Milena", "ru-RU", true, false},
++    {"Moira", "en-IE", true, false},
++    {"Monica", "es-ES", true, false},
++    {"Nora", "nb-NO", true, false},
++    {"Paulina", "es-MX", true, false},
++    {"Ralph", "en-US", true, false},
++    {"Rishi", "en-IN", true, false},
++    {"Sara", "da-DK", true, false},
++    {"Satu", "fi-FI", true, false},
++    {"Sin-ji", "zh-HK", true, false},
++    {"Tessa", "en-ZA", true, false},
++    {"Thomas", "fr-FR", true, false},
++    {"TingTing", "zh-CN", true, false},
++    {"Xander", "nl-NL", true, false},
++    {"Yelda", "tr-TR", true, false},
++    {"Yuna", "ko-KR", true, false},
++    {"Zosia", "pl-PL", true, false},
++    {"Zuzana", "cs-CZ", true, false},
++
++    // Novelty / effect voices (macOS-specific, strong OS indicator)
++    {"Bad News", "en-US", true, false},
++    {"Bahh", "en-US", true, false},
++    {"Bells", "en-US", true, false},
++    {"Boing", "en-US", true, false},
++    {"Bubbles", "en-US", true, false},
++    {"Cellos", "en-US", true, false},
++    {"Good News", "en-US", true, false},
++    {"Jester", "en-US", true, false},
++    {"Organ", "en-US", true, false},
++    {"Superstar", "en-US", true, false},
++    {"Trinoids", "en-US", true, false},
++    {"Whisper", "en-US", true, false},
++    {"Zarvox", "en-US", true, false},
++
++    // --- Google Network Speech (remote) ---
++    {"Google Deutsch", "de-DE", false, false},
++    {"Google US English", "en-US", false, false},
++    {"Google UK English Female", "en-GB", false, false},
++    {"Google UK English Male", "en-GB", false, false},
++    {"Google espa\xc3\xb1ol", "es-ES", false, false},  // Google español
++    {"Google espa\xc3\xb1ol de Estados Unidos", "es-US", false, false},  // Google español de Estados Unidos
++    {"Google fran\xc3\xa7\x61is", "fr-FR", false, false},  // Google français
++    {"Google \xe0\xa4\xb9\xe0\xa4\xbf\xe0\xa4\xa8\xe0\xa5\x8d\xe0\xa4\xa6\xe0\xa5\x80", "hi-IN", false, false},
++    {"Google Bahasa Indonesia", "id-ID", false, false},
++    {"Google italiano", "it-IT", false, false},
++    {"Google \xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e", "ja-JP", false, false},
++    {"Google \xed\x95\x9c\xea\xb5\xad\xec\x9d\x98", "ko-KR", false, false},
++    {"Google Nederlands", "nl-NL", false, false},
++    {"Google polski", "pl-PL", false, false},
++    {"Google portugu\xc3\xaas do Brasil", "pt-BR", false, false},
++    {"Google \xd1\x80\xd1\x83\xd1\x81\xd1\x81\xd0\xba\xd0\xb8\xd0\xb9", "ru-RU", false, false},
++    {"Google \xe6\x99\xae\xe9\x80\x9a\xe8\xaf\x9d\xef\xbc\x88\xe4\xb8\xad\xe5\x9b\xbd\xe5\xa4\xa7\xe9\x99\x86\xef\xbc\x89", "zh-CN", false, false},
++    {"Google \xe7\xb2\xa4\xe8\xaa\x9e\xef\xbc\x88\xe9\xa6\x99\xe6\xb8\xaf\xef\xbc\x89", "zh-HK", false, false},
++    {"Google \xe5\x9c\x8b\xe8\xaa\x9e\xef\xbc\x88\xe8\x87\xba\xe7\x81\xa3\xef\xbc\x89", "zh-TW", false, false},
++};
++
++// ---------------------------------------------------------------------------
++// Linux (Ubuntu / generic) — no local voices by default + Google remote
++//
++// Chrome on Linux has no local voices unless speech-dispatcher + espeak-ng
++// are installed and Chrome is launched with --enable-speech-dispatcher.
++// Most desktop Linux users see only the Google remote voices.
++// ---------------------------------------------------------------------------
++static constexpr DefaultVoiceEntry kLinuxVoices[] = {
++    // --- No local voices ---
++
++    // --- Google Network Speech (remote) ---
++    {"Google Deutsch", "de-DE", false, false},
++    {"Google US English", "en-US", false, true},  // Default when no local voices exist
++    {"Google UK English Female", "en-GB", false, false},
++    {"Google UK English Male", "en-GB", false, false},
++    {"Google espa\xc3\xb1ol", "es-ES", false, false},
++    {"Google espa\xc3\xb1ol de Estados Unidos", "es-US", false, false},
++    {"Google fran\xc3\xa7\x61is", "fr-FR", false, false},
++    {"Google \xe0\xa4\xb9\xe0\xa4\xbf\xe0\xa4\xa8\xe0\xa5\x8d\xe0\xa4\xa6\xe0\xa5\x80", "hi-IN", false, false},
++    {"Google Bahasa Indonesia", "id-ID", false, false},
++    {"Google italiano", "it-IT", false, false},
++    {"Google \xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e", "ja-JP", false, false},
++    {"Google \xed\x95\x9c\xea\xb5\xad\xec\x9d\x98", "ko-KR", false, false},
++    {"Google Nederlands", "nl-NL", false, false},
++    {"Google polski", "pl-PL", false, false},
++    {"Google portugu\xc3\xaas do Brasil", "pt-BR", false, false},
++    {"Google \xd1\x80\xd1\x83\xd1\x81\xd1\x81\xd0\xba\xd0\xb8\xd0\xb9", "ru-RU", false, false},
++    {"Google \xe6\x99\xae\xe9\x80\x9a\xe8\xaf\x9d\xef\xbc\x88\xe4\xb8\xad\xe5\x9b\xbd\xe5\xa4\xa7\xe9\x99\x86\xef\xbc\x89", "zh-CN", false, false},
++    {"Google \xe7\xb2\xa4\xe8\xaa\x9e\xef\xbc\x88\xe9\xa6\x99\xe6\xb8\xaf\xef\xbc\x89", "zh-HK", false, false},
++    {"Google \xe5\x9c\x8b\xe8\xaa\x9e\xef\xbc\x88\xe8\x87\xba\xe7\x81\xa3\xef\xbc\x89", "zh-TW", false, false},
++};
++
++// ---------------------------------------------------------------------------
++// Platform selector
++// ---------------------------------------------------------------------------
++base::span<const DefaultVoiceEntry> VoicesForPlatform(
++    const std::string& platform) {
++  if (base::EqualsCaseInsensitiveASCII(platform, "windows")) {
++    return base::span<const DefaultVoiceEntry>(kWindowsVoices);
++  }
++  if (base::EqualsCaseInsensitiveASCII(platform, "macos")) {
++    return base::span<const DefaultVoiceEntry>(kMacOSVoices);
++  }
++  if (base::EqualsCaseInsensitiveASCII(platform, "linux")) {
++    return base::span<const DefaultVoiceEntry>(kLinuxVoices);
++  }
++  return {};
++}
++
++float FakeSpeechCharsPerSecond() {
++  // ~150 words per minute ≈ 12.5 characters per second.
++  // Matches the average English speaking rate and is consistent
++  // with Camoufox's default value.
++  return 12.5f;
++}
++
++}  // namespace nodriver4j
+\ No newline at end of file
+diff --git a/components/nodriver4j/default_voices.h b/components/nodriver4j/default_voices.h
+new file mode 100644
+index 0000000000..26cd9fb81a
+--- /dev/null
++++ b/components/nodriver4j/default_voices.h
+@@ -0,0 +1,42 @@
++// components/nodriver4j/default_voices.h
++//
++// Provides static, per-platform voice lists used to spoof
++// speechSynthesis.getVoices() results. Activated automatically
++// when --fingerprint-platform is set.
++
++#ifndef COMPONENTS_NODRIVER4J_DEFAULT_VOICES_H_
++#define COMPONENTS_NODRIVER4J_DEFAULT_VOICES_H_
++
++#include <string>
++
++#include "base/component_export.h"
++#include "base/containers/span.h"
++
++namespace nodriver4j {
++
++// Represents a single SpeechSynthesisVoice entry.
++// In Chrome, voiceURI always equals the voice name, so a single
++// |name| field serves both purposes.
++struct DefaultVoiceEntry {
++  const char* name;  // Voice name and voiceURI
++  const char* lang;  // BCP 47 language tag (e.g. "en-US")
++  bool is_local;     // true = OS/local voice, false = Google remote voice
++  bool is_default;   // true = default voice for the platform
++};
++
++// Returns the full voice list (local + Google remote) for the given
++// platform string. Recognized values: "Windows", "macOS", "Linux".
++// Returns an empty span for unrecognized platforms or empty input,
++// which causes voice spoofing to be skipped (real voices pass through).
++COMPONENT_EXPORT(NODRIVER4J)
++base::span<const DefaultVoiceEntry> VoicesForPlatform(
++    const std::string& platform);
++
++// Returns the default fake-TTS speaking rate in characters per second.
++// Used to calculate the duration of fake speech completion events.
++COMPONENT_EXPORT(NODRIVER4J)
++float FakeSpeechCharsPerSecond();
++
++}  // namespace nodriver4j
++
++#endif  // COMPONENTS_NODRIVER4J_DEFAULT_VOICES_H_
+\ No newline at end of file
+diff --git a/third_party/blink/renderer/modules/speech/BUILD.gn b/third_party/blink/renderer/modules/speech/BUILD.gn
+index e49c0234d1..c138b90c90 100644
+--- a/third_party/blink/renderer/modules/speech/BUILD.gn
++++ b/third_party/blink/renderer/modules/speech/BUILD.gn
+@@ -40,6 +40,7 @@ blink_modules_sources("speech") {
+   ]
+ 
+   deps = [
++    "//components/nodriver4j:nodriver4j_switches",
+     "//media",
+     "//media/mojo/mojom:speech_recognition_audio_forwarder_blink",
+     "//third_party/blink/renderer/modules/mediastream",
+diff --git a/third_party/blink/renderer/modules/speech/speech_synthesis.cc b/third_party/blink/renderer/modules/speech/speech_synthesis.cc
+index 2327015bc5..09d5af33d6 100644
+--- a/third_party/blink/renderer/modules/speech/speech_synthesis.cc
++++ b/third_party/blink/renderer/modules/speech/speech_synthesis.cc
+@@ -44,6 +44,10 @@
+ #include "third_party/blink/renderer/modules/speech/speech_synthesis_event.h"
+ #include "third_party/blink/renderer/modules/speech/speech_synthesis_voice.h"
+ #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
++#include "base/command_line.h"
++#include "base/time/time.h"
++#include "components/nodriver4j/default_voices.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
+ 
+ namespace blink {
+ 
+@@ -88,10 +92,32 @@ SpeechSynthesis::SpeechSynthesis(LocalDOMWindow& window)
+ void SpeechSynthesis::OnSetVoiceList(
+     Vector<mojom::blink::SpeechSynthesisVoicePtr> mojom_voices) {
+   voice_list_.clear();
+-  for (auto& mojom_voice : mojom_voices) {
+-    voice_list_.push_back(
+-        MakeGarbageCollected<SpeechSynthesisVoice>(std::move(mojom_voice)));
++
++  // When --fingerprint-platform is set, replace the real OS voice list
++  // with a curated platform-appropriate set of fake voices.
++  std::string platform =
++      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
++          switches::kFingerprintPlatform);
++  auto fake_voices = nodriver4j::VoicesForPlatform(platform);
++
++  if (!fake_voices.empty()) {
++    for (const auto& entry : fake_voices) {
++      voice_list_.push_back(MakeGarbageCollected<SpeechSynthesisVoice>(
++          mojom::blink::SpeechSynthesisVoice::New(
++              String::FromUTF8(entry.name),  // voice_uri (same as name in Chrome)
++              String::FromUTF8(entry.name),  // name
++              String::FromUTF8(entry.lang),  // lang
++              entry.is_local,                // is_local_service
++              entry.is_default)));           // is_default
++    }
++  } else {
++    // No spoofing — pass through real voices unchanged.
++    for (auto& mojom_voice : mojom_voices) {
++      voice_list_.push_back(
++          MakeGarbageCollected<SpeechSynthesisVoice>(std::move(mojom_voice)));
++    }
+   }
++
+   VoicesDidChange();
+ }
+ 
+@@ -242,6 +268,55 @@ void SpeechSynthesis::StartSpeakingImmediately() {
+   utterance->SetStartTime(millis / 1000.0);
+   is_paused_ = false;
+ 
++  // When voice spoofing is active, all exposed voices are fake.
++  // We cannot forward to the real TTS engine (it doesn't know these voices),
++  // so we dispatch synthetic start/end events with realistic timing.
++  std::string platform =
++      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
++          switches::kFingerprintPlatform);
++  auto fake_voices = nodriver4j::VoicesForPlatform(platform);
++
++  if (!fake_voices.empty()) {
++    // Fire the "start" event synchronously (matches real TTS behavior —
++    // the start event fires almost immediately after speak() is called).
++    DidStartSpeaking(utterance);
++
++    // Calculate a plausible speaking duration based on text length and rate.
++    unsigned text_length = utterance->text().length();
++    float rate = static_cast<float>(utterance->rate());
++    if (rate <= 0.0f)
++      rate = 1.0f;
++    float duration_seconds = static_cast<float>(text_length) /
++                             (nodriver4j::FakeSpeechCharsPerSecond() * rate);
++
++    // Schedule the "end" event after the calculated duration.
++    // WrapWeakPersistent guards against GC of |this| (e.g. if the page
++    // navigates away). WrapPersistent prevents the utterance from being
++    // collected before the timer fires.
++    GetSupplementable()
++        ->GetTaskRunner(TaskType::kMiscPlatformAPI)
++        ->PostDelayedTask(
++            FROM_HERE,
++            base::BindOnce(
++                [](WeakPersistent<SpeechSynthesis> weak_self,
++                   Persistent<SpeechSynthesisUtterance> utt) {
++                  if (!weak_self)
++                    return;
++                  // Only complete if this utterance is still current.
++                  // If Cancel() was called, the queue is empty and we
++                  // should not fire spurious events.
++                  if (weak_self->CurrentSpeechUtterance() == utt.Get()) {
++                    weak_self->DidFinishSpeaking(
++                        utt.Get(),
++                        mojom::blink::SpeechSynthesisErrorCode::kNoError);
++                  }
++                },
++                WrapWeakPersistent(this), WrapPersistent(utterance)),
++            base::Seconds(duration_seconds));
++    return;
++  }
++
++  // Normal path — forward to the real TTS engine via mojom.
+   if (TryEnsureMojomSynthesis())
+     utterance->Start(this);
+ }
+-- 
+2.45.1.windows.1
+
