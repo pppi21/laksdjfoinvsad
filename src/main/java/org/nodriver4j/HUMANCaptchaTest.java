@@ -1,11 +1,11 @@
 package org.nodriver4j;
 
 import org.nodriver4j.captcha.PerimeterXSolver;
-import org.nodriver4j.core.Browser;
-import org.nodriver4j.core.BrowserConfig;
-import org.nodriver4j.core.BrowserManager;
-import org.nodriver4j.core.Page;
+import org.nodriver4j.core.*;
+import org.nodriver4j.persistence.entity.FingerprintEntity;
+import org.nodriver4j.persistence.importer.FingerprintExtractor;
 
+import java.io.IOException;
 import java.util.Scanner;
 
 public class HUMANCaptchaTest {
@@ -15,7 +15,7 @@ public class HUMANCaptchaTest {
     private static final String BOT_UA = "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
             "AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/131.0.0.0 Safari/537.36";
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws IOException {
         // Prefer custom Chromium build, fall back to env var
         String executablePath = CUSTOM_CHROME;
         if (!java.nio.file.Files.exists(java.nio.file.Path.of(executablePath))) {
@@ -35,9 +35,15 @@ public class HUMANCaptchaTest {
         System.out.println("Chrome: " + executablePath);
         System.out.println();
 
+        Fingerprint fingerprintLine = new Fingerprint(1);
+
+        FingerprintExtractor extractor = new  FingerprintExtractor();
+        FingerprintEntity fingerprint = extractor.extract(fingerprintLine.toString(), fingerprintLine.lineIndex());
+
+
         BrowserConfig config = BrowserConfig.builder()
                 .executablePath(executablePath)
-                .fingerprintEnabled(true)
+                .fingerprint(fingerprint)
                 .argument(BOT_UA)
                 .headless(false)
                 .build();

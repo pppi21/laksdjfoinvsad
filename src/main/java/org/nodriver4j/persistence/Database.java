@@ -47,7 +47,7 @@ public final class Database {
 
     private static final String DATA_DIRECTORY = "nodriver4j-data";
     private static final String DATABASE_FILE = "data.db";
-    private static final int CURRENT_SCHEMA_VERSION = 5;
+    private static final int CURRENT_SCHEMA_VERSION = 6;
     private static final AtomicBoolean initialized = new AtomicBoolean(false);
     private static String connectionUrl;
 
@@ -220,6 +220,7 @@ public final class Database {
             case 3 -> migrateV3(conn);
             case 4 -> migrateV4(conn);
             case 5 -> migrateV5(conn);
+            case 6 -> migrateV6(conn);
             default -> throw new DatabaseException("Unknown migration version: " + version);
         }
     }
@@ -411,6 +412,65 @@ public final class Database {
     private static void migrateV5(Connection conn) throws SQLException {
         try (Statement stmt = conn.createStatement()) {
             stmt.execute("ALTER TABLE tasks ADD COLUMN fingerprint_index INTEGER");
+        }
+    }
+
+    /**
+     * V6: Create fingerprints table and add fingerprint_id FK to tasks.
+     *
+     * <p>The fingerprints table stores all persistent browser identity values
+     * extracted from JSONL profiles. Each task references its fingerprint via
+     * a nullable foreign key ({@code fingerprint_id}). The column is nullable
+     * so that existing tasks (which have no fingerprint yet) are unaffected.</p>
+     *
+     * <p>The previous {@code fingerprint_index} column on tasks is left in place
+     * as a harmless vestige rather than recreating the entire table. New code
+     * ignores it; the {@code fingerprint_id} FK is the authoritative reference.</p>
+     */
+    private static void migrateV6(Connection conn) throws SQLException {
+        try (Statement stmt = conn.createStatement()) {
+
+            // Fingerprints table
+            stmt.execute("""
+            CREATE TABLE fingerprints (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                jsonl_line_index INTEGER,
+                browser_brand TEXT NOT NULL,
+                browser_major_version INTEGER NOT NULL,
+                brand_version_long TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                platform_version TEXT NOT NULL,
+                gpu_vendor TEXT NOT NULL,
+                gpu_renderer TEXT NOT NULL,
+                device_type TEXT NOT NULL DEFAULT 'desktop',
+                seed INTEGER NOT NULL,
+                hardware_concurrency INTEGER NOT NULL,
+                device_memory INTEGER NOT NULL,
+                screen_width INTEGER NOT NULL,
+                screen_height INTEGER NOT NULL,
+                avail_width INTEGER NOT NULL,
+                avail_height INTEGER NOT NULL,
+                avail_top INTEGER NOT NULL DEFAULT 0,
+                color_depth INTEGER NOT NULL DEFAULT 24,
+                device_pixel_ratio REAL,
+                audio_sample_rate INTEGER NOT NULL,
+                audio_base_latency REAL NOT NULL,
+                audio_output_latency REAL NOT NULL,
+                audio_max_channel_count INTEGER NOT NULL,
+                media_mics INTEGER NOT NULL DEFAULT 1,
+                media_webcams INTEGER NOT NULL DEFAULT 1,
+                media_speakers INTEGER NOT NULL DEFAULT 1,
+                extra_switches TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """);
+
+            // Add fingerprint_id FK to tasks (nullable for existing rows)
+            stmt.execute("ALTER TABLE tasks ADD COLUMN fingerprint_id INTEGER REFERENCES fingerprints(id)");
+
+            // Index for the FK join
+            stmt.execute("CREATE INDEX idx_tasks_fingerprint_id ON tasks(fingerprint_id)");
         }
     }
 

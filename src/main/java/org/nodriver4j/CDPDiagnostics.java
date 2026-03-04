@@ -32,7 +32,6 @@ public class CDPDiagnostics {
 
         BrowserConfig config = BrowserConfig.builder()
                 .executablePath(executablePath)
-                .fingerprintEnabled(false)
                 .argument(HEADLESS_UA)
                 .build();
 

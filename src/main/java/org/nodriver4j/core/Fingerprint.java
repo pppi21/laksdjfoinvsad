@@ -154,6 +154,30 @@ public class Fingerprint {
         return loadProfiles().size();
     }
 
+    /**
+     * Reads a single raw JSON line from the fingerprints JSONL file.
+     *
+     * <p>Uses the same lazily-initialized cache as {@link #totalCount()} and
+     * the constructors, so the file is read at most once regardless of how
+     * many lines are accessed.</p>
+     *
+     * @param lineIndex the zero-based line index
+     * @return the raw JSON string at that line
+     * @throws IOException                   if the profile file cannot be read
+     * @throws IndexOutOfBoundsException     if lineIndex is out of range
+     */
+    public static String readJsonLine(int lineIndex) throws IOException {
+        List<String> profiles = loadProfiles();
+
+        if (lineIndex < 0 || lineIndex >= profiles.size()) {
+            throw new IndexOutOfBoundsException(
+                    "Fingerprint line index out of range: " + lineIndex +
+                            " (available: 0-" + (profiles.size() - 1) + ")");
+        }
+
+        return profiles.get(lineIndex);
+    }
+
     // ==================== Getters ====================
 
     /**

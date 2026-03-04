@@ -840,7 +840,7 @@ public class TaskGroupDetailController implements Initializable {
                     .customStatus(null)
                     .logMessage(null)
                     .logColor(null)
-                    .fingerprintIndex(null)
+                    .fingerprintId(null)
                     .createdAt(null)
                     .updatedAt(null)
                     .build();

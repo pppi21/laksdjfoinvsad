@@ -1,9 +1,8 @@
 package org.nodriver4j;
 
-import org.nodriver4j.core.Browser;
-import org.nodriver4j.core.BrowserConfig;
-import org.nodriver4j.core.BrowserManager;
-import org.nodriver4j.core.Page;
+import org.nodriver4j.core.*;
+import org.nodriver4j.persistence.entity.FingerprintEntity;
+import org.nodriver4j.persistence.importer.FingerprintExtractor;
 import org.nodriver4j.profiles.Profile;
 import org.nodriver4j.profiles.ProfilePool;
 import org.nodriver4j.scripts.SandwichGen;
@@ -25,7 +24,7 @@ public class ManualBrowser {
     // Number of concurrent browser sessions
     private static final int SESSION_COUNT = 1;
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws IOException {
         String executablePath = System.getenv("chromepath");
 
         if (executablePath == null || executablePath.isBlank()) {
@@ -39,9 +38,14 @@ public class ManualBrowser {
         System.out.println("==========================================");
         System.out.println();
 
+        Fingerprint fingerprintLine = new Fingerprint(1);
+
+        FingerprintExtractor extractor = new  FingerprintExtractor();
+        FingerprintEntity fingerprint = extractor.extract(fingerprintLine.toString(), fingerprintLine.lineIndex());
+
         BrowserConfig config = BrowserConfig.builder()
                 .executablePath(executablePath)
-                .fingerprintEnabled(true)
+                .fingerprint(fingerprint)
                 .headless(false)
                 //.webrtcPolicy("default")
                 .headlessGpuAcceleration(false)
@@ -88,7 +92,7 @@ public class ManualBrowser {
                     System.out.println("  Proxy:       disabled");
                 }
 
-                Page page  = browser.getPage();
+                Page page  = browser.page();
 
 //                page.sleep(2000);
 //                page.navigate(URL);

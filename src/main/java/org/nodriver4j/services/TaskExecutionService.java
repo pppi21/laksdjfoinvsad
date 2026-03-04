@@ -4,14 +4,9 @@ import org.nodriver4j.core.Browser;
 import org.nodriver4j.core.BrowserConfig;
 import org.nodriver4j.core.Fingerprint;
 import org.nodriver4j.persistence.Settings;
-import org.nodriver4j.persistence.entity.ProfileEntity;
-import org.nodriver4j.persistence.entity.ProxyEntity;
-import org.nodriver4j.persistence.entity.TaskEntity;
-import org.nodriver4j.persistence.entity.TaskGroupEntity;
-import org.nodriver4j.persistence.repository.ProfileRepository;
-import org.nodriver4j.persistence.repository.ProxyRepository;
-import org.nodriver4j.persistence.repository.TaskGroupRepository;
-import org.nodriver4j.persistence.repository.TaskRepository;
+import org.nodriver4j.persistence.entity.*;
+import org.nodriver4j.persistence.importer.FingerprintExtractor;
+import org.nodriver4j.persistence.repository.*;
 import org.nodriver4j.scripts.AutomationScript;
 import org.nodriver4j.scripts.ScriptRegistry;
 
@@ -157,6 +152,10 @@ public class TaskExecutionService {
     private final TaskGroupRepository taskGroupRepository;
     private final ProfileRepository profileRepository;
     private final ProxyRepository proxyRepository;
+    private final FingerprintRepository fingerprintRepository;
+
+    // Services
+    private final FingerprintExtractor fingerprintExtractor;
 
     // ==================== Constructor ====================
 
@@ -169,6 +168,9 @@ public class TaskExecutionService {
         this.taskGroupRepository = new TaskGroupRepository();
         this.profileRepository = new ProfileRepository();
         this.proxyRepository = new ProxyRepository();
+        this.fingerprintRepository = new FingerprintRepository();
+        this.fingerprintExtractor = new FingerprintExtractor();
+
 
         // Initialize port pool
         this.availablePorts = new LinkedBlockingQueue<>();
@@ -512,7 +514,8 @@ public class TaskExecutionService {
 
         // Assign userdata path and fingerprint index if this is the first launch
         ensureUserdataPath(task);
-        ensureFingerprintIndex(task);
+        ensureFingerprint(task);
+
 
         // Build config from task + settings
         BrowserConfig config = buildConfig(task, headless);
@@ -627,11 +630,16 @@ public class TaskExecutionService {
 
         BrowserConfig.Builder builder = BrowserConfig.builder()
                 .executablePath(settings.chromePath())
-                .fingerprintEnabled(settings.defaultFingerprintEnabled())
                 .resourceBlocking(settings.defaultResourceBlocking())
                 .webrtcPolicy(settings.defaultWebrtcPolicy())
-                .userDataDir(Path.of(task.userdataPath()))
-                .fingerprintIndex(task.fingerprintIndex());
+                .userDataDir(Path.of(task.userdataPath()));
+
+        // Load and apply fingerprint if assigned and enabled in settings
+        if (settings.defaultFingerprintEnabled() && task.hasFingerprint()) {
+            fingerprintRepository.findById(task.fingerprintId())
+                    .ifPresent(builder::fingerprint);
+        }
+
 
 
         if (headless){
@@ -682,30 +690,64 @@ public class TaskExecutionService {
     }
 
     /**
-     * Ensures the task has a fingerprint index assigned.
+     * Ensures the task has a fingerprint entity assigned.
      *
-     * <p>If the task does not yet have a fingerprint index (first launch),
-     * a random valid index is generated via {@link Fingerprint#totalCount()}
-     * and persisted to the database. This guarantees the same fingerprint
-     * is reloaded on every subsequent browser session for this task.</p>
+     * <p>If the task does not yet have a fingerprint (first launch) and
+     * fingerprinting is enabled in settings, a random JSONL line is selected,
+     * extracted into a {@link FingerprintEntity} via {@link FingerprintExtractor},
+     * persisted to the database, and linked to the task.</p>
      *
-     * @param task the task entity (modified in place and saved if index is assigned)
+     * <p>Mobile fingerprints (phones/tablets) are automatically rejected
+     * by the extractor. If a rejected line is selected, a different line
+     * is tried, up to a maximum number of attempts.</p>
+     *
+     * <p>If fingerprinting is disabled in settings, this method returns
+     * immediately without assigning a fingerprint. If it is later enabled,
+     * the next launch will trigger extraction.</p>
+     *
+     * @param task the task entity (modified in place and saved if fingerprint is assigned)
      */
-    private void ensureFingerprintIndex(TaskEntity task) {
-        if (task.fingerprintIndex() != null) {
+    private void ensureFingerprint(TaskEntity task) {
+        if (task.hasFingerprint() || !Settings.get().defaultFingerprintEnabled()) {
             return;
         }
 
-        try {
-            int index = new Random().nextInt(Fingerprint.totalCount());
-            task.fingerprintIndex(index);
-            task.touchUpdatedAt();
-            taskRepository.save(task);
+        final int maxAttempts = 10;
 
-            System.out.println("[TaskExecutionService] Assigned fingerprint index for task " +
-                    task.id() + ": " + index);
+        try {
+            int lineCount = Fingerprint.totalCount();
+
+            for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+                int index = new Random().nextInt(lineCount);
+
+                try {
+                    String jsonLine = Fingerprint.readJsonLine(index);
+
+                    FingerprintEntity fingerprint = fingerprintExtractor.extract(jsonLine, index);
+                    fingerprintRepository.save(fingerprint);
+
+                    task.fingerprintId(fingerprint.id());
+                    task.touchUpdatedAt();
+                    taskRepository.save(task);
+
+                    System.out.println("[TaskExecutionService] Assigned fingerprint for task " +
+                            task.id() + ": id=" + fingerprint.id() +
+                            " (JSONL line " + index + ", seed=" + fingerprint.seed() + ")");
+                    return;
+
+                } catch (IllegalArgumentException e) {
+                    // Mobile GPU or unparseable line — try another
+                    System.err.println("[TaskExecutionService] Fingerprint rejected for task " +
+                            task.id() + " (attempt " + attempt + "/" + maxAttempts + "): " +
+                            e.getMessage());
+                }
+            }
+
+            System.err.println("[TaskExecutionService] Failed to assign fingerprint for task " +
+                    task.id() + " after " + maxAttempts + " attempts — all selected lines were rejected");
+
         } catch (IOException e) {
-            System.err.println("[TaskExecutionService] Failed to assign fingerprint index for task " +
+            System.err.println("[TaskExecutionService] Failed to assign fingerprint for task " +
                     task.id() + ": " + e.getMessage());
         }
     }

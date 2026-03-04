@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.nodriver4j.cdp.CDPClient;
 import org.nodriver4j.cdp.CDPSession;
+import org.nodriver4j.persistence.entity.FingerprintEntity;
 import org.nodriver4j.scripts.SessionWarmer;
 import org.nodriver4j.services.AutoSolveAIService;
 import org.nodriver4j.services.TaskLogger;
@@ -153,7 +154,6 @@ public class Browser implements AutoCloseable {
     private final BrowserConfig config;
     private final Process process;
     private final CDPClient browserCdpClient;    // Single browser-level connection for all CDP traffic
-    private final Fingerprint fingerprint;
     private final Path userDataDir;
 
     // Resource management
@@ -184,17 +184,17 @@ public class Browser implements AutoCloseable {
     private final BlockingQueue<String> newPageQueue = new LinkedBlockingQueue<>();
 
     private Browser(BrowserConfig config, Process process, CDPClient browserCdpClient,
-                    Fingerprint fingerprint, Path userDataDir,
-                    int port, IntConsumer portReleaser, boolean ownsUserDataDir) {
+                    Path userDataDir, int port, IntConsumer portReleaser,
+                    boolean ownsUserDataDir) {
         this.config = config;
         this.process = process;
         this.browserCdpClient = browserCdpClient;
-        this.fingerprint = fingerprint;
         this.userDataDir = userDataDir;
         this.port = port;
         this.portReleaser = portReleaser;
         this.ownsUserDataDir = ownsUserDataDir;
     }
+
 
     // ==================== Launch Methods ====================
 
@@ -247,22 +247,8 @@ public class Browser implements AutoCloseable {
             ownsUserDataDir = true;
         }
 
-        // Load fingerprint if enabled
-        Fingerprint fingerprint = null;
-        if (config.fingerprintEnabled()) {
-            if (config.fingerprintIndex() != null) {
-                System.out.println("[Browser] Loading persisted fingerprint (index " +
-                        config.fingerprintIndex() + ")...");
-                fingerprint = new Fingerprint(config.fingerprintIndex());
-            } else {
-                System.out.println("[Browser] Loading random fingerprint...");
-                fingerprint = new Fingerprint();
-            }
-            System.out.println("[Browser] Loaded fingerprint: " + fingerprint);
-        }
-
         // Build Chrome arguments
-        List<String> arguments = buildArguments(config, port, userDataDir, fingerprint);
+        List<String> arguments = buildArguments(config, port, userDataDir);
 
         System.out.println("[Browser] Launching on port " + port + "...");
 
@@ -275,7 +261,7 @@ public class Browser implements AutoCloseable {
         CDPClient browserCdpClient = connectToBrowserWithRetry(port);
 
         Browser browser = new Browser(config, process, browserCdpClient,
-                fingerprint, userDataDir, port, portReleaser, ownsUserDataDir);
+                userDataDir, port, portReleaser, ownsUserDataDir);
 
         // Setup Fetch interception (proxy auth and/or resource blocking)
         if (browser.needsFetchInterception()) {
@@ -1074,12 +1060,12 @@ public class Browser implements AutoCloseable {
     }
 
     /**
-     * Gets the fingerprint used by this browser instance, if any.
+     * Gets the fingerprint entity used by this browser instance, if any.
      *
-     * @return the Fingerprint, or null if fingerprinting is disabled
+     * @return the FingerprintEntity, or null if fingerprinting is disabled
      */
-    public Fingerprint fingerprint() {
-        return fingerprint;
+    public FingerprintEntity fingerprint() {
+        return config.fingerprint();
     }
 
     /**
@@ -1109,79 +1095,6 @@ public class Browser implements AutoCloseable {
         return config.autoSolveAIService();
     }
 
-    // ==================== Deprecated Methods (for backward compatibility) ====================
-
-    /**
-     * @deprecated Use {@link #page()} instead
-     */
-    @Deprecated
-    public Page getPage() {
-        return page();
-    }
-
-    /**
-     * @deprecated Use {@link #pages()} instead
-     */
-    @Deprecated
-    public List<Page> getPages() {
-        return pages();
-    }
-
-    /**
-     * @deprecated Use {@link #pageByTargetId(String)} instead
-     */
-    @Deprecated
-    public Page getPageByTargetId(String targetId) {
-        return pageByTargetId(targetId);
-    }
-
-    /**
-     * @deprecated Use {@link #pageCount()} instead
-     */
-    @Deprecated
-    public int getPageCount() {
-        return pageCount();
-    }
-
-    /**
-     * @deprecated Use {@link #port()} instead
-     */
-    @Deprecated
-    public int getPort() {
-        return port();
-    }
-
-    /**
-     * @deprecated Use {@link #browserCdpClient()} instead
-     */
-    @Deprecated
-    public CDPClient getBrowserCdpClient() {
-        return browserCdpClient();
-    }
-
-    /**
-     * @deprecated Use {@link #fingerprint()} instead
-     */
-    @Deprecated
-    public Fingerprint getFingerprint() {
-        return fingerprint();
-    }
-
-    /**
-     * @deprecated Use {@link #proxyConfig()} instead
-     */
-    @Deprecated
-    public Proxy getProxyConfig() {
-        return proxyConfig();
-    }
-
-    /**
-     * @deprecated Use {@link #interactionOptions()} instead
-     */
-    @Deprecated
-    public InteractionOptions getInteractionOptions() {
-        return interactionOptions();
-    }
 
     // ==================== Lifecycle Management ====================
 
@@ -1338,11 +1251,10 @@ public class Browser implements AutoCloseable {
      * @param config      the browser configuration
      * @param port        the CDP debugging port
      * @param userDataDir the user data directory path
-     * @param fingerprint the fingerprint to apply (can be null)
      * @return list of command-line arguments
      */
     private static List<String> buildArguments(BrowserConfig config, int port,
-                                               Path userDataDir, Fingerprint fingerprint) {
+                                               Path userDataDir) {
         List<String> args = new ArrayList<>();
         args.add(config.executablePath());
 
@@ -1404,25 +1316,50 @@ public class Browser implements AutoCloseable {
             args.addAll(customArgs);
         }
 
-        /*
-        TODO Need to add --fingerprint-device-memory, --fingerprint-brand-version,
-         --fingerprint-brand-version-long, --fingerprint-brand,
-         --fingerprint-platform, --fingerprint-platform-version
-         and more...
-         */
+        FingerprintEntity fp = config.fingerprint();
+        if (fp != null) {
+            // Seeds
+            args.add("--canvas-fingerprint=" + fp.seed());
+            args.add("--audio-fingerprint=" + fp.seed());
 
+            // UA metadata
+            args.add("--fingerprint-brand=" + fp.browserBrand());
+            args.add("--fingerprint-brand-version=" + fp.browserMajorVersion());
+            args.add("--fingerprint-brand-version-long=" + fp.brandVersionLong());
+            args.add("--fingerprint-platform=" + fp.platform());
+            args.add("--fingerprint-platform-version=" + fp.platformVersion());
 
-        // Fingerprint arguments
-        if (fingerprint != null) {
-            args.add("--canvas-fingerprint=" + fingerprint.seed());
-            args.add("--audio-fingerprint=" + fingerprint.seed());
-            args.add("--fingerprint-hardware-concurrency=" + fingerprint.hardwareConcurrency());
+            // Hardware
+            args.add("--fingerprint-hardware-concurrency=" + fp.hardwareConcurrency());
+            args.add("--fingerprint-device-memory=" + fp.deviceMemory());
 
-            if (fingerprint.gpuVendor() != null) {
-                args.add("--fingerprint-gpu-vendor=" + fingerprint.gpuVendor());
+            // GPU
+            if (fp.gpuVendor() != null) {
+                args.add("--fingerprint-gpu-vendor=" + fp.gpuVendor());
             }
-            if (fingerprint.gpuRenderer() != null) {
-                args.add("\"--fingerprint-gpu-renderer=" + fingerprint.gpuRenderer() + "\"");
+            if (fp.gpuRenderer() != null) {
+                args.add("\"--fingerprint-gpu-renderer=" + fp.gpuRenderer() + "\"");
+            }
+
+            // Screen: "width,height,availWidth,availHeight,availTop,colorDepth"
+            args.add("--fingerprint-screen=" + fp.screenWidth() + "," + fp.screenHeight() + ","
+                    + fp.availWidth() + "," + fp.availHeight() + "," + fp.availTop() + ","
+                    + fp.colorDepth());
+
+            // AudioContext: "sampleRate,baseLatency,outputLatency,maxChannelCount"
+            args.add("--fingerprint-audio-context=" + fp.audioSampleRate() + ","
+                    + fp.audioBaseLatency() + "," + fp.audioOutputLatency() + ","
+                    + fp.audioMaxChannelCount());
+
+            // Media devices: "mics,webcams,speakers"
+            args.add("--fingerprint-media=" + fp.mediaMics() + "," + fp.mediaWebcams() + ","
+                    + fp.mediaSpeakers());
+
+            // Extra switches from entity (future-proofing)
+            if (fp.hasExtraSwitches()) {
+                for (var entry : fp.extraSwitchesMap().entrySet()) {
+                    args.add(entry.getKey() + "=" + entry.getValue());
+                }
             }
         }
 
@@ -1436,7 +1373,7 @@ public class Browser implements AutoCloseable {
                 !closed.get(),
                 warmed.get(),
                 pages.size(),
-                fingerprint != null ? "enabled" : "disabled",
+                config.hasFingerprint() ? "enabled" : "disabled",
                 config.proxyConfig() != null ? config.proxyConfig().host() : "none",
                 config.resourceBlocking() ? "enabled" : "disabled");
     }

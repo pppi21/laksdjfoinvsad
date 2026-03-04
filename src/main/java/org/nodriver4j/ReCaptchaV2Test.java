@@ -34,7 +34,6 @@ public class ReCaptchaV2Test {
 
         BrowserConfig config = BrowserConfig.builder()
                 .executablePath(executablePath)
-                .fingerprintEnabled(true)
                 .headless(false)
                 .autoSolveAIKey(System.getenv("autosolve_key"))
                 .build();

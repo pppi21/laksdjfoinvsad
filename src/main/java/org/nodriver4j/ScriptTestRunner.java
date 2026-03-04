@@ -99,7 +99,6 @@ public class ScriptTestRunner {
                 .executablePath(settings.chromePath())
                 .headless(false)
                 .headlessGpuAcceleration(false)
-                .fingerprintEnabled(true)
                 .resourceBlocking(true)
                 .build();
 

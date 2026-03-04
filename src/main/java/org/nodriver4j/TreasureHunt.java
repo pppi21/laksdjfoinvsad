@@ -39,7 +39,6 @@ public class TreasureHunt {
 
         BrowserConfig config = BrowserConfig.builder()
                 .executablePath(executablePath)
-                .fingerprintEnabled(true)
                 .headless(true)
                 .build();
 

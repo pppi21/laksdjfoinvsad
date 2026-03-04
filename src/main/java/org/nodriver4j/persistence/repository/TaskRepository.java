@@ -85,7 +85,7 @@ public class TaskRepository implements Repository<TaskEntity> {
     INSERT INTO tasks (
         group_id, profile_id, proxy_id, status, userdata_path,
         notes, custom_status, log_message, log_color, warm_session,
-        fingerprint_index, created_at, updated_at
+        fingerprint_id, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """;
 
@@ -95,7 +95,7 @@ public class TaskRepository implements Repository<TaskEntity> {
         group_id = ?, profile_id = ?, proxy_id = ?, status = ?,
         userdata_path = ?, notes = ?, custom_status = ?,
         log_message = ?, log_color = ?, warm_session = ?,
-        fingerprint_index = ?,
+        fingerprint_id = ?,
         updated_at = datetime('now')
     WHERE id = ?
     """;
@@ -114,7 +114,7 @@ public class TaskRepository implements Repository<TaskEntity> {
     private static final String SELECT_COLUMNS = """
     id, group_id, profile_id, proxy_id, status, userdata_path,
     notes, custom_status, log_message, log_color, warm_session,
-    fingerprint_index, created_at, updated_at
+    fingerprint_id, created_at, updated_at
     """;
 
     private static final String SELECT_BY_ID_SQL =
@@ -151,9 +151,9 @@ public class TaskRepository implements Repository<TaskEntity> {
             "SELECT " + SELECT_COLUMNS + " FROM tasks WHERE group_id = ? ORDER BY id ASC LIMIT ? OFFSET ?";
 
     private static final String SELECT_BY_GROUP_ID_SEARCH_PAGINATED_SQL = """
-        SELECT t.id, t.group_id, t.profile_id, t.proxy_id, t.status, t.userdata_path,
-               t.notes, t.custom_status, t.log_message, t.log_color, t.warm_session,
-               t.fingerprint_index, t.created_at, t.updated_at
+    SELECT t.id, t.group_id, t.profile_id, t.proxy_id, t.status, t.userdata_path,
+           t.notes, t.custom_status, t.log_message, t.log_color, t.warm_session,
+           t.fingerprint_id, t.created_at, t.updated_at
         FROM tasks t
         JOIN profiles p ON t.profile_id = p.id
         WHERE t.group_id = ?
@@ -685,7 +685,7 @@ public class TaskRepository implements Repository<TaskEntity> {
         stmt.setString(i++, e.logMessage());
         stmt.setString(i++, e.logColor());
         stmt.setInt(i++, e.warmSession() ? 1 : 0);
-        stmt.setObject(i++, e.fingerprintIndex(), Types.INTEGER);
+        stmt.setObject(i++, e.fingerprintId(), Types.BIGINT);
         stmt.setString(i++, e.createdAtString());
         stmt.setString(i, e.updatedAtString());
     }
@@ -711,7 +711,7 @@ public class TaskRepository implements Repository<TaskEntity> {
         stmt.setString(i++, e.logMessage());
         stmt.setString(i++, e.logColor());
         stmt.setInt(i++, e.warmSession() ? 1 : 0);
-        stmt.setObject(i++, e.fingerprintIndex(), Types.INTEGER);
+        stmt.setObject(i++, e.fingerprintId(), Types.BIGINT);
         // updated_at is set via datetime('now') in SQL
         // WHERE id = ?
         stmt.setLong(i, e.id());
@@ -735,9 +735,9 @@ public class TaskRepository implements Repository<TaskEntity> {
         long proxyIdRaw = rs.getLong("proxy_id");
         Long proxyId = rs.wasNull() ? null : proxyIdRaw;
 
-        // Handle nullable fingerprint_index
-        int fingerprintIndexRaw = rs.getInt("fingerprint_index");
-        Integer fingerprintIndex = rs.wasNull() ? null : fingerprintIndexRaw;
+        // Handle nullable fingerprint_id
+        long fingerprintIdRaw = rs.getLong("fingerprint_id");
+        Long fingerprintId = rs.wasNull() ? null : fingerprintIdRaw;
 
         TaskEntity entity = TaskEntity.builder()
                 .id(rs.getLong("id"))
@@ -751,7 +751,7 @@ public class TaskRepository implements Repository<TaskEntity> {
                 .logMessage(rs.getString("log_message"))
                 .logColor(rs.getString("log_color"))
                 .warmSession(rs.getInt("warm_session") == 1)
-                .fingerprintIndex(fingerprintIndex)
+                .fingerprintId(fingerprintId)
                 .build();
 
         String createdAtStr = rs.getString("created_at");

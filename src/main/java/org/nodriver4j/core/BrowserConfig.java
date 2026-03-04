@@ -1,5 +1,6 @@
 package org.nodriver4j.core;
 
+import org.nodriver4j.persistence.entity.FingerprintEntity;
 import org.nodriver4j.services.AutoSolveAIService;
 
 import java.nio.file.Path;
@@ -18,10 +19,11 @@ import java.util.List;
  * <pre>{@code
  * BrowserConfig config = BrowserConfig.builder()
  *     .executablePath("/path/to/chrome")
- *     .headless(true)
- *     .fingerprintEnabled(true)
+ *     .headless(false)
+ *     .fingerprint(fingerprintEntity)
  *     .resourceBlocking(true)
- *     .interactionOptions(InteractionOptions.fast())
+ *     .webrtcPolicy("disable_non_proxied_udp")
+ *     .interactionOptions(InteractionOptions.defaults())
  *     .build();
  * }</pre>
  *
@@ -30,7 +32,10 @@ import java.util.List;
  * <pre>{@code
  * BrowserConfig config = BrowserConfig.builder()
  *     .executablePath("/path/to/chrome")
- *     .userDataDir(Path.of("/data/task-42"))
+ *     .headless(true)
+ *     .fingerprint(fingerprintEntity)
+ *     .resourceBlocking(true)
+ *     .interactionOptions(InteractionOptions.fast())
  *     .build();
  * }</pre>
  *
@@ -55,8 +60,7 @@ public class BrowserConfig {
     private final List<String> arguments;
 
     // Features
-    private final boolean fingerprintEnabled;
-    private final Integer fingerprintIndex;
+    private final FingerprintEntity fingerprint;
     private final boolean resourceBlocking;
     private final InteractionOptions interactionOptions;
 
@@ -73,8 +77,7 @@ public class BrowserConfig {
         this.headlessGpuAcceleration = builder.headlessGpuAcceleration;
         this.webrtcPolicy = builder.webrtcPolicy;
         this.arguments = Collections.unmodifiableList(new ArrayList<>(builder.arguments));
-        this.fingerprintEnabled = builder.fingerprintEnabled;
-        this.fingerprintIndex = builder.fingerprintIndex;
+        this.fingerprint = builder.fingerprint;
         this.resourceBlocking = builder.resourceBlocking;
         this.interactionOptions = builder.interactionOptions;
         this.proxy = builder.proxy;
@@ -130,28 +133,26 @@ public class BrowserConfig {
     }
 
     /**
-     * Checks if fingerprint spoofing is enabled.
+     * Gets the fingerprint entity containing all browser identity values.
      *
-     * @return true if fingerprinting is enabled
+     * <p>When non-null, {@link Browser#launch} applies all identity overrides
+     * (UA metadata, GPU, screen, audio, media devices, etc.) as Chrome
+     * command-line arguments. When null, no fingerprint spoofing is applied.</p>
+     *
+     * @return the fingerprint entity, or null if fingerprinting is disabled
+     * @see FingerprintEntity
      */
-    public boolean fingerprintEnabled() {
-        return fingerprintEnabled;
+    public FingerprintEntity fingerprint() {
+        return fingerprint;
     }
 
     /**
-     * Gets the fingerprint line index for deterministic fingerprint loading.
+     * Checks if fingerprint spoofing is enabled.
      *
-     * <p>When set, {@link Browser#launch} uses this index to load a specific
-     * fingerprint profile instead of picking a random one. This ensures the
-     * same task always gets the same fingerprint across browser sessions.</p>
-     *
-     * <p>When null and {@link #fingerprintEnabled()} is true, a random
-     * fingerprint is selected.</p>
-     *
-     * @return the fingerprint line index, or null for random selection
+     * @return true if a fingerprint entity is configured
      */
-    public Integer fingerprintIndex() {
-        return fingerprintIndex;
+    public boolean hasFingerprint() {
+        return fingerprint != null;
     }
 
     /**
@@ -253,8 +254,7 @@ public class BrowserConfig {
         builder.headlessGpuAcceleration = this.headlessGpuAcceleration;
         builder.webrtcPolicy = this.webrtcPolicy;
         builder.arguments = new ArrayList<>(this.arguments);
-        builder.fingerprintEnabled = this.fingerprintEnabled;
-        builder.fingerprintIndex = this.fingerprintIndex;
+        builder.fingerprint = this.fingerprint;
         builder.resourceBlocking = this.resourceBlocking;
         builder.interactionOptions = this.interactionOptions;
         builder.proxy = this.proxy;
@@ -278,7 +278,7 @@ public class BrowserConfig {
                 "BrowserConfig{executable=%s, headless=%s, fingerprint=%s, resourceBlocking=%s, proxy=%s, autoSolve=%s, userDataDir=%s}",
                 executablePath,
                 headless,
-                fingerprintEnabled ? "enabled" : "disabled",
+                fingerprint != null ? "enabled(seed=" + fingerprint.seed() + ")" : "disabled",
                 resourceBlocking ? "enabled" : "disabled",
                 proxy != null ? proxy.host() : "none",
                 autoSolveAIService != null ? "configured" : "none",
@@ -312,8 +312,7 @@ public class BrowserConfig {
         private boolean headlessGpuAcceleration = false;
         private String webrtcPolicy = DEFAULT_WEBRTC_POLICY;
         private List<String> arguments = new ArrayList<>();
-        private boolean fingerprintEnabled = true;
-        private Integer fingerprintIndex;
+        private FingerprintEntity fingerprint;
         private boolean resourceBlocking = false;
         private InteractionOptions interactionOptions = InteractionOptions.defaults();
         private Proxy proxy;
@@ -401,33 +400,19 @@ public class BrowserConfig {
         }
 
         /**
-         * Enables or disables fingerprint spoofing.
+         * Sets the fingerprint entity for browser identity spoofing.
          *
-         * <p>When enabled, a random browser fingerprint is loaded and applied
-         * to make the browser appear as a different device.</p>
+         * <p>When set, all identity values (UA metadata, GPU strings, screen
+         * dimensions, audio properties, media device counts, etc.) are applied
+         * as Chrome command-line arguments at launch time.</p>
          *
-         * <p>Default: true</p>
+         * <p>When null (default), no fingerprint spoofing is applied.</p>
          *
-         * @param enabled true to enable fingerprinting
+         * @param fingerprint the fingerprint entity, or null to disable
          * @return this builder
          */
-        public Builder fingerprintEnabled(boolean enabled) {
-            this.fingerprintEnabled = enabled;
-            return this;
-        }
-
-        /**
-         * Sets the fingerprint line index for deterministic loading.
-         *
-         * <p>When set alongside {@link #fingerprintEnabled(boolean) fingerprintEnabled(true)},
-         * the browser will load the specific fingerprint profile at this index
-         * instead of picking a random one.</p>
-         *
-         * @param fingerprintIndex the zero-based index, or null for random
-         * @return this builder
-         */
-        public Builder fingerprintIndex(Integer fingerprintIndex) {
-            this.fingerprintIndex = fingerprintIndex;
+        public Builder fingerprint(FingerprintEntity fingerprint) {
+            this.fingerprint = fingerprint;
             return this;
         }
 

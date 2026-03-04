@@ -140,7 +140,9 @@ public class TaskEntity {
     // ==================== Session Options ====================
 
     private boolean warmSession;
-    private Integer fingerprintIndex;
+
+    /** FK reference to the fingerprints table. Null if no fingerprint assigned yet. */
+    private Long fingerprintId;
 
     // ==================== Metadata ====================
 
@@ -173,7 +175,7 @@ public class TaskEntity {
         this.logColor = builder.logColor;
         this.userdataPath = builder.userdataPath;
         this.warmSession = builder.warmSession;
-        this.fingerprintIndex = builder.fingerprintIndex;
+        this.fingerprintId = builder.fingerprintId;
         this.notes = builder.notes;
         this.createdAt = builder.createdAt != null ? builder.createdAt : LocalDateTime.now();
         this.updatedAt = builder.updatedAt != null ? builder.updatedAt : LocalDateTime.now();
@@ -207,7 +209,7 @@ public class TaskEntity {
                 .logColor(logColor)
                 .userdataPath(userdataPath)
                 .warmSession(warmSession)
-                .fingerprintIndex(fingerprintIndex)
+                .fingerprintId(fingerprintId)
                 .notes(notes)
                 .createdAt(createdAt)
                 .updatedAt(updatedAt);
@@ -321,16 +323,17 @@ public class TaskEntity {
     }
 
     /**
-     * Gets the fingerprint line index for deterministic fingerprint loading.
+     * Gets the associated fingerprint ID.
      *
-     * <p>This is the zero-based index into the fingerprints JSONL file.
-     * When set, the same fingerprint is reloaded on every browser launch
-     * for this task. Null means no fingerprint has been assigned yet.</p>
+     * <p>References a row in the {@code fingerprints} table containing
+     * the full browser identity for this task. Null means no fingerprint
+     * has been extracted and assigned yet.</p>
      *
-     * @return the fingerprint index, or null if not yet assigned
+     * @return the fingerprint ID, or null if not assigned
+     * @see org.nodriver4j.persistence.entity.FingerprintEntity
      */
-    public Integer fingerprintIndex() {
-        return fingerprintIndex;
+    public Long fingerprintId() {
+        return fingerprintId;
     }
 
     /**
@@ -505,13 +508,13 @@ public class TaskEntity {
     }
 
     /**
-     * Sets the fingerprint line index.
+     * Sets the associated fingerprint ID.
      *
-     * @param fingerprintIndex the index, or null to clear
+     * @param fingerprintId the fingerprint ID, or null to clear
      * @return this entity for chaining
      */
-    public TaskEntity fingerprintIndex(Integer fingerprintIndex) {
-        this.fingerprintIndex = fingerprintIndex;
+    public TaskEntity fingerprintId(Long fingerprintId) {
+        this.fingerprintId = fingerprintId;
         return this;
     }
 
@@ -591,6 +594,15 @@ public class TaskEntity {
      */
     public boolean hasProxy() {
         return proxyId != null && proxyId > 0;
+    }
+
+    /**
+     * Checks if a fingerprint is assigned to this task.
+     *
+     * @return true if a fingerprint ID is set
+     */
+    public boolean hasFingerprint() {
+        return fingerprintId != null && fingerprintId > 0;
     }
 
     /**
@@ -697,10 +709,10 @@ public class TaskEntity {
 
     @Override
     public String toString() {
-        return String.format("TaskEntity{id=%d, groupId=%d, profileId=%d, proxyId=%s, fingerprintIndex=%s, status=%s}",
+        return String.format("TaskEntity{id=%d, groupId=%d, profileId=%d, proxyId=%s, fingerprintId=%s, status=%s}",
                 id, groupId, profileId,
                 proxyId != null ? proxyId : "none",
-                fingerprintIndex != null ? fingerprintIndex : "none",
+                fingerprintId != null ? fingerprintId : "none",
                 displayStatus());
     }
 
@@ -734,7 +746,7 @@ public class TaskEntity {
         private String logColor;
         private String userdataPath;
         private boolean warmSession = false;
-        private Integer fingerprintIndex;
+        private Long fingerprintId;
         private String notes;
         private LocalDateTime createdAt;
         private LocalDateTime updatedAt;
@@ -791,9 +803,8 @@ public class TaskEntity {
             return this;
         }
 
-        // Method
-        public Builder fingerprintIndex(Integer fingerprintIndex) {
-            this.fingerprintIndex = fingerprintIndex;
+        public Builder fingerprintId(Long fingerprintId) {
+            this.fingerprintId = fingerprintId;
             return this;
         }
 

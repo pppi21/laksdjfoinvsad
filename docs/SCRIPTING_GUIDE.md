@@ -100,7 +100,7 @@ public class QuickStartDemo {
 
         // 2. Use try-with-resources for automatic cleanup
         try (Browser browser = manager.createSession()) {
-            Page page = browser.getPage();
+            Page page = browser.page();
 
             // 3. Navigate
             page.navigate("https://example.com");
