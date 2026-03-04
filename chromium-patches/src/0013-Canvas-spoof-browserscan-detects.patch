@@ -1,7 +1,7 @@
 From 89e27eb1e14f3cf428cfded55dc0791fb49bc4ac Mon Sep 17 00:00:00 2001
 From: Leo Rodarte <leorodarte07@gmail.com>
 Date: Wed, 25 Feb 2026 00:29:07 -0800
-Subject: [PATCH 13/23] Canvas spoof - browserscan detects
+Subject: [PATCH 13/24] Canvas spoof - browserscan detects
 
 ---
  .../core/html/canvas/html_canvas_element.cc   |  67 +++++++
