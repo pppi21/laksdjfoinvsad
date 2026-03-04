@@ -508,19 +508,30 @@ public class TaskExecutionService {
 
         ensureNotShutdown();
 
-        // Load task from database
         TaskEntity task = taskRepository.findById(taskId)
                 .orElseThrow(() -> new IllegalStateException("Task not found: " + taskId));
 
-        // Assign userdata path and fingerprint index if this is the first launch
         ensureUserdataPath(task);
         ensureFingerprint(task);
 
+        // Run proxy diagnostic before building config.
+        // Detects the real exit IP through the proxy, then resolves timezone + geolocation.
+        // Failure is non-blocking — the browser still launches, just without those two switches.
+        ProxyDiagnosticResult diagnostic = null;
+        if (task.hasProxy()) {
+            ProxyEntity proxyEntity = proxyRepository.findById(task.proxyId())
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Proxy not found for task " + task.id() + ": proxyId=" + task.proxyId()));
+            diagnostic = ProxyDiagnosticService.diagnose(proxyEntity.toProxyConfig());
+            if (!diagnostic.success()) {
+                System.err.println("[TaskExecutionService] Proxy diagnostic failed for task " +
+                        taskId + ": " + diagnostic.failureReason() +
+                        " — launching without timezone/geolocation overrides");
+            }
+        }
 
-        // Build config from task + settings
-        BrowserConfig config = buildConfig(task, headless);
+        BrowserConfig config = buildConfig(task, headless, diagnostic);
 
-        // Allocate a port
         Integer port = availablePorts.poll(PORT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         if (port == null) {
             throw new IOException("No ports available after " + PORT_TIMEOUT_SECONDS +
@@ -531,13 +542,9 @@ public class TaskExecutionService {
             System.out.println("[TaskExecutionService] Launching browser for task " + taskId +
                     " (port " + port + ", headless=" + headless + ")");
 
-            // Launch browser
             Browser browser = Browser.launch(config, port, this::releasePort);
-
-            // Track the browser
             runningBrowsers.put(taskId, browser);
 
-            // Clear previous log and update status
             task.clearLog();
             task.status(status);
             task.touchUpdatedAt();
@@ -549,12 +556,8 @@ public class TaskExecutionService {
             return browser;
 
         } catch (IOException | RuntimeException e) {
-            // Launch failed — release port, don't track
             releasePort(port);
-
-            // Update task status to FAILED
             updateTaskStatus(taskId, TaskEntity.STATUS_FAILED);
-
             throw e;
         }
     }
@@ -625,7 +628,8 @@ public class TaskExecutionService {
      * @return the built BrowserConfig
      * @throws IllegalStateException if a referenced proxy is not found
      */
-    private BrowserConfig buildConfig(TaskEntity task, boolean headless) {
+    private BrowserConfig buildConfig(TaskEntity task, boolean headless,
+                                      ProxyDiagnosticResult diagnostic) {
         Settings settings = Settings.get();
 
         BrowserConfig.Builder builder = BrowserConfig.builder()
@@ -634,21 +638,16 @@ public class TaskExecutionService {
                 .webrtcPolicy(settings.defaultWebrtcPolicy())
                 .userDataDir(Path.of(task.userdataPath()));
 
-        // Load and apply fingerprint if assigned and enabled in settings
         if (settings.defaultFingerprintEnabled() && task.hasFingerprint()) {
             fingerprintRepository.findById(task.fingerprintId())
                     .ifPresent(builder::fingerprint);
         }
 
-
-
-        if (headless){
+        if (headless) {
             builder.headless(true)
                     .headlessGpuAcceleration(true);
-
         }
 
-        // Proxy from task's referenced ProxyEntity
         if (task.hasProxy()) {
             ProxyEntity proxyEntity = proxyRepository.findById(task.proxyId())
                     .orElseThrow(() -> new IllegalStateException(
@@ -656,9 +655,14 @@ public class TaskExecutionService {
             builder.proxy(proxyEntity.toProxyConfig());
         }
 
-        // AutoSolve AI from settings
         if (settings.hasAutoSolveApiKey()) {
             builder.autoSolveAIKey(settings.autoSolveApiKey());
+        }
+
+        // Apply proxy-derived timezone and geolocation overrides
+        if (diagnostic != null && diagnostic.success()) {
+            builder.argument("--fingerprint-timezone=" + diagnostic.timezone());
+            builder.argument("--fingerprint-geolocation=" + diagnostic.toGeolocationArg());
         }
 
         return builder.build();
