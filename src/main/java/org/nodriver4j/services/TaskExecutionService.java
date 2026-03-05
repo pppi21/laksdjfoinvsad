@@ -663,6 +663,7 @@ public class TaskExecutionService {
         if (diagnostic != null && diagnostic.success()) {
             builder.argument("--fingerprint-timezone=" + diagnostic.timezone());
             builder.argument("--fingerprint-geolocation=" + diagnostic.toGeolocationArg());
+            builder.argument("--webrtc-ip4=" + diagnostic.exitIp());
         }
 
         return builder.build();

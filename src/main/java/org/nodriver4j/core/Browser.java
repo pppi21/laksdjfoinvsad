@@ -1304,11 +1304,11 @@ public class Browser implements AutoCloseable {
             }
         }
 
-        // WebRTC policy
-        String webrtcPolicy = config.webrtcPolicy();
-        if (webrtcPolicy != null && !webrtcPolicy.isBlank()) {
-            args.add("--webrtc-ip-handling-policy=" + webrtcPolicy);
-        }
+//        // WebRTC policy
+//        String webrtcPolicy = config.webrtcPolicy();
+//        if (webrtcPolicy != null && !webrtcPolicy.isBlank()) {
+//            args.add("--webrtc-ip-handling-policy=" + webrtcPolicy);
+//        }
 
         // Custom arguments from config
         List<String> customArgs = config.arguments();
