@@ -1,7 +1,7 @@
 From 373ba9ee1219f71f57df35a81e43f18d2fbc4978 Mon Sep 17 00:00:00 2001
 From: Leo Rodarte <leorodarte07@gmail.com>
 Date: Tue, 24 Feb 2026 16:14:11 -0800
-Subject: [PATCH 10/25] Hardware concurrency spoof
+Subject: [PATCH 10/26] Hardware concurrency spoof
 
 ---
  .../frame/navigator_concurrent_hardware.cc    | 19 ++++++++++++++++++-
