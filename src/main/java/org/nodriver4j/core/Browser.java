@@ -254,6 +254,8 @@ public class Browser implements AutoCloseable {
 
         // Start Chrome process
         ProcessBuilder processBuilder = new ProcessBuilder(arguments);
+        processBuilder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+        processBuilder.redirectErrorStream(true);
         Process process = processBuilder.start();
 
         // Connect to browser target — the single WebSocket for all CDP traffic
@@ -1329,9 +1331,9 @@ public class Browser implements AutoCloseable {
             // args.add("--fingerprint-brand=" + fp.browserBrand());
             // args.add("--fingerprint-brand-version=" + fp.browserMajorVersion());
             // args.add("--fingerprint-brand-version-long=" + fp.brandVersionLong());
-            args.add("--fingerprint-brand=Chrome");
-            args.add("--fingerprint-brand-version=145");
-            args.add("--fingerprint-brand-version-long=145.0.7632." + commit);
+             args.add("--fingerprint-brand=Chrome");
+             args.add("--fingerprint-brand-version=145");
+             args.add("--fingerprint-brand-version-long=145.0.7632." + commit);
             // args.add("--fingerprint-platform=" + fp.platform());
             // args.add("--fingerprint-platform-version=" + fp.platformVersion());
             args.add("--fingerprint-platform=Windows");

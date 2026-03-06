@@ -1,7 +1,7 @@
 From 92a9725d180eeb94baf61d2e8b1eab9275cbe982 Mon Sep 17 00:00:00 2001
 From: Leo Rodarte <leorodarte07@gmail.com>
 Date: Sun, 1 Mar 2026 16:59:17 -0800
-Subject: [PATCH 15/28] removed duplicate switch
+Subject: [PATCH 15/29] removed duplicate switch
 
 ---
  content/browser/renderer_host/render_process_host_impl.cc | 1 -

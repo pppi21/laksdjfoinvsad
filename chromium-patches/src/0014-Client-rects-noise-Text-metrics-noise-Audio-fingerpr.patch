@@ -1,7 +1,7 @@
 From ad97f04e60fe98073b50baa2ff86c9ae40f36b02 Mon Sep 17 00:00:00 2001
 From: Leo Rodarte <leorodarte07@gmail.com>
 Date: Wed, 25 Feb 2026 22:13:41 -0800
-Subject: [PATCH 14/28] Client rects noise, Text metrics noise, Audio
+Subject: [PATCH 14/29] Client rects noise, Text metrics noise, Audio
  fingerprinting, Canvas fingerprinting. All detected by fingerprinting
  software unfortunately
 

@@ -1,7 +1,7 @@
 From 343ee5c6ffa821614271e3cd58d52041e8650277 Mon Sep 17 00:00:00 2001
 From: Leo Rodarte <leorodarte07@gmail.com>
 Date: Thu, 5 Mar 2026 11:38:36 -0800
-Subject: [PATCH 27/28] old canvas patches removed
+Subject: [PATCH 27/29] old canvas patches removed
 
 ---
  .../core/html/canvas/html_canvas_element.cc   |  67 -------
