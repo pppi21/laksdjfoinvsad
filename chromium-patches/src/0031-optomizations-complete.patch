@@ -1,0 +1,1042 @@
+From f014bd149178a127f784358d90976c051d808466 Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Sun, 8 Mar 2026 16:14:08 -0700
+Subject: [PATCH 31/31] optomizations complete.
+
+---
+ .../embedder_support/user_agent_utils.cc      |  35 +-
+ components/nodriver4j/platform_override.h     |  36 ++
+ .../approximated_device_memory.cc             |  26 +-
+ .../common/user_agent/user_agent_metadata.cc  | 369 +++++++++---------
+ .../blink/renderer/core/css/media_values.cc   |  34 +-
+ .../blink/renderer/core/dom/element.cc        |  18 +-
+ third_party/blink/renderer/core/dom/range.cc  |  17 +-
+ .../core/execution_context/navigator_base.cc  |  21 +-
+ .../renderer/core/frame/local_dom_window.cc   |  52 ++-
+ .../blink/renderer/core/frame/navigator.cc    |  21 +-
+ .../frame/navigator_concurrent_hardware.cc    |   2 +-
+ .../blink/renderer/core/frame/screen.cc       |  81 ++--
+ 12 files changed, 387 insertions(+), 325 deletions(-)
+ create mode 100644 components/nodriver4j/platform_override.h
+
+diff --git a/components/embedder_support/user_agent_utils.cc b/components/embedder_support/user_agent_utils.cc
+index 653956c80e..8012e62d93 100644
+--- a/components/embedder_support/user_agent_utils.cc
++++ b/components/embedder_support/user_agent_utils.cc
+@@ -36,6 +36,7 @@
+ #include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
+ #include "components/nodriver4j/nodriver4j_switches.h"
+ #include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
++#include "components/nodriver4j/platform_override.h"
+ 
+ #if BUILDFLAG(IS_WIN)
+ #include <windows.h>
+@@ -297,18 +298,11 @@ blink::UserAgentBrandList ShuffleBrandList(
+ }
+ 
+ std::string GetUserAgentPlatform() {
+-  const base::CommandLine* command_line =
+-      base::CommandLine::ForCurrentProcess();
+-  if (command_line->HasSwitch(switches::kFingerprintPlatform)) {
+-    std::string platform_key = base::ToLowerASCII(
+-        command_line->GetSwitchValueASCII(switches::kFingerprintPlatform));
+-    if (platform_key == "windows") {
+-      return "";
+-    } else if (platform_key == "linux") {
+-      return "X11; ";
+-    } else if (platform_key == "macos") {
+-      return "Macintosh; ";
+-    }
++  switch (nodriver4j::GetSpoofedPlatform()) {
++    case nodriver4j::SpoofedPlatform::kWindows: return "";
++    case nodriver4j::SpoofedPlatform::kLinux: return "X11; ";
++    case nodriver4j::SpoofedPlatform::kMacOS: return "Macintosh; ";
++    case nodriver4j::SpoofedPlatform::kNone: break;
+   }
+ #if BUILDFLAG(IS_WIN)
+   return "";
+@@ -330,18 +324,11 @@ std::string GetUserAgentPlatform() {
+ }
+ 
+ std::string GetUnifiedPlatform() {
+-  const base::CommandLine* command_line =
+-      base::CommandLine::ForCurrentProcess();
+-  if (command_line->HasSwitch(switches::kFingerprintPlatform)) {
+-    std::string platform_key = base::ToLowerASCII(
+-        command_line->GetSwitchValueASCII(switches::kFingerprintPlatform));
+-    if (platform_key == "windows") {
+-      return "Windows NT 10.0; Win64; x64";
+-    } else if (platform_key == "linux") {
+-      return "X11; Linux x86_64";
+-    } else if (platform_key == "macos") {
+-      return "Macintosh; Intel Mac OS X 10_15_7";
+-    }
++  switch (nodriver4j::GetSpoofedPlatform()) {
++    case nodriver4j::SpoofedPlatform::kWindows: return "Windows NT 10.0; Win64; x64";
++    case nodriver4j::SpoofedPlatform::kLinux: return "X11; Linux x86_64";
++    case nodriver4j::SpoofedPlatform::kMacOS: return "Macintosh; Intel Mac OS X 10_15_7";
++    case nodriver4j::SpoofedPlatform::kNone: break;
+   }
+ #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX)
+   // This constant is only used on Android (desktop) and Linux.
+diff --git a/components/nodriver4j/platform_override.h b/components/nodriver4j/platform_override.h
+new file mode 100644
+index 0000000000..6e59737f68
+--- /dev/null
++++ b/components/nodriver4j/platform_override.h
+@@ -0,0 +1,36 @@
++#ifndef COMPONENTS_NODRIVER4J_PLATFORM_OVERRIDE_H_
++#define COMPONENTS_NODRIVER4J_PLATFORM_OVERRIDE_H_
++
++#include <string>
++
++#include "base/command_line.h"
++#include "base/strings/string_util.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
++
++namespace nodriver4j {
++
++enum class SpoofedPlatform {
++  kNone,
++  kWindows,
++  kLinux,
++  kMacOS,
++};
++
++inline SpoofedPlatform GetSpoofedPlatform() {
++  static const SpoofedPlatform platform = []() -> SpoofedPlatform {
++    const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++    if (!cl->HasSwitch(switches::kFingerprintPlatform))
++      return SpoofedPlatform::kNone;
++    std::string key = base::ToLowerASCII(
++        cl->GetSwitchValueASCII(switches::kFingerprintPlatform));
++    if (key == "windows") return SpoofedPlatform::kWindows;
++    if (key == "linux") return SpoofedPlatform::kLinux;
++    if (key == "macos") return SpoofedPlatform::kMacOS;
++    return SpoofedPlatform::kNone;
++  }();
++  return platform;
++}
++
++}  // namespace nodriver4j
++
++#endif  // COMPONENTS_NODRIVER4J_PLATFORM_OVERRIDE_H_
+\ No newline at end of file
+diff --git a/third_party/blink/common/device_memory/approximated_device_memory.cc b/third_party/blink/common/device_memory/approximated_device_memory.cc
+index e3aabedbc9..7fe2edeefa 100644
+--- a/third_party/blink/common/device_memory/approximated_device_memory.cc
++++ b/third_party/blink/common/device_memory/approximated_device_memory.cc
+@@ -30,28 +30,27 @@ void ApproximatedDeviceMemory::Initialize() {
+ 
+ // static
+ float ApproximatedDeviceMemory::GetApproximatedDeviceMemory() {
+-  const base::CommandLine* command_line =
+-      base::CommandLine::ForCurrentProcess();
++  static const float cached = []() -> float {
++    const base::CommandLine* cl =
++        base::CommandLine::ForCurrentProcess();
++
++    if (!cl->HasSwitch(switches::kFingerprintDeviceMemory))
++      return -1.0f;
+ 
+-  if (command_line->HasSwitch(switches::kFingerprintDeviceMemory)) {
+     int raw_value = 0;
+     base::StringToInt(
+-        command_line->GetSwitchValueASCII(switches::kFingerprintDeviceMemory),
++        cl->GetSwitchValueASCII(switches::kFingerprintDeviceMemory),
+         &raw_value);
+ 
+     if (raw_value <= 0)
+-      return approximated_device_memory_gb_;
++      return -1.0f;
+ 
+-    // Determine the valid value set based on spoofed Chrome version.
+-    // Pre-147: {0.25, 0.5, 1, 2, 4, 8}
+-    // 147+:    {2, 4, 8, 16, 32}
+     int spoofed_version = 0;
+-    if (command_line->HasSwitch(switches::kFingerprintBrandVersion)) {
++    if (cl->HasSwitch(switches::kFingerprintBrandVersion)) {
+       base::StringToInt(
+-          command_line->GetSwitchValueASCII(switches::kFingerprintBrandVersion),
++          cl->GetSwitchValueASCII(switches::kFingerprintBrandVersion),
+           &spoofed_version);
+     } else {
+-      // Fall back to real Chromium major version
+       std::string product_version = PRODUCT_VERSION;
+       size_t dot = product_version.find('.');
+       if (dot != std::string::npos) {
+@@ -76,7 +75,10 @@ float ApproximatedDeviceMemory::GetApproximatedDeviceMemory() {
+       }
+     }
+     return result;
+-  }
++  }();
++
++  if (cached >= 0.0f)
++    return cached;
+ 
+   return approximated_device_memory_gb_;
+ }
+diff --git a/third_party/blink/common/user_agent/user_agent_metadata.cc b/third_party/blink/common/user_agent/user_agent_metadata.cc
+index 24414a2540..b66e8ffb47 100644
+--- a/third_party/blink/common/user_agent/user_agent_metadata.cc
++++ b/third_party/blink/common/user_agent/user_agent_metadata.cc
+@@ -15,6 +15,8 @@
+ #include "components/nodriver4j/nodriver4j_switches.h"
+ #include "net/http/structured_headers.h"
+ #include "third_party/blink/public/common/features.h"
++#include "base/no_destructor.h"
++#include "base/version_info/version_info_values.h"
+ 
+ namespace blink {
+ 
+@@ -29,6 +31,159 @@ constexpr std::string_view kValidFormFactors[] = {
+     blink::kXRFormFactor,      blink::kEInkFormFactor,
+     blink::kWatchFormFactor};
+ 
++struct CachedUAOverride {
++  bool active;
++  std::vector<UserAgentBrandVersion> brand_version_list;
++  std::vector<UserAgentBrandVersion> brand_full_version_list;
++  std::string full_version;
++  std::string platform;
++  std::string platform_version;
++  std::string architecture;
++  std::string bitness;
++  bool wow64;
++};
++
++const CachedUAOverride& GetCachedUAOverride() {
++  static const base::NoDestructor<CachedUAOverride> cached([]() -> CachedUAOverride {
++    const base::CommandLine* command_line =
++        base::CommandLine::ForCurrentProcess();
++
++    if (!command_line->HasSwitch(switches::kFingerprintBrandVersion) &&
++        !command_line->HasSwitch(switches::kFingerprintBrandVersionLong) &&
++        !command_line->HasSwitch(switches::kFingerprintPlatform))
++      return {false, {}, {}, "", "", "", "", "", false};
++
++    // Build a dummy metadata and run the full override logic once
++    UserAgentMetadata seed;
++    // Provide a Chromium entry so the extraction loop finds it
++    seed.brand_full_version_list.push_back({"Chromium", PRODUCT_VERSION});
++    seed.full_version = PRODUCT_VERSION;
++
++    // --- Extract Chromium info ---
++    std::string chromium_full_version;
++    std::string chromium_major_version;
++    for (const auto& entry : seed.brand_full_version_list) {
++      if (entry.brand == "Chromium") {
++        chromium_full_version = entry.version;
++        size_t dot = chromium_full_version.find('.');
++        chromium_major_version = (dot != std::string::npos)
++                                     ? chromium_full_version.substr(0, dot)
++                                     : chromium_full_version;
++        break;
++      }
++    }
++
++    // --- Determine display brand ---
++    std::string display_brand;
++    if (command_line->HasSwitch(switches::kFingerprintBrand)) {
++      std::string brand_key =
++          command_line->GetSwitchValueASCII(switches::kFingerprintBrand);
++      if (brand_key == "Chrome") display_brand = "Google Chrome";
++      else if (brand_key == "Edge") display_brand = "Microsoft Edge";
++      else if (brand_key == "Opera") display_brand = "Opera";
++      else if (brand_key == "Vivaldi") display_brand = "Vivaldi";
++      else display_brand = brand_key;
++    } else {
++      display_brand = "Google Chrome";
++    }
++
++    // --- Resolve versions ---
++    std::string brand_full_version;
++    std::string brand_major_version;
++
++    if (command_line->HasSwitch(switches::kFingerprintBrandVersionLong)) {
++      brand_full_version = command_line->GetSwitchValueASCII(
++          switches::kFingerprintBrandVersionLong);
++    } else if (command_line->HasSwitch(switches::kFingerprintBrandVersion)) {
++      brand_full_version =
++          command_line->GetSwitchValueASCII(switches::kFingerprintBrandVersion) +
++          ".0.0.0";
++    } else {
++      brand_full_version = chromium_full_version;
++    }
++
++    if (command_line->HasSwitch(switches::kFingerprintBrandVersion)) {
++      brand_major_version =
++          command_line->GetSwitchValueASCII(switches::kFingerprintBrandVersion);
++    } else {
++      size_t dot = brand_full_version.find('.');
++      brand_major_version = (dot != std::string::npos)
++                                ? brand_full_version.substr(0, dot)
++                                : brand_full_version;
++    }
++
++    chromium_major_version = brand_major_version;
++    chromium_full_version = brand_full_version;
++
++    // --- GREASE ---
++    int grease_seed = 0;
++    base::StringToInt(brand_major_version, &grease_seed);
++
++    const std::vector<std::string> grease_chars = {
++        " ", "(", ":", "-", ".", "/", ")", ";", "=", "?", "_"};
++    const std::vector<std::string> grease_versions = {"8", "99", "24"};
++
++    std::string not_a_brand = base::StrCat({
++        "Not",
++        grease_chars[grease_seed % grease_chars.size()],
++        "A",
++        grease_chars[(grease_seed + 1) % grease_chars.size()],
++        "Brand"});
++    std::string not_a_brand_major = grease_versions[grease_seed % grease_versions.size()];
++    std::string not_a_brand_full = not_a_brand_major + ".0.0.0";
++
++    CachedUAOverride result;
++    result.active = true;
++
++    result.brand_version_list.push_back({not_a_brand, not_a_brand_major});
++    result.brand_version_list.push_back({display_brand, brand_major_version});
++    result.brand_version_list.push_back({"Chromium", chromium_major_version});
++
++    result.brand_full_version_list.push_back({not_a_brand, not_a_brand_full});
++    result.brand_full_version_list.push_back({display_brand, brand_full_version});
++    result.brand_full_version_list.push_back({"Chromium", chromium_full_version});
++
++    result.full_version = brand_full_version;
++
++    // --- Platform ---
++    if (command_line->HasSwitch(switches::kFingerprintPlatform)) {
++      std::string platform_key = base::ToLowerASCII(
++          command_line->GetSwitchValueASCII(switches::kFingerprintPlatform));
++
++      if (platform_key == "windows") {
++        result.platform = "Windows";
++        result.platform_version = "19.0.0";
++        result.architecture = "x86";
++        result.bitness = "64";
++        result.wow64 = false;
++      } else if (platform_key == "linux") {
++        result.platform = "Linux";
++        result.platform_version = "6.11.0";
++        result.architecture = "x86";
++        result.bitness = "64";
++        result.wow64 = false;
++      } else if (platform_key == "macos") {
++        result.platform = "macOS";
++        result.platform_version = "15.2.0";
++        result.architecture = "arm";
++        result.bitness = "64";
++        result.wow64 = false;
++      }
++
++      if (command_line->HasSwitch(switches::kFingerprintPlatformVersion)) {
++        std::string v = command_line->GetSwitchValueASCII(
++            switches::kFingerprintPlatformVersion);
++        if (!v.empty())
++          result.platform_version = v;
++      }
++    }
++
++    return result;
++  }());
++  return *cached;
++}
++
++
+ }  // namespace
+ 
+ UserAgentBrandVersion::UserAgentBrandVersion(const std::string& ua_brand,
+@@ -241,193 +396,57 @@ void UpdateUserAgentMetadataFingerprint(UserAgentMetadata* metadata) {
+   if (!metadata)
+     return;
+ 
+-  const base::CommandLine* command_line =
+-      base::CommandLine::ForCurrentProcess();
+-
+-  // --- Extract existing Chromium info from the metadata ---
+-  std::string chromium_full_version;
+-  std::string chromium_major_version;
+-  for (const auto& entry : metadata->brand_full_version_list) {
+-    if (entry.brand == "Chromium") {
+-      chromium_full_version = entry.version;
+-      size_t dot = chromium_full_version.find('.');
+-      chromium_major_version = (dot != std::string::npos)
+-                                   ? chromium_full_version.substr(0, dot)
+-                                   : chromium_full_version;
+-      break;
+-    }
+-  }
+-
+-  // --- Determine the display brand and its versions ---
+-  std::string display_brand;
+-  std::string brand_full_version;   // e.g. "145.0.7632.116"
+-  std::string brand_major_version;  // e.g. "145"
+-
+-  if (command_line->HasSwitch(switches::kFingerprintBrand)) {
+-    std::string brand_key =
+-        command_line->GetSwitchValueASCII(switches::kFingerprintBrand);
+-
+-    // Map short keys to display names
+-    if (brand_key == "Chrome") {
+-      display_brand = "Google Chrome";
+-    } else if (brand_key == "Edge") {
+-      display_brand = "Microsoft Edge";
+-    } else if (brand_key == "Opera") {
+-      display_brand = "Opera";
+-    } else if (brand_key == "Vivaldi") {
+-      display_brand = "Vivaldi";
+-    } else {
+-      display_brand = brand_key;
+-    }
+-  } else {
+-    // Default: present as Google Chrome
+-    display_brand = "Google Chrome";
+-  }
+-
+-  // Resolve full version (--fingerprint-brand-version-long takes priority)
+-  if (command_line->HasSwitch(switches::kFingerprintBrandVersionLong)) {
+-    brand_full_version = command_line->GetSwitchValueASCII(
+-        switches::kFingerprintBrandVersionLong);
+-  } else if (command_line->HasSwitch(switches::kFingerprintBrandVersion)) {
+-    // Short version only — construct a synthetic full version
+-    brand_full_version =
+-        command_line->GetSwitchValueASCII(switches::kFingerprintBrandVersion) +
+-        ".0.0.0";
+-  } else {
+-    // No override — use the Chromium version from the existing metadata
+-    brand_full_version = chromium_full_version;
+-  }
+-
+-  // Resolve major version (--fingerprint-brand-version takes priority)
+-  if (command_line->HasSwitch(switches::kFingerprintBrandVersion)) {
+-    brand_major_version =
+-        command_line->GetSwitchValueASCII(switches::kFingerprintBrandVersion);
+-  } else {
+-    // Extract major from the full version
+-    size_t dot = brand_full_version.find('.');
+-    brand_major_version = (dot != std::string::npos)
+-                              ? brand_full_version.substr(0, dot)
+-                              : brand_full_version;
+-  }
++  const auto& ovr = GetCachedUAOverride();
++  if (!ovr.active)
++    return;
+ 
+-  // Chromium version must always match the brand's major version.
+-  // Real Edge 131 is built on Chromium 131, real Chrome 145 on Chromium 145.
+-  chromium_major_version = brand_major_version;
+-  chromium_full_version = brand_full_version;
+-
+-  // --- Rebuild brand lists ---
+-  metadata->brand_version_list.clear();
+-  metadata->brand_full_version_list.clear();
+-
+-  // Generate the correct GREASE Not-A-Brand string for the spoofed version.
+-  // The algorithm is seeded by the major version number, matching Chromium's
+-  // GetGreasedUserAgentBrandVersion() in user_agent_utils.cc.
+-  int seed = 0;
+-  base::StringToInt(brand_major_version, &seed);
+-
+-  const std::vector<std::string> grease_chars = {
+-      " ", "(", ":", "-", ".", "/", ")", ";", "=", "?", "_"};
+-  const std::vector<std::string> grease_versions = {"8", "99", "24"};
+-
+-  std::string not_a_brand = base::StrCat({
+-      "Not",
+-      grease_chars[seed % grease_chars.size()],
+-      "A",
+-      grease_chars[(seed + 1) % grease_chars.size()],
+-      "Brand"});
+-  std::string not_a_brand_major = grease_versions[seed % grease_versions.size()];
+-  std::string not_a_brand_full = not_a_brand_major + ".0.0.0";
+-
+-  metadata->brand_version_list.push_back({not_a_brand, not_a_brand_major});
+-  metadata->brand_full_version_list.push_back({not_a_brand, not_a_brand_full});
+-
+-  // Display brand (Google Chrome, Microsoft Edge, etc.)
+-  metadata->brand_version_list.push_back(
+-      {display_brand, brand_major_version});
+-  metadata->brand_full_version_list.push_back(
+-      {display_brand, brand_full_version});
+-
+-  // Chromium
+-  metadata->brand_version_list.push_back(
+-      {"Chromium", chromium_major_version});
+-  metadata->brand_full_version_list.push_back(
+-      {"Chromium", chromium_full_version});
+-
+-  // Update top-level full version
+-  metadata->full_version = brand_full_version;
+-
+-  // --- Platform overrides ---
+-  if (command_line->HasSwitch(switches::kFingerprintPlatform)) {
+-    std::string platform_key = base::ToLowerASCII(
+-        command_line->GetSwitchValueASCII(switches::kFingerprintPlatform));
+-
+-    if (platform_key == "windows") {
+-      metadata->platform = "Windows";
+-      metadata->platform_version = "19.0.0";
+-      metadata->architecture = "x86";
+-      metadata->bitness = "64";
+-      metadata->wow64 = false;
+-    } else if (platform_key == "linux") {
+-      metadata->platform = "Linux";
+-      metadata->platform_version = "6.11.0";
+-      metadata->architecture = "x86";
+-      metadata->bitness = "64";
+-      metadata->wow64 = false;
+-    } else if (platform_key == "macos") {
+-      metadata->platform = "macOS";
+-      metadata->platform_version = "15.2.0";
+-      metadata->architecture = "arm";
+-      metadata->bitness = "64";
+-      metadata->wow64 = false;
+-    }
++  metadata->brand_version_list = ovr.brand_version_list;
++  metadata->brand_full_version_list = ovr.brand_full_version_list;
++  metadata->full_version = ovr.full_version;
+ 
+-    // Allow explicit platform version override
+-    if (command_line->HasSwitch(switches::kFingerprintPlatformVersion)) {
+-      std::string version_override = command_line->GetSwitchValueASCII(
+-          switches::kFingerprintPlatformVersion);
+-      if (!version_override.empty()) {
+-        metadata->platform_version = version_override;
+-      }
+-    }
++  if (!ovr.platform.empty()) {
++    metadata->platform = ovr.platform;
++    metadata->platform_version = ovr.platform_version;
++    metadata->architecture = ovr.architecture;
++    metadata->bitness = ovr.bitness;
++    metadata->wow64 = ovr.wow64;
+   }
+ }
+ 
+ std::string GetUserAgentFingerprintBrandInfo() {
+-  const base::CommandLine* command_line =
+-      base::CommandLine::ForCurrentProcess();
++  static const base::NoDestructor<std::string> cached([]() -> std::string {
++    const base::CommandLine* cl =
++        base::CommandLine::ForCurrentProcess();
+ 
+-  if (!command_line->HasSwitch(switches::kFingerprintBrand))
+-    return "";
++    if (!cl->HasSwitch(switches::kFingerprintBrand))
++      return "";
+ 
+-  std::string brand_key =
+-      command_line->GetSwitchValueASCII(switches::kFingerprintBrand);
++    std::string brand_key =
++        cl->GetSwitchValueASCII(switches::kFingerprintBrand);
+ 
+-  // Chrome doesn't append a brand suffix to the UA string
+-  if (brand_key == "Chrome")
+-    return "";
++    if (brand_key == "Chrome")
++      return "";
+ 
+-  // Determine the version to use in the UA suffix
+-  std::string version;
+-  if (command_line->HasSwitch(switches::kFingerprintBrandVersionLong)) {
+-    version = command_line->GetSwitchValueASCII(
+-        switches::kFingerprintBrandVersionLong);
+-  } else if (command_line->HasSwitch(switches::kFingerprintBrandVersion)) {
+-    version = command_line->GetSwitchValueASCII(
+-        switches::kFingerprintBrandVersion) + ".0.0.0";
+-  }
++    std::string version;
++    if (cl->HasSwitch(switches::kFingerprintBrandVersionLong)) {
++      version = cl->GetSwitchValueASCII(switches::kFingerprintBrandVersionLong);
++    } else if (cl->HasSwitch(switches::kFingerprintBrandVersion)) {
++      version = cl->GetSwitchValueASCII(switches::kFingerprintBrandVersion) +
++                ".0.0.0";
++    }
+ 
+-  // Map brand keys to their UA string tokens
+-  if (brand_key == "Edge") {
+-    return " Edg/" + (version.empty() ? "145.0.0.0" : version);
+-  } else if (brand_key == "Opera") {
+-    return " OPR/" + (version.empty() ? "123.0.0.0" : version);
+-  } else if (brand_key == "Vivaldi") {
+-    return " Vivaldi/" + (version.empty() ? "7.5.3735.66" : version);
+-  } else if (!brand_key.empty()) {
+-    return " " + brand_key + "/" + (version.empty() ? "0.0.0.0" : version);
+-  }
++    if (brand_key == "Edge")
++      return " Edg/" + (version.empty() ? "145.0.0.0" : version);
++    if (brand_key == "Opera")
++      return " OPR/" + (version.empty() ? "123.0.0.0" : version);
++    if (brand_key == "Vivaldi")
++      return " Vivaldi/" + (version.empty() ? "7.5.3735.66" : version);
++    if (!brand_key.empty())
++      return " " + brand_key + "/" + (version.empty() ? "0.0.0.0" : version);
+ 
+-  return "";
++    return "";
++  }());
++  return *cached;
+ }
+ 
+ }  // namespace blink
+diff --git a/third_party/blink/renderer/core/css/media_values.cc b/third_party/blink/renderer/core/css/media_values.cc
+index c35905ba39..3b34aae168 100644
+--- a/third_party/blink/renderer/core/css/media_values.cc
++++ b/third_party/blink/renderer/core/css/media_values.cc
+@@ -169,15 +169,20 @@ double MediaValues::CalculateDynamicViewportHeight(LocalFrame* frame) {
+ int MediaValues::CalculateDeviceWidth(LocalFrame* frame) {
+   DCHECK(frame && frame->View() && frame->GetSettings() && frame->GetPage());
+ 
+-  const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
+-  if (cl->HasSwitch(::switches::kFingerprintScreen)) {
++  static const int cached_width = []() -> int {
++    const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++    if (!cl->HasSwitch(::switches::kFingerprintScreen))
++      return -1;
+     std::string value = cl->GetSwitchValueASCII(::switches::kFingerprintScreen);
+     std::vector<std::string> parts = base::SplitString(
+         value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+-    int width = 0;
+-    if (parts.size() == 6 && base::StringToInt(parts[0], &width))
+-      return width;
+-  }
++    int w = -1;
++    if (parts.size() == 6)
++      base::StringToInt(parts[0], &w);
++    return w;
++  }();
++  if (cached_width >= 0)
++    return cached_width;
+ 
+   const display::ScreenInfo& screen_info =
+       frame->GetPage()->GetChromeClient().GetScreenInfo(*frame);
+@@ -192,15 +197,20 @@ int MediaValues::CalculateDeviceWidth(LocalFrame* frame) {
+ int MediaValues::CalculateDeviceHeight(LocalFrame* frame) {
+   DCHECK(frame && frame->View() && frame->GetSettings() && frame->GetPage());
+ 
+-  const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
+-  if (cl->HasSwitch(::switches::kFingerprintScreen)) {
++  static const int cached_height = []() -> int {
++    const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++    if (!cl->HasSwitch(::switches::kFingerprintScreen))
++      return -1;
+     std::string value = cl->GetSwitchValueASCII(::switches::kFingerprintScreen);
+     std::vector<std::string> parts = base::SplitString(
+         value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+-    int height = 0;
+-    if (parts.size() == 6 && base::StringToInt(parts[1], &height))
+-      return height;
+-  }
++    int h = -1;
++    if (parts.size() == 6)
++      base::StringToInt(parts[1], &h);
++    return h;
++  }();
++  if (cached_height >= 0)
++    return cached_height;
+ 
+   const display::ScreenInfo& screen_info =
+       frame->GetPage()->GetChromeClient().GetScreenInfo(*frame);
+diff --git a/third_party/blink/renderer/core/dom/element.cc b/third_party/blink/renderer/core/dom/element.cc
+index 0277c78c5b..1eed839bfa 100644
+--- a/third_party/blink/renderer/core/dom/element.cc
++++ b/third_party/blink/renderer/core/dom/element.cc
+@@ -294,8 +294,6 @@
+ #include "third_party/blink/renderer/platform/wtf/wtf_size_t.h"
+ #include "ui/accessibility/ax_mode.h"
+ #include "ui/gfx/geometry/rect_conversions.h"
+-#include "base/command_line.h"
+-#include "components/nodriver4j/nodriver4j_switches.h"
+ 
+ namespace blink {
+ 
+@@ -3421,12 +3419,14 @@ DOMRectList* Element::getClientRects() {
+     GetDocument().AdjustRectForScrollAndAbsoluteZoom(rect,
+                                                      *element_layout_object);
+   }
+-  const base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+-  if (command_line->HasSwitch(switches::kCanvasFingerprint)) {
++  double nx = GetDocument().GetNoiseFactorX();
++  if (nx != 0.0) {
++    double ny = GetDocument().GetNoiseFactorY();
+     for (auto& rect : rects) {
+-      rect.Offset(GetDocument().GetNoiseFactorX(), GetDocument().GetNoiseFactorY());
++      rect.Offset(nx, ny);
+     }
+   }
++
+   return MakeGarbageCollected<DOMRectList>(rects);
+ }
+ 
+@@ -3473,10 +3473,10 @@ gfx::RectF Element::GetBoundingClientRectNoLifecycleUpdate() const {
+   DCHECK(element_layout_object);
+   GetDocument().AdjustRectForScrollAndAbsoluteZoom(result,
+                                                    *element_layout_object);
+-  const base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+-  if (command_line->HasSwitch(switches::kCanvasFingerprint)) {
+-    result.Offset(GetDocument().GetNoiseFactorX(), GetDocument().GetNoiseFactorY());
+-  }
++  double nx = GetDocument().GetNoiseFactorX();
++  if (nx != 0.0)
++    result.Offset(nx, GetDocument().GetNoiseFactorY());
++
+   return result;
+ }
+ 
+diff --git a/third_party/blink/renderer/core/dom/range.cc b/third_party/blink/renderer/core/dom/range.cc
+index 7a1a28034d..889cb79f14 100644
+--- a/third_party/blink/renderer/core/dom/range.cc
++++ b/third_party/blink/renderer/core/dom/range.cc
+@@ -67,8 +67,6 @@
+ #include "third_party/blink/renderer/platform/wtf/text/strcat.h"
+ #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
+ #include "ui/gfx/geometry/quad_f.h"
+-#include "base/command_line.h"
+-#include "components/nodriver4j/nodriver4j_switches.h"
+ 
+ namespace blink {
+ 
+@@ -1657,23 +1655,24 @@ DOMRectList* Range::getClientRects() const {
+ 
+   Vector<gfx::QuadF> quads;
+   GetBorderAndTextQuads(quads);
+-  const base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+-  if (command_line->HasSwitch(switches::kCanvasFingerprint)) {
++  double nx = owner_document_->GetNoiseFactorX();
++  if (nx != 0.0) {
++    double ny = owner_document_->GetNoiseFactorY();
+     for (gfx::QuadF& quad : quads) {
+-      quad.Offset(owner_document_->GetNoiseFactorX(), owner_document_->GetNoiseFactorY());
++      quad.Offset(nx, ny);
+     }
+   }
+ 
++
+   return MakeGarbageCollected<DOMRectList>(quads);
+ }
+ 
+ DOMRect* Range::getBoundingClientRect() const {
+   SyncScrollAttemptHeuristic::DidAccessScrollOffset();
+   auto rect = BoundingRect();
+-  const base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+-  if (command_line->HasSwitch(switches::kCanvasFingerprint)) {
+-    rect.Offset(owner_document_->GetNoiseFactorX(), owner_document_->GetNoiseFactorY());
+-  }
++  double nx = owner_document_->GetNoiseFactorX();
++  if (nx != 0.0)
++    rect.Offset(nx, owner_document_->GetNoiseFactorY());
+   return DOMRect::FromRectF(rect);
+ }
+ 
+diff --git a/third_party/blink/renderer/core/execution_context/navigator_base.cc b/third_party/blink/renderer/core/execution_context/navigator_base.cc
+index 35e1c7402b..29d36e0459 100644
+--- a/third_party/blink/renderer/core/execution_context/navigator_base.cc
++++ b/third_party/blink/renderer/core/execution_context/navigator_base.cc
+@@ -12,9 +12,7 @@
+ #include "third_party/blink/renderer/core/probe/core_probes.h"
+ #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+ #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
+-#include "base/command_line.h"
+-#include "base/strings/string_util.h"
+-#include "components/nodriver4j/nodriver4j_switches.h"
++#include "components/nodriver4j/platform_override.h"
+ 
+ #if !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_WIN)
+ #include <sys/utsname.h>
+@@ -27,18 +25,11 @@ namespace blink {
+ namespace {
+ 
+ String GetReducedNavigatorPlatform() {
+-  const base::CommandLine* command_line =
+-      base::CommandLine::ForCurrentProcess();
+-  if (command_line->HasSwitch(switches::kFingerprintPlatform)) {
+-    std::string platform_key = base::ToLowerASCII(
+-        command_line->GetSwitchValueASCII(switches::kFingerprintPlatform));
+-    if (platform_key == "windows") {
+-      return "Win32";
+-    } else if (platform_key == "linux") {
+-      return "Linux x86_64";
+-    } else if (platform_key == "macos") {
+-      return "MacIntel";
+-    }
++  switch (nodriver4j::GetSpoofedPlatform()) {
++    case nodriver4j::SpoofedPlatform::kWindows: return "Win32";
++    case nodriver4j::SpoofedPlatform::kLinux: return "Linux x86_64";
++    case nodriver4j::SpoofedPlatform::kMacOS: return "MacIntel";
++    case nodriver4j::SpoofedPlatform::kNone: break;
+   }
+ #if BUILDFLAG(IS_ANDROID)
+   return "Linux armv81";
+diff --git a/third_party/blink/renderer/core/frame/local_dom_window.cc b/third_party/blink/renderer/core/frame/local_dom_window.cc
+index 97f09e417f..c968aea0a9 100644
+--- a/third_party/blink/renderer/core/frame/local_dom_window.cc
++++ b/third_party/blink/renderer/core/frame/local_dom_window.cc
+@@ -217,6 +217,31 @@ ScriptPromise<IDLUndefined> CreateScrollResolvedPromise(
+   return resolver->Promise();
+ }
+ 
++struct ScreenPositionCache {
++  bool active;
++  int x;
++  int y;
++};
++
++const ScreenPositionCache& GetScreenPosition() {
++  static const ScreenPositionCache cache = []() -> ScreenPositionCache {
++    const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++    if (!cl->HasSwitch(::switches::kFingerprintScreenPosition))
++      return {false, 0, 0};
++    std::string value =
++        cl->GetSwitchValueASCII(::switches::kFingerprintScreenPosition);
++    std::vector<std::string> parts = base::SplitString(
++        value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++    int x = 0, y = 0;
++    if (parts.size() == 2 && base::StringToInt(parts[0], &x) &&
++        base::StringToInt(parts[1], &y))
++      return {true, x, y};
++    return {false, 0, 0};
++  }();
++  return cache;
++}
++
++
+ }  // namespace
+ 
+ class LocalDOMWindow::NetworkStateObserver final
+@@ -1696,16 +1721,9 @@ int LocalDOMWindow::screenX() const {
+   if (!frame)
+     return 0;
+ 
+-  const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
+-  if (cl->HasSwitch(::switches::kFingerprintScreenPosition)) {
+-    std::string value =
+-        cl->GetSwitchValueASCII(::switches::kFingerprintScreenPosition);
+-    std::vector<std::string> parts = base::SplitString(
+-        value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+-    int x = 0;
+-    if (parts.size() == 2 && base::StringToInt(parts[0], &x))
+-      return x;
+-  }
++  const auto& pos = GetScreenPosition();
++  if (pos.active)
++    return pos.x;
+ 
+   Page* page = frame->GetPage();
+   if (!page)
+@@ -1725,16 +1743,10 @@ int LocalDOMWindow::screenY() const {
+   if (!frame)
+     return 0;
+ 
+-  const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
+-  if (cl->HasSwitch(::switches::kFingerprintScreenPosition)) {
+-    std::string value =
+-        cl->GetSwitchValueASCII(::switches::kFingerprintScreenPosition);
+-    std::vector<std::string> parts = base::SplitString(
+-        value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+-    int y = 0;
+-    if (parts.size() == 2 && base::StringToInt(parts[1], &y))
+-      return y;
+-  }
++  const auto& pos = GetScreenPosition();
++  if (pos.active)
++    return pos.y;
++
+ 
+   Page* page = frame->GetPage();
+   if (!page)
+diff --git a/third_party/blink/renderer/core/frame/navigator.cc b/third_party/blink/renderer/core/frame/navigator.cc
+index fb7cc661f4..c0872c60a3 100644
+--- a/third_party/blink/renderer/core/frame/navigator.cc
++++ b/third_party/blink/renderer/core/frame/navigator.cc
+@@ -35,9 +35,7 @@
+ #include "third_party/blink/renderer/core/page/page.h"
+ #include "third_party/blink/renderer/core/probe/core_probes.h"
+ #include "third_party/blink/renderer/platform/language.h"
+-#include "base/command_line.h"
+-#include "base/strings/string_util.h"
+-#include "components/nodriver4j/nodriver4j_switches.h"
++#include "components/nodriver4j/platform_override.h"
+ 
+ namespace blink {
+ 
+@@ -60,18 +58,11 @@ String Navigator::vendorSub() const {
+ }
+ 
+ String Navigator::platform() const {
+-  const base::CommandLine* command_line =
+-      base::CommandLine::ForCurrentProcess();
+-  if (command_line->HasSwitch(switches::kFingerprintPlatform)) {
+-    std::string platform_key = base::ToLowerASCII(
+-        command_line->GetSwitchValueASCII(switches::kFingerprintPlatform));
+-    if (platform_key == "windows") {
+-      return "Win32";
+-    } else if (platform_key == "linux") {
+-      return "Linux x86_64";
+-    } else if (platform_key == "macos") {
+-      return "MacIntel";
+-    }
++  switch (nodriver4j::GetSpoofedPlatform()) {
++    case nodriver4j::SpoofedPlatform::kWindows: return "Win32";
++    case nodriver4j::SpoofedPlatform::kLinux: return "Linux x86_64";
++    case nodriver4j::SpoofedPlatform::kMacOS: return "MacIntel";
++    case nodriver4j::SpoofedPlatform::kNone: break;
+   }
+   // TODO(955620): Consider changing devtools overrides to only allow overriding
+   // the platform with a frozen platform to distinguish between
+diff --git a/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc b/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc
+index ca0498c4e1..755098f92d 100644
+--- a/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc
++++ b/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc
+@@ -29,4 +29,4 @@ unsigned NavigatorConcurrentHardware::hardwareConcurrency() const {
+   return static_cast<unsigned>(base::SysInfo::NumberOfProcessors());
+ }
+ 
+-}  // namespace blink
+\ No newline at end of file
++}  // namespace blink
+diff --git a/third_party/blink/renderer/core/frame/screen.cc b/third_party/blink/renderer/core/frame/screen.cc
+index f7b5edfa82..8ead827402 100644
+--- a/third_party/blink/renderer/core/frame/screen.cc
++++ b/third_party/blink/renderer/core/frame/screen.cc
+@@ -55,27 +55,35 @@ struct ScreenOverride {
+   int color_depth;
+ };
+ 
+-std::optional<ScreenOverride> ParseScreenOverride() {
+-  const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
+-  if (!cl->HasSwitch(::switches::kFingerprintScreen))
+-    return std::nullopt;
+-
+-  std::string value = cl->GetSwitchValueASCII(::switches::kFingerprintScreen);
+-  std::vector<std::string> parts = base::SplitString(
+-      value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+-  if (parts.size() != 6)
+-    return std::nullopt;
+-
+-  ScreenOverride result;
+-  if (!base::StringToInt(parts[0], &result.width) ||
+-      !base::StringToInt(parts[1], &result.height) ||
+-      !base::StringToInt(parts[2], &result.avail_width) ||
+-      !base::StringToInt(parts[3], &result.avail_height) ||
+-      !base::StringToInt(parts[4], &result.avail_top) ||
+-      !base::StringToInt(parts[5], &result.color_depth))
+-    return std::nullopt;
++struct ScreenOverrideCache {
++  bool active;
++  ScreenOverride values;
++};
+ 
+-  return result;
++const ScreenOverrideCache& GetScreenOverride() {
++  static const ScreenOverrideCache cache = []() -> ScreenOverrideCache {
++    const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++    if (!cl->HasSwitch(::switches::kFingerprintScreen))
++      return {false, {}};
++
++    std::string value = cl->GetSwitchValueASCII(::switches::kFingerprintScreen);
++    std::vector<std::string> parts = base::SplitString(
++        value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++    if (parts.size() != 6)
++      return {false, {}};
++
++    ScreenOverride result;
++    if (!base::StringToInt(parts[0], &result.width) ||
++        !base::StringToInt(parts[1], &result.height) ||
++        !base::StringToInt(parts[2], &result.avail_width) ||
++        !base::StringToInt(parts[3], &result.avail_height) ||
++        !base::StringToInt(parts[4], &result.avail_top) ||
++        !base::StringToInt(parts[5], &result.color_depth))
++      return {false, {}};
++
++    return {true, result};
++  }();
++  return cache;
+ }
+ 
+ }  // namespace
+@@ -121,16 +129,18 @@ bool Screen::AreWebExposedScreenPropertiesEqual(
+ int Screen::height() const {
+   if (!DomWindow())
+     return 0;
+-  if (auto ovr = ParseScreenOverride())
+-    return ovr->height;
++  const auto& scr = GetScreenOverride();
++  if (scr.active)
++    return scr.values.height;
+   return GetRect(/*available=*/false).height();
+ }
+ 
+ int Screen::width() const {
+   if (!DomWindow())
+     return 0;
+-  if (auto ovr = ParseScreenOverride())
+-    return ovr->width;
++  const auto& scr = GetScreenOverride();
++  if (scr.active)
++    return scr.values.width;
+   return GetRect(/*available=*/false).width();
+ }
+ 
+@@ -144,8 +154,9 @@ unsigned Screen::colorDepth() const {
+   if (!DomWindow()) {
+     return unknown_color_depth;
+   }
+-  if (auto ovr = ParseScreenOverride())
+-    return base::saturated_cast<unsigned>(ovr->color_depth);
++  const auto& scr = GetScreenOverride();
++  if (scr.active)
++    return base::saturated_cast<unsigned>(scr.values.color_depth);
+   return GetScreenInfo().depth == 0
+              ? unknown_color_depth
+              : base::saturated_cast<unsigned>(GetScreenInfo().depth);
+@@ -158,7 +169,7 @@ unsigned Screen::pixelDepth() const {
+ int Screen::availLeft() const {
+   if (!DomWindow())
+     return 0;
+-  if (auto ovr = ParseScreenOverride())
++  if (GetScreenOverride().active)
+     return 0;
+   return GetRect(/*available=*/true).x();
+ }
+@@ -166,24 +177,28 @@ int Screen::availLeft() const {
+ int Screen::availTop() const {
+   if (!DomWindow())
+     return 0;
+-  if (auto ovr = ParseScreenOverride())
+-    return ovr->avail_top;
++  const auto& scr = GetScreenOverride();
++  if (scr.active)
++    return scr.values.avail_top;
++
+   return GetRect(/*available=*/true).y();
+ }
+ 
+ int Screen::availHeight() const {
+   if (!DomWindow())
+     return 0;
+-  if (auto ovr = ParseScreenOverride())
+-    return ovr->avail_height;
++  const auto& scr = GetScreenOverride();
++  if (scr.active)
++    return scr.values.avail_height;
+   return GetRect(/*available=*/true).height();
+ }
+ 
+ int Screen::availWidth() const {
+   if (!DomWindow())
+     return 0;
+-  if (auto ovr = ParseScreenOverride())
+-    return ovr->avail_width;
++  const auto& scr = GetScreenOverride();
++  if (scr.active)
++    return scr.values.avail_width;
+   return GetRect(/*available=*/true).width();
+ }
+ 
+-- 
+2.45.1.windows.1
+

@@ -1,0 +1,432 @@
+From d3b3ab0c6383b9c71cf2b11fb3e65f99ee571841 Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Sat, 7 Mar 2026 16:21:49 -0800
+Subject: [PATCH 30/31] optomizations
+
+---
+ components/nodriver4j/audio_override.h        |  63 +++++++++++
+ .../modules/battery/battery_manager.cc        | 107 ++++++++++--------
+ .../modules/webaudio/audio_context.cc         |  74 ++----------
+ .../webaudio/audio_destination_node.cc        |  68 +----------
+ 4 files changed, 135 insertions(+), 177 deletions(-)
+ create mode 100644 components/nodriver4j/audio_override.h
+
+diff --git a/components/nodriver4j/audio_override.h b/components/nodriver4j/audio_override.h
+new file mode 100644
+index 0000000000..874f260cf0
+--- /dev/null
++++ b/components/nodriver4j/audio_override.h
+@@ -0,0 +1,63 @@
++#ifndef COMPONENTS_NODRIVER4J_AUDIO_OVERRIDE_H_
++#define COMPONENTS_NODRIVER4J_AUDIO_OVERRIDE_H_
++
++#include "base/command_line.h"
++#include "base/component_export.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/string_split.h"
++#include "base/strings/string_util.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
++
++namespace nodriver4j {
++
++struct AudioOverride {
++  bool active;
++  float sample_rate;
++  double base_latency;
++  double output_latency;
++  uint32_t max_channel_count;
++};
++
++inline const AudioOverride& GetAudioOverride() {
++  static const AudioOverride ovr = []() -> AudioOverride {
++    const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++
++    if (cl->HasSwitch(switches::kFingerprintAudioContext)) {
++      std::string value =
++          cl->GetSwitchValueASCII(switches::kFingerprintAudioContext);
++      std::vector<std::string> parts = base::SplitString(
++          value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++      if (parts.size() != 4)
++        return {false, 0, 0, 0, 0};
++
++      double sample_rate_d, base_lat, output_lat;
++      if (!base::StringToDouble(parts[0], &sample_rate_d) ||
++          !base::StringToDouble(parts[1], &base_lat) ||
++          !base::StringToDouble(parts[2], &output_lat))
++        return {false, 0, 0, 0, 0};
++
++      unsigned max_ch;
++      if (!base::StringToUint(parts[3], &max_ch))
++        return {false, 0, 0, 0, 0};
++
++      return {true, static_cast<float>(sample_rate_d), base_lat, output_lat,
++              static_cast<uint32_t>(max_ch)};
++    }
++
++    if (cl->HasSwitch(switches::kFingerprintPlatform)) {
++      std::string platform = base::ToLowerASCII(
++          cl->GetSwitchValueASCII(switches::kFingerprintPlatform));
++      if (platform == "macos")
++        return {true, 48000.0f, 0.005333, 0.0, 2};
++      if (platform == "windows" || platform == "linux")
++        return {true, 48000.0f, 0.01, 0.0, 2};
++    }
++
++    return {false, 0, 0, 0, 0};
++  }();
++  return ovr;
++}
++
++}  // namespace nodriver4j
++
++#endif  // COMPONENTS_NODRIVER4J_AUDIO_OVERRIDE_H_
+\ No newline at end of file
+diff --git a/third_party/blink/renderer/modules/battery/battery_manager.cc b/third_party/blink/renderer/modules/battery/battery_manager.cc
+index fecaa596dc..0efe59cde1 100644
+--- a/third_party/blink/renderer/modules/battery/battery_manager.cc
++++ b/third_party/blink/renderer/modules/battery/battery_manager.cc
+@@ -22,58 +22,61 @@
+ namespace {
+ 
+ struct BatteryOverride {
++  bool active;
+   bool charging;
+   double level;
+   double charging_time;
+   double discharging_time;
+ };
+ 
+-std::optional<BatteryOverride> ParseBatteryOverride() {
+-  const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
+-
+-  // Priority 1: explicit --fingerprint-battery values
+-  if (cl->HasSwitch(switches::kFingerprintBattery)) {
+-    std::string value =
+-        cl->GetSwitchValueASCII(switches::kFingerprintBattery);
+-    std::vector<std::string> parts = base::SplitString(
+-        value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+-    if (parts.size() != 4)
+-      return std::nullopt;
+-
+-    BatteryOverride result;
+-    std::string charging_str = base::ToLowerASCII(parts[0]);
+-    result.charging = (charging_str == "true" || charging_str == "1");
+-
+-    if (!base::StringToDouble(parts[1], &result.level))
+-      return std::nullopt;
+-
+-    if (base::ToLowerASCII(parts[2]) == "infinity") {
+-      result.charging_time = std::numeric_limits<double>::infinity();
+-    } else if (!base::StringToDouble(parts[2], &result.charging_time)) {
+-      return std::nullopt;
++const BatteryOverride& GetBatteryOverride() {
++  static const BatteryOverride ovr = []() -> BatteryOverride {
++    const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++
++    if (cl->HasSwitch(switches::kFingerprintBattery)) {
++      std::string value =
++          cl->GetSwitchValueASCII(switches::kFingerprintBattery);
++      std::vector<std::string> parts = base::SplitString(
++          value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++      if (parts.size() != 4)
++        return {false, false, 0, 0, 0};
++
++      std::string charging_str = base::ToLowerASCII(parts[0]);
++      bool charging = (charging_str == "true" || charging_str == "1");
++
++      double level;
++      if (!base::StringToDouble(parts[1], &level))
++        return {false, false, 0, 0, 0};
++
++      double charging_time;
++      if (base::ToLowerASCII(parts[2]) == "infinity") {
++        charging_time = std::numeric_limits<double>::infinity();
++      } else if (!base::StringToDouble(parts[2], &charging_time)) {
++        return {false, false, 0, 0, 0};
++      }
++
++      double discharging_time;
++      if (base::ToLowerASCII(parts[3]) == "infinity") {
++        discharging_time = std::numeric_limits<double>::infinity();
++      } else if (!base::StringToDouble(parts[3], &discharging_time)) {
++        return {false, false, 0, 0, 0};
++      }
++
++      return {true, charging, level, charging_time, discharging_time};
+     }
+ 
+-    if (base::ToLowerASCII(parts[3]) == "infinity") {
+-      result.discharging_time = std::numeric_limits<double>::infinity();
+-    } else if (!base::StringToDouble(parts[3], &result.discharging_time)) {
+-      return std::nullopt;
++    if (cl->HasSwitch(switches::kFingerprintPlatform)) {
++      std::string platform = base::ToLowerASCII(
++          cl->GetSwitchValueASCII(switches::kFingerprintPlatform));
++      if (platform == "windows" || platform == "macos" || platform == "linux") {
++        return {true, true, 1.0, 0.0,
++                std::numeric_limits<double>::infinity()};
++      }
+     }
+ 
+-    return result;
+-  }
+-
+-  // Priority 2: desktop defaults from --fingerprint-platform
+-  if (cl->HasSwitch(switches::kFingerprintPlatform)) {
+-    std::string platform = base::ToLowerASCII(
+-        cl->GetSwitchValueASCII(switches::kFingerprintPlatform));
+-
+-    if (platform == "windows" || platform == "macos" || platform == "linux") {
+-      return BatteryOverride{
+-          true, 1.0, 0.0, std::numeric_limits<double>::infinity()};
+-    }
+-  }
+-
+-  return std::nullopt;
++    return {false, false, 0, 0, 0};
++  }();
++  return ovr;
+ }
+ 
+ }  // namespace
+@@ -144,26 +147,30 @@ ScriptPromise<BatteryManager> BatteryManager::StartRequest(
+ }
+ 
+ bool BatteryManager::charging() {
+-  if (auto ovr = ParseBatteryOverride())
+-    return ovr->charging;
++  const auto& ovr = GetBatteryOverride();
++  if (ovr.active)
++    return ovr.charging;
+   return battery_status_.Charging();
+ }
+ 
+ double BatteryManager::chargingTime() {
+-  if (auto ovr = ParseBatteryOverride())
+-    return ovr->charging_time;
++  const auto& ovr = GetBatteryOverride();
++  if (ovr.active)
++    return ovr.charging_time;
+   return battery_status_.charging_time().InSecondsF();
+ }
+ 
+ double BatteryManager::dischargingTime() {
+-  if (auto ovr = ParseBatteryOverride())
+-    return ovr->discharging_time;
++  const auto& ovr = GetBatteryOverride();
++  if (ovr.active)
++    return ovr.discharging_time;
+   return battery_status_.discharging_time().InSecondsF();
+ }
+ 
+ double BatteryManager::level() {
+-  if (auto ovr = ParseBatteryOverride())
+-    return ovr->level;
++  const auto& ovr = GetBatteryOverride();
++  if (ovr.active)
++    return ovr.level;
+   return battery_status_.Level();
+ }
+ 
+diff --git a/third_party/blink/renderer/modules/webaudio/audio_context.cc b/third_party/blink/renderer/modules/webaudio/audio_context.cc
+index 60d49cb667..059dc3695d 100644
+--- a/third_party/blink/renderer/modules/webaudio/audio_context.cc
++++ b/third_party/blink/renderer/modules/webaudio/audio_context.cc
+@@ -61,10 +61,7 @@
+ #include "third_party/blink/renderer/platform/wtf/text/strcat.h"
+ #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
+ #include "base/command_line.h"
+-#include "base/strings/string_number_conversions.h"
+-#include "base/strings/string_split.h"
+-#include "components/nodriver4j/nodriver4j_switches.h"
+-#include "base/strings/string_util.h"
++#include "components/nodriver4j/audio_override.h"
+ 
+ #if DEBUG_AUDIONODE_REFERENCES
+ #include <stdio.h>
+@@ -162,59 +159,6 @@ bool IsAudible(const AudioBus* rendered_data) {
+   return energy > 0;
+ }
+ 
+-struct AudioOverride {
+-  float sample_rate;
+-  double base_latency;
+-  double output_latency;
+-  uint32_t max_channel_count;
+-};
+-
+-std::optional<AudioOverride> ParseAudioOverride() {
+-  const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
+-
+-  // Priority 1: explicit --fingerprint-audio-context values
+-  if (cl->HasSwitch(switches::kFingerprintAudioContext)) {
+-    std::string value =
+-        cl->GetSwitchValueASCII(switches::kFingerprintAudioContext);
+-    std::vector<std::string> parts = base::SplitString(
+-        value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+-    if (parts.size() != 4)
+-      return std::nullopt;
+-
+-    AudioOverride result;
+-    double sample_rate_d;
+-    if (!base::StringToDouble(parts[0], &sample_rate_d) ||
+-        !base::StringToDouble(parts[1], &result.base_latency) ||
+-        !base::StringToDouble(parts[2], &result.output_latency))
+-      return std::nullopt;
+-
+-    result.sample_rate = static_cast<float>(sample_rate_d);
+-
+-    unsigned max_ch;
+-    if (!base::StringToUint(parts[3], &max_ch))
+-      return std::nullopt;
+-    result.max_channel_count = static_cast<uint32_t>(max_ch);
+-
+-    return result;
+-  }
+-
+-  // Priority 2: OS-appropriate defaults from --fingerprint-platform
+-  if (cl->HasSwitch(switches::kFingerprintPlatform)) {
+-    std::string platform = base::ToLowerASCII(
+-        cl->GetSwitchValueASCII(switches::kFingerprintPlatform));
+-
+-    if (platform == "macos") {
+-      return AudioOverride{48000.0f, 0.005333, 0.0, 2};
+-    }
+-    if (platform == "windows" || platform == "linux") {
+-      return AudioOverride{48000.0f, 0.01, 0.0, 2};
+-    }
+-  }
+-
+-  // Priority 3: no override, use real hardware values
+-  return std::nullopt;
+-}
+-
+ }  // namespace
+ 
+ // Helper class that decides if the AudioPlayoutStats should be updated.
+@@ -480,8 +424,9 @@ AudioContext* AudioContext::Create(ExecutionContext* context,
+   }
+ 
+   // Fingerprint override: force sample rate from CLI switch.
+-  if (auto ovr = ParseAudioOverride())
+-    sample_rate = ovr->sample_rate;
++  const auto& audio_ovr = nodriver4j::GetAudioOverride();
++  if (audio_ovr.active)
++    sample_rate = audio_ovr.sample_rate;
+ 
+   std::optional<uint32_t> render_quantum_frames = 128;
+   if (RuntimeEnabledFeatures::WebAudioConfigurableRenderQuantumEnabled(
+@@ -1157,8 +1102,10 @@ V8AudioContextState AudioContext::state() const {
+ }
+ 
+ double AudioContext::baseLatency() const {
+-  if (auto ovr = ParseAudioOverride())
+-    return ovr->base_latency;
++  const auto& audio_ovr = nodriver4j::GetAudioOverride();
++  if (audio_ovr.active)
++    return audio_ovr.base_latency;
++
+   DCHECK_CALLED_ON_VALID_SEQUENCE(main_thread_sequence_checker_);
+   DCHECK(destination());
+ 
+@@ -1166,8 +1113,9 @@ double AudioContext::baseLatency() const {
+ }
+ 
+ double AudioContext::outputLatency() const {
+-  if (auto ovr = ParseAudioOverride())
+-    return ovr->output_latency;
++  const auto& audio_ovr = nodriver4j::GetAudioOverride();
++  if (audio_ovr.active)
++    return audio_ovr.output_latency;
+   DCHECK_CALLED_ON_VALID_SEQUENCE(main_thread_sequence_checker_);
+   DCHECK(destination());
+ 
+diff --git a/third_party/blink/renderer/modules/webaudio/audio_destination_node.cc b/third_party/blink/renderer/modules/webaudio/audio_destination_node.cc
+index 45aa730b6d..f5d63d8c15 100644
+--- a/third_party/blink/renderer/modules/webaudio/audio_destination_node.cc
++++ b/third_party/blink/renderer/modules/webaudio/audio_destination_node.cc
+@@ -27,68 +27,7 @@
+ 
+ #include "third_party/blink/renderer/modules/webaudio/audio_destination_handler.h"
+ #include "third_party/blink/renderer/modules/webaudio/audio_graph_tracer.h"
+-#include "base/command_line.h"
+-#include "base/strings/string_number_conversions.h"
+-#include "base/strings/string_split.h"
+-#include "components/nodriver4j/nodriver4j_switches.h"
+-#include "base/strings/string_util.h"
+-
+-namespace {
+-
+-struct AudioOverride {
+-  float sample_rate;
+-  double base_latency;
+-  double output_latency;
+-  uint32_t max_channel_count;
+-};
+-
+-std::optional<AudioOverride> ParseAudioOverride() {
+-  const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
+-
+-  // Priority 1: explicit --fingerprint-audio-context values
+-  if (cl->HasSwitch(switches::kFingerprintAudioContext)) {
+-    std::string value =
+-        cl->GetSwitchValueASCII(switches::kFingerprintAudioContext);
+-    std::vector<std::string> parts = base::SplitString(
+-        value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+-    if (parts.size() != 4)
+-      return std::nullopt;
+-
+-    AudioOverride result;
+-    double sample_rate_d;
+-    if (!base::StringToDouble(parts[0], &sample_rate_d) ||
+-        !base::StringToDouble(parts[1], &result.base_latency) ||
+-        !base::StringToDouble(parts[2], &result.output_latency))
+-      return std::nullopt;
+-
+-    result.sample_rate = static_cast<float>(sample_rate_d);
+-
+-    unsigned max_ch;
+-    if (!base::StringToUint(parts[3], &max_ch))
+-      return std::nullopt;
+-    result.max_channel_count = static_cast<uint32_t>(max_ch);
+-
+-    return result;
+-  }
+-
+-  // Priority 2: OS-appropriate defaults from --fingerprint-platform
+-  if (cl->HasSwitch(switches::kFingerprintPlatform)) {
+-    std::string platform = base::ToLowerASCII(
+-        cl->GetSwitchValueASCII(switches::kFingerprintPlatform));
+-
+-    if (platform == "macos") {
+-      return AudioOverride{48000.0f, 0.005333, 0.0, 2};
+-    }
+-    if (platform == "windows" || platform == "linux") {
+-      return AudioOverride{48000.0f, 0.01, 0.0, 2};
+-    }
+-  }
+-
+-  // Priority 3: no override, use real hardware values
+-  return std::nullopt;
+-}
+-
+-}  // namespace
++#include "components/nodriver4j/audio_override.h"
+ 
+ namespace blink {
+ 
+@@ -101,8 +40,9 @@ AudioDestinationHandler& AudioDestinationNode::GetAudioDestinationHandler()
+ }
+ 
+ uint32_t AudioDestinationNode::maxChannelCount() const {
+-  if (auto ovr = ParseAudioOverride())
+-    return ovr->max_channel_count;
++  const auto& audio_ovr = nodriver4j::GetAudioOverride();
++  if (audio_ovr.active)
++    return audio_ovr.max_channel_count;
+   return GetAudioDestinationHandler().MaxChannelCount();
+ }
+ 
+-- 
+2.45.1.windows.1
+
