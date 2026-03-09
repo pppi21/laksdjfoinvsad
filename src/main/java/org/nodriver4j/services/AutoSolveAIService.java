@@ -13,6 +13,7 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Client for the AutoSolve AI captcha solving service.
@@ -50,7 +51,7 @@ import java.util.UUID;
  * @see AutoSolveAIResponse
  * @see AutoSolveAIException
  */
-public class AutoSolveAIService {
+public class AutoSolveAIService implements AutoCloseable {
 
     private static final String API_URL = "https://autosolve-ai-api.aycd.io/api/v1/solve";
     private static final int RECAPTCHA_VERSION = 1;
@@ -60,6 +61,8 @@ public class AutoSolveAIService {
 
     private final HttpClient httpClient;
     private final String apiKey;
+    private final AtomicBoolean closed = new AtomicBoolean(false);
+
 
     /**
      * Creates a new AutoSolveAIService with the specified API key.
@@ -93,6 +96,7 @@ public class AutoSolveAIService {
      * @throws IllegalArgumentException if description or imageBase64 is null/blank
      */
     public AutoSolveAIResponse solve(String description, String imageBase64) throws AutoSolveAIException {
+        ensureOpen();
         if (description == null || description.isBlank()) {
             throw new IllegalArgumentException("Description cannot be null or blank");
         }
@@ -137,6 +141,7 @@ public class AutoSolveAIService {
      * @throws IllegalArgumentException if description is null/blank or imagesBase64 is null/empty
      */
     public String solveBatch(String description, List<String> imagesBase64) throws AutoSolveAIException {
+        ensureOpen();
         if (description == null || description.isBlank()) {
             throw new IllegalArgumentException("Description cannot be null or blank");
         }
@@ -279,6 +284,38 @@ public class AutoSolveAIService {
 
         } catch (Exception e) {
             throw new AutoSolveAIException("Failed to parse API response: " + body, e);
+        }
+    }
+
+    // ==================== Lifecycle ====================
+
+    /**
+     * Shuts down the underlying HTTP client, cancelling any in-flight requests.
+     *
+     * <p>After this call, any blocked {@code solve()} or {@code solveBatch()}
+     * call will fail immediately, and new calls will throw
+     * {@link AutoSolveAIException}. This is the mechanism by which
+     * {@link TaskContext#cancel()} terminates stuck captcha-solving requests.</p>
+     *
+     * <p>This method is idempotent — calling it multiple times is safe.</p>
+     */
+    @Override
+    public void close() {
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
+        httpClient.shutdownNow();
+        System.out.println("[AutoSolveAI] Service shut down");
+    }
+
+    /**
+     * Ensures the service has not been closed.
+     *
+     * @throws AutoSolveAIException if the service has been closed
+     */
+    private void ensureOpen() throws AutoSolveAIException {
+        if (closed.get()) {
+            throw new AutoSolveAIException("AutoSolveAIService has been closed");
         }
     }
 

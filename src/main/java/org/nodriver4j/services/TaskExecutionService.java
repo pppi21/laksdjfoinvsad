@@ -143,6 +143,7 @@ public class TaskExecutionService {
     private final ConcurrentHashMap<Long, Browser> runningBrowsers;
     private final ConcurrentHashMap<Long, Thread> scriptThreads;
     private final ConcurrentHashMap<Long, TaskCallbacks> taskCallbacks;
+    private final ConcurrentHashMap<Long, TaskContext> taskContexts;
     private final BlockingQueue<Integer> availablePorts;
     private final AtomicBoolean isShutdown;
     private final Thread shutdownHook;
@@ -163,6 +164,7 @@ public class TaskExecutionService {
         this.runningBrowsers = new ConcurrentHashMap<>();
         this.scriptThreads = new ConcurrentHashMap<>();
         this.taskCallbacks = new ConcurrentHashMap<>();
+        this.taskContexts = new ConcurrentHashMap<>();
         this.isShutdown = new AtomicBoolean(false);
         this.taskRepository = new TaskRepository();
         this.taskGroupRepository = new TaskGroupRepository();
@@ -298,6 +300,21 @@ public class TaskExecutionService {
      * optional session warming, script execution, success/failure
      * handling, and cleanup.</p>
      *
+     * <p>A {@link TaskContext} is created at the start and stored in
+     * {@link #taskContexts}. Infrastructure resources (e.g.,
+     * {@link AutoSolveAIService}) are registered on the context after
+     * browser launch. When the user clicks Stop, {@link #stopBrowser}
+     * calls {@link TaskContext#cancel()} to forcefully tear down all
+     * registered resources — unblocking threads stuck on non-interruptible
+     * I/O (IMAP, HTTP). Script-created resources are registered on the
+     * context by scripts themselves (once they receive it in Stage 3).</p>
+     *
+     * <p>The {@code finally} block uses conditional removal
+     * ({@link java.util.concurrent.ConcurrentHashMap#remove(Object, Object)})
+     * to ensure cleanup never interferes with a subsequent session (manual
+     * browser or new scripted run) that may have been started for the same
+     * task ID after {@link #stopBrowser} cleared the maps.</p>
+     *
      * @param taskId         the task ID
      * @param onLogUpdate    UI callback for log messages, or null
      * @param onStatusChange UI callback for status transitions, or null
@@ -308,6 +325,11 @@ public class TaskExecutionService {
 
         TaskLogger logger = new TaskLogger(taskId, taskRepository);
         logger.setOnLogUpdate(onLogUpdate);
+
+        Browser myBrowser = null;
+        Thread myThread = Thread.currentThread();
+        TaskContext context = new TaskContext();
+        taskContexts.put(taskId, context);
 
         try {
             // Load entities from database
@@ -324,25 +346,31 @@ public class TaskExecutionService {
 
             // Launch headless browser
             logger.log("Launching browser...");
-            Browser browser = launchBrowser(taskId, true, TaskEntity.STATUS_RUNNING);
+            myBrowser = launchBrowser(taskId, true, TaskEntity.STATUS_RUNNING);
             notifyStatusChange(onStatusChange, TaskEntity.STATUS_RUNNING);
 
-            // Warm session if enabled — status is already RUNNING and the UI
-            // is notified, so the user sees live warming progress via the logger
-            if (task.warmSession()) {
-                browser.warm(logger);
+            // Register infrastructure resources on context for cancellation teardown
+            AutoSolveAIService aiService = myBrowser.autoSolveAIService();
+            if (aiService != null) {
+                context.register(aiService);
             }
 
-            // Check for interruption after browser launch + warming (user may
-            // have clicked stop while the browser was starting or warming)
+            // Warm session if enabled
+            if (task.warmSession()) {
+                myBrowser.warm(logger);
+            }
+
+            // Check for cancellation after browser launch + warming (user may
+            // have clicked Stop while the browser was starting or warming)
             if (Thread.currentThread().isInterrupted()) {
                 throw new InterruptedException("Cancelled before script execution");
             }
+            context.checkCancelled();
 
             // Create and execute the automation script
             AutomationScript script = ScriptRegistry.create(group.scriptName());
             logger.log("Running " + group.scriptName() + "...");
-            script.run(browser.page(), profile, logger);
+            script.run(myBrowser.page(), profile, logger, context);
 
             // Script completed successfully — update profile notes
             appendCompletionNote(profile, group.scriptName());
@@ -353,32 +381,43 @@ public class TaskExecutionService {
             notifyStatusChange(onStatusChange, TaskEntity.STATUS_COMPLETED);
 
         } catch (InterruptedException e) {
-            // User cancelled via stopBrowser — re-set the interrupt flag
-            // and let the finally block handle cleanup. stopBrowser already
-            // sets STOPPED status, but we set it here too for robustness
-            // in case the interruption came from elsewhere.
+            // User cancelled via stopBrowser (thread interruption path)
             Thread.currentThread().interrupt();
             updateTaskStatus(taskId, TaskEntity.STATUS_STOPPED);
             notifyStatusChange(onStatusChange, TaskEntity.STATUS_STOPPED);
 
         } catch (Exception e) {
-            System.err.println("[TaskExecutionService] Task " + taskId +
-                    " failed: " + e.getMessage());
-            logger.error("Failed: " + e.getMessage());
-            updateTaskStatus(taskId, TaskEntity.STATUS_FAILED);
-            notifyStatusChange(onStatusChange, TaskEntity.STATUS_FAILED);
+            if (context.isCancelled() || Thread.currentThread().isInterrupted()) {
+                updateTaskStatus(taskId, TaskEntity.STATUS_STOPPED);
+                notifyStatusChange(onStatusChange, TaskEntity.STATUS_STOPPED);
+            } else {
+                // Genuine script failure
+                System.err.println("[TaskExecutionService] Task " + taskId +
+                        " failed: " + e.getMessage());
+                logger.error("Failed: " + e.getMessage());
+                updateTaskStatus(taskId, TaskEntity.STATUS_FAILED);
+                notifyStatusChange(onStatusChange, TaskEntity.STATUS_FAILED);
+            }
 
         } finally {
-            Browser browser = runningBrowsers.remove(taskId);
-            if (browser != null) {
+            // Close context — tears down any remaining registered resources
+            context.close();
+            taskContexts.remove(taskId, context);
+
+            // Conditional removal — only remove if the map still holds OUR instance.
+            // If stopBrowser already cleared the slot and a new session was started,
+            // these are no-ops on the map. The browser is still closed (idempotent)
+            // to ensure our resources are cleaned up regardless.
+            if (myBrowser != null) {
+                runningBrowsers.remove(taskId, myBrowser);
                 try {
-                    browser.close();
+                    myBrowser.close();
                 } catch (Exception e) {
                     System.err.println("[TaskExecutionService] Error closing browser " +
                             "in cleanup for task " + taskId + ": " + e.getMessage());
                 }
             }
-            scriptThreads.remove(taskId);
+            scriptThreads.remove(taskId, myThread);
             taskCallbacks.remove(taskId);
         }
     }
@@ -419,11 +458,16 @@ public class TaskExecutionService {
     /**
      * Stops the browser for a task and preserves userdata.
      *
-     * <p>If a script thread is running for this task, it is interrupted
-     * first. The browser is then closed gracefully, the userdata directory
-     * is preserved for future runs, and the task status is updated to
-     * {@link TaskEntity#STATUS_STOPPED}. The allocated port is returned
-     * to the pool.</p>
+     * <p>The stop sequence is ordered for maximum effectiveness:</p>
+     * <ol>
+     *   <li><b>Cancel context</b> — closes all registered resources (IMAP
+     *       connections, HTTP clients), immediately unblocking any thread
+     *       stuck on non-interruptible network I/O</li>
+     *   <li><b>Interrupt thread</b> — handles interruptible operations
+     *       ({@code Thread.sleep}, {@code Object.wait}, NIO channels)</li>
+     *   <li><b>Close browser</b> — terminates the Chrome process and
+     *       releases the CDP connection</li>
+     * </ol>
      *
      * <p>This method is safe to call even if the browser has already been
      * closed or the task is not running — it will simply update the status.</p>
@@ -434,12 +478,21 @@ public class TaskExecutionService {
     public void stopBrowser(long taskId) {
         ensureNotShutdown();
 
+        // 1. Cancel context — closes all registered resources, unblocking
+        //    threads stuck on non-interruptible I/O (IMAP, HTTP)
+        TaskContext context = taskContexts.remove(taskId);
+        if (context != null) {
+            context.cancel();
+        }
+
+        // 2. Interrupt thread — handles interruptible operations
         Thread thread = scriptThreads.remove(taskId);
         if (thread != null) {
             thread.interrupt();
             System.out.println("[TaskExecutionService] Interrupted script thread for task " + taskId);
         }
 
+        // 3. Close browser
         Browser browser = runningBrowsers.remove(taskId);
         if (browser != null) {
             System.out.println("[TaskExecutionService] Stopping browser for task " + taskId +
@@ -893,12 +946,22 @@ public class TaskExecutionService {
     /**
      * Emergency shutdown called by JVM shutdown hook.
      *
-     * <p>Interrupts all script threads and closes all browsers without
-     * status updates to minimize work during JVM teardown.</p>
+     * <p>Cancels all contexts, interrupts all script threads, and closes
+     * all browsers without status updates to minimize work during JVM
+     * teardown.</p>
      */
     private void emergencyShutdown() {
         System.out.println("[TaskExecutionService] Emergency shutdown triggered...");
         isShutdown.set(true);
+
+        // Cancel all contexts — unblocks stuck threads
+        for (TaskContext context : taskContexts.values()) {
+            try {
+                context.cancel();
+            } catch (Exception e) {
+                // Ignore during emergency shutdown
+            }
+        }
 
         // Interrupt all script threads
         for (Thread thread : scriptThreads.values()) {
@@ -922,21 +985,32 @@ public class TaskExecutionService {
         runningBrowsers.clear();
         scriptThreads.clear();
         taskCallbacks.clear();
+        taskContexts.clear();
     }
 
     /**
      * Stops all browsers and script threads with status updates.
      *
-     * <p>Used during normal shutdown (not emergency). Interrupts all
-     * script threads, closes all browsers, updates statuses to STOPPED,
-     * and waits briefly for threads to terminate.</p>
+     * <p>Used during normal shutdown (not emergency). Cancels all contexts,
+     * interrupts all script threads, closes all browsers, updates statuses
+     * to STOPPED, and waits briefly for threads to terminate.</p>
      */
     private void stopAllInternal() {
         // Collect all active task IDs from both maps
         Set<Long> taskIds = new HashSet<>(runningBrowsers.keySet());
         taskIds.addAll(scriptThreads.keySet());
 
-        // Interrupt all script threads first so they can begin cleanup
+        // Cancel all contexts first — unblocks stuck threads immediately
+        for (TaskContext context : taskContexts.values()) {
+            try {
+                context.cancel();
+            } catch (Exception e) {
+                // Continue with other contexts
+            }
+        }
+        taskContexts.clear();
+
+        // Interrupt all script threads so they can begin cleanup
         for (Thread thread : scriptThreads.values()) {
             try {
                 thread.interrupt();
@@ -970,6 +1044,7 @@ public class TaskExecutionService {
         }
 
         scriptThreads.clear();
+        taskCallbacks.clear();
     }
 
     // ==================== Validation ====================

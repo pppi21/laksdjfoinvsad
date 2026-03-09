@@ -1,6 +1,5 @@
 package org.nodriver4j.scripts;
 
-import org.nodriver4j.captcha.ReCaptchaSolver;
 import org.nodriver4j.core.Page;
 import org.nodriver4j.persistence.entity.ProfileEntity;
 import org.nodriver4j.persistence.repository.ProfileRepository;
@@ -13,13 +12,12 @@ import java.util.concurrent.TimeoutException;
  * Automation script for Funko account generation.
  *
  * <p>Navigates to Funko's registration page, signs up with the profile's
- * email address, verifies the account via email link, logs in, and enters
- * the exclusive access draw.</p>
+ * email address, and verifies the account via email link.</p>
  *
  * <h2>Lifecycle</h2>
  * <p>Instances are created by {@link ScriptRegistry} via the no-arg constructor.
- * {@link #run(Page, ProfileEntity, TaskLogger)} is called once per instance on
- * a background thread managed by
+ * {@link #run(Page, ProfileEntity, TaskLogger, TaskContext)} is called once per
+ * instance on a background thread managed by
  * {@link org.nodriver4j.services.TaskExecutionService}.</p>
  *
  * <h2>Success / Failure</h2>
@@ -47,13 +45,6 @@ public class FunkoGen implements AutomationScript {
     private static final String ACCEPT_TERMS_CHECKBOX = "div.terms-agree-field.form-group.custom-control.custom-checkbox > label";
     private static final String CREATE_ACCOUNT_BUTTON = "#register > form > button";
     private static final String OTP_SENT_ID = "#ajaxModal > div > div > div > div > div.modal-header > div";
-    private static final String VERIFIED_SUCCESS_BUTTON = "button[class='btn btn-primary w-50']";
-    private static final String LOGIN_EMAIL_TEXT = "#login-form-email";
-    private static final String LOGIN_PASSWORD_TEXT = "#login-form-password";
-    private static final String REMEMBER_ME_BUTTON = "div.form-group.custom-control.custom-checkbox.pull-left.remember-me > label";
-    private static final String LOGIN_BUTTON = "button[class='btn btn-primary login-btn btn-bigger']";
-    private static final String ENTER_DRAW_BUTTON = "button.exclusive-access-cta";
-    private static final String HOMEPAGE_SUCCESS_ID = "#sweepstakesCongratulationsModal";
 
     // ==================== Password Generation ====================
 
@@ -72,6 +63,7 @@ public class FunkoGen implements AutomationScript {
     private Page page;
     private ProfileEntity profile;
     private TaskLogger logger;
+    private TaskContext context;
     private String generatedPassword;
     private final ProfileRepository profileRepository = new ProfileRepository();
 
@@ -88,48 +80,46 @@ public class FunkoGen implements AutomationScript {
     /**
      * Executes the Funko account generation workflow.
      *
-     * <p>A normal return indicates the account was created successfully.
-     * Any exception indicates failure.</p>
+     * <p>A normal return indicates the account was created and verified
+     * successfully. Any exception indicates failure.</p>
      *
      * @param page    the browser page to automate
      * @param profile the profile containing user data
      * @param logger  the logger for live UI messages
+     * @param context the task context for resource registration and cancellation
      * @throws Exception if the signup fails for any reason
      */
     @Override
-    public void run(Page page, ProfileEntity profile, TaskLogger logger) throws Exception {
+    public void run(Page page, ProfileEntity profile, TaskLogger logger,
+                    TaskContext context) throws Exception {
         this.page = page;
         this.profile = profile;
         this.logger = logger;
+        this.context = context;
 
         try {
             logger.log("Navigating to Funko...");
             navigateToFunko();
+
+            context.checkCancelled();
 
             logger.log("Signing up...");
             signUp();
 
             AutomationScript.persistNote(profile, "Funko Password: " + generatedPassword, profileRepository);
 
+            context.checkCancelled();
+
             logger.log("Password saved, waiting for email verification...");
             fetchVerificationLink();
 
-            logger.success("Account created successfully!");
-
-            page.sleep(2000);
-
-            logger.log("Logging in...");
-            login();
-
-            logger.log("Entering draw...");
-            enterDraw();
-
-            logger.success("Successfully entered draw!");
-            page.sleep(5000);
+            logger.success("Account created and verified successfully!");
             return;
 
-        } catch (UnexpectedNavigationException | GmailClient.GmailClientException e) {
-            logger.error("Attempt failed: " + e.getMessage());
+        } catch (GmailClient.GmailClientException e) {
+            logger.error("Email error: " + e.getMessage());
+        } catch (UnexpectedNavigationException e) {
+            logger.error("Unexpected navigation: " + e.url());
         }
 
         page.screenshot();
@@ -168,11 +158,11 @@ public class FunkoGen implements AutomationScript {
                 page.jsClick(ACCEPT_TERMS_CHECKBOX);
                 logger.log("Submitting signup...");
                 page.click(CREATE_ACCOUNT_BUTTON);
-                for(int check = 0; check < 25; check++) {
-                    if(page.exists(OTP_SENT_ID)) return;
+                for (int check = 0; check < 25; check++) {
+                    if (page.exists(OTP_SENT_ID)) return;
                     page.sleep(2000);
                 }
-                page.reload(true,40000);
+                page.reload(true, 40000);
                 page.sleep(10000);
                 throw new TimeoutException("Potentially bad proxy.");
             } catch (TimeoutException | InterruptedException e) {
@@ -185,8 +175,8 @@ public class FunkoGen implements AutomationScript {
     // ==================== Email Verification ====================
 
     private void fetchVerificationLink() throws GmailClient.GmailClientException {
-        try (FunkoVerificationExtractor extractor = new FunkoVerificationExtractor(
-                profile.emailAddress(), profile.catchallEmail(), profile.imapPassword())) {
+        try (FunkoVerificationExtractor extractor = context.register(new FunkoVerificationExtractor(
+                profile.emailAddress(), profile.catchallEmail(), profile.imapPassword()))) {
 
             for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
                 try {
@@ -203,54 +193,6 @@ public class FunkoGen implements AutomationScript {
             }
             throw new RuntimeException("Email verification failed: Maximum " + ATTEMPTS + " attempts reached");
         }
-    }
-
-    // ==================== Login ====================
-
-    private void login() throws RuntimeException {
-
-        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
-            try {
-                page.click(VERIFIED_SUCCESS_BUTTON);
-                logger.log("Entering email...");
-                fillFormField(LOGIN_EMAIL_TEXT, profile.emailAddress(), true);
-                logger.log("Entering password...");
-                fillFormField(LOGIN_PASSWORD_TEXT, generatedPassword, true);
-                page.click(REMEMBER_ME_BUTTON);
-                page.click(LOGIN_BUTTON);
-
-                for(int check = 0; check < 15; check++) {
-                    if(page.exists(ENTER_DRAW_BUTTON)) return;
-                    page.sleep(2000);
-                }
-
-            } catch (TimeoutException | InterruptedException e) {
-                logger.log("Login attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
-            }
-        }
-        throw new RuntimeException("login failed: Maximum " + ATTEMPTS + " attempts reached");
-    }
-
-    // ==================== Draw Entry ====================
-
-    private void enterDraw() throws RuntimeException {
-
-        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
-            try {
-                page.sleep(3000);
-                page.click(ENTER_DRAW_BUTTON);
-
-                for(int check = 0; check < 20; check++) {
-                    if(page.exists(HOMEPAGE_SUCCESS_ID)) return;
-                    page.sleep(2000);
-                }
-                page.reload(true, 30000);
-                page.sleep(10000);
-            } catch (TimeoutException e) {
-                logger.log("Entry attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
-            }
-        }
-        throw new RuntimeException("enterDraw failed: Maximum " + ATTEMPTS + " attempts reached.");
     }
 
     // ==================== Form Helpers ====================

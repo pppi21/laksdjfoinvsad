@@ -2,10 +2,11 @@ package org.nodriver4j.scripts;
 
 import org.nodriver4j.captcha.PerimeterXSolver;
 import org.nodriver4j.core.Page;
-import org.nodriver4j.profiles.Profile;
-import org.nodriver4j.profiles.ProfilePool;
+import org.nodriver4j.persistence.entity.ProfileEntity;
+import org.nodriver4j.persistence.repository.ProfileRepository;
+import org.nodriver4j.services.TaskContext;
+import org.nodriver4j.services.TaskLogger;
 
-import java.io.IOException;
 import java.security.SecureRandom;
 import java.time.LocalDate;
 import java.util.concurrent.ThreadLocalRandom;
@@ -15,29 +16,33 @@ import java.util.concurrent.TimeoutException;
  * Automation script for creating Ike's sandwich rewards accounts.
  *
  * <p>This script automates the account registration process on the Ike's
- * rewards platform using profile data from CSV files.</p>
+ * rewards platform using profile data from the database.</p>
  *
- * <h2>Usage Example</h2>
- * <pre>{@code
- * ProfilePool pool = manager.profilePool();
- * Profile profile = pool.consumeFirst();
+ * <h2>Lifecycle</h2>
+ * <p>Instances are created by {@link ScriptRegistry} via the no-arg constructor.
+ * {@link #run(Page, ProfileEntity, TaskLogger, TaskContext)} is called once per
+ * instance on a background thread managed by
+ * {@link org.nodriver4j.services.TaskExecutionService}.</p>
  *
- * SandwichGen script = new SandwichGen(page, profile, pool, referrerUrl);
- * script.createAccount();
- * // Profile is automatically written to output on success
- * }</pre>
+ * <h2>Success / Failure</h2>
+ * <ul>
+ *   <li>Normal return → success. The caller appends a completion note to the
+ *       profile and sets the task status to COMPLETED.</li>
+ *   <li>Exception → failure. The caller sets the task status to FAILED and
+ *       logs the error message.</li>
+ * </ul>
  *
- * @see Profile
- * @see ProfilePool
+ * @see AutomationScript
+ * @see ScriptRegistry
  */
-public class SandwichGen {
+public class SandwichGen implements AutomationScript {
 
     // ==================== Retry Configuration ====================
 
-    private static final int MAX_ATTEMPTS = 3;
+    private static final int ATTEMPTS = 3;
     private static final int CAPTCHA_MAX_RETRIES = 3;
 
-    // ==================== Form XPaths ====================
+    // ==================== Form Selectors ====================
 
     private static final String FIRST_NAME_TEXT = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[3]/div/input";
     private static final String LAST_NAME_TEXT = "/html/body/div/div[2]/div[1]/div[2]/div/div/div/div[2]/form/div/div[4]/div/input";
@@ -73,54 +78,39 @@ public class SandwichGen {
     private static final int MIN_BIRTH_YEAR = 1945;
     private static final int MIN_AGE_YEARS = 20;
 
-    // ==================== Fields ====================
+    // ==================== Referrer URL ====================
 
-    private final Page page;
-    private final Profile profile;
-    private final ProfilePool profilePool;
-    private final String referrerUrl;
+    /**
+     * The referral link URL used for registration. Set this field before
+     * registering the script, or update it at runtime.
+     */
+    private static final String REFERRER_URL = "https://ikes.myguestaccount.com/guest/enroll?card-template=JTIldXJsLXBhcmFtLWFlcy1rZXklbC9Mdlh0Y29zR1V6ay9ibSVWMnliSm96NW1nVE5Qb3NtUVN0N1dqaz0%3D&template=2&referral_code=HHnRBikmNBanPhmRBQQFDCJAACBMCHqJa";
 
-    // Generated data (populated during createAccount)
+    // ==================== Instance Fields ====================
+
+    /**
+     * Set at the start of {@link #run} — each instance is used exactly once.
+     */
+    private Page page;
+    private ProfileEntity profile;
+    private TaskLogger logger;
+    private TaskContext context;
+
+    // Generated data (populated during run)
     private Birthday birthday;
     private String password;
 
-    /**
-     * Creates a SandwichGen script without a referrer URL.
-     *
-     * @param page        the Page to automate
-     * @param profile     the profile containing user data
-     * @param profilePool the pool for writing completed profiles
-     */
-    public SandwichGen(Page page, Profile profile, ProfilePool profilePool) {
-        this(page, profile, profilePool, null);
-    }
+    private final ProfileRepository profileRepository = new ProfileRepository();
+
+    // ==================== Constructor ====================
 
     /**
-     * Creates a SandwichGen script with a referrer URL.
-     *
-     * @param page        the Page to automate
-     * @param profile     the profile containing user data
-     * @param profilePool the pool for writing completed profiles
-     * @param referrerUrl the referral link URL (or null for default)
+     * No-arg constructor for {@link ScriptRegistry} factory.
      */
-    public SandwichGen(Page page, Profile profile, ProfilePool profilePool, String referrerUrl) {
-        if (page == null) {
-            throw new IllegalArgumentException("Page cannot be null");
-        }
-        if (profile == null) {
-            throw new IllegalArgumentException("Profile cannot be null");
-        }
-        if (profilePool == null) {
-            throw new IllegalArgumentException("ProfilePool cannot be null");
-        }
-
-        this.page = page;
-        this.profile = profile;
-        this.profilePool = profilePool;
-        this.referrerUrl = referrerUrl;
+    public SandwichGen() {
     }
 
-    // ==================== Main Entry Point ====================
+    // ==================== AutomationScript Implementation ====================
 
     /**
      * Creates an Ike's rewards account using the configured profile.
@@ -135,34 +125,55 @@ public class SandwichGen {
      *   <li>Submits the form and verifies success</li>
      * </ol>
      *
-     * <p>On success, the completed profile is written to the ProfilePool
-     * with additional fields including the generated password and birthday.</p>
+     * <p>On success, the completed profile is persisted with additional
+     * notes including the generated password and birthday.</p>
      *
-     * @throws RuntimeException if account creation fails after all retries
+     * @param page    the browser page to automate
+     * @param profile the profile containing user data
+     * @param logger  the logger for live UI messages
+     * @param context the task context for resource registration and cancellation
+     * @throws Exception if account creation fails
      */
-    public void createAccount() {
+    @Override
+    public void run(Page page, ProfileEntity profile, TaskLogger logger,
+                    TaskContext context) throws Exception {
+        this.page = page;
+        this.profile = profile;
+        this.logger = logger;
+        this.context = context;
+
         // Generate transient data
         this.birthday = generateBirthday();
         this.password = generatePassword();
 
-        System.out.println("[SandwichGen] Creating account for: " + profile.emailAddress());
-        System.out.println("[SandwichGen] Birthday: " + birthday);
+        logger.log("Creating account for: " + profile.emailAddress());
+        logger.log("Birthday: " + birthday);
 
-        try {
-            navigateToRegistration();
-            solveInitialCaptcha();
-            fillPersonalInfo();
-            fillAccountCredentials();
-            selectLocationPreferences();
-            submitForm();
+        navigateToRegistration();
 
-            writeCompletedProfile();
-            System.out.println("[SandwichGen] ✓ Account created successfully for: " + profile.emailAddress());
+        context.checkCancelled();
 
-        } catch (Exception e) {
-            System.err.println("[SandwichGen] ✗ Account creation failed for: " + profile.emailAddress());
-            throw new RuntimeException("Account creation failed: " + e.getMessage(), e);
-        }
+        solveInitialCaptcha();
+
+        context.checkCancelled();
+
+        fillPersonalInfo();
+
+        context.checkCancelled();
+
+        fillAccountCredentials();
+
+        context.checkCancelled();
+
+        selectLocationPreferences();
+
+        context.checkCancelled();
+
+        submitForm();
+
+        persistCompletedProfile();
+
+        logger.success("Account created successfully for: " + profile.emailAddress());
     }
 
     // ==================== Step Functions ====================
@@ -171,20 +182,20 @@ public class SandwichGen {
      * Step 1: Navigate to the registration page.
      */
     private void navigateToRegistration() {
-        if (referrerUrl == null || referrerUrl.isBlank()) {
+        if (REFERRER_URL == null || REFERRER_URL.isBlank()) {
             throw new IllegalStateException("Referrer URL is required");
         }
 
-        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
             try {
-                System.out.println("[SandwichGen] Navigating to registration page (attempt " + attempt + ")...");
-                page.navigate(referrerUrl);
+                logger.log("Navigating to registration page (attempt " + attempt + ")...");
+                page.navigate(REFERRER_URL);
                 return;
 
             } catch (TimeoutException e) {
-                System.err.println("[SandwichGen] Navigation attempt " + attempt + " failed: " + e.getMessage());
-                if (attempt == MAX_ATTEMPTS) {
-                    throw new RuntimeException("Failed to navigate after " + MAX_ATTEMPTS + " attempts", e);
+                logger.log("Navigation attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
+                if (attempt == ATTEMPTS) {
+                    throw new RuntimeException("Failed to navigate after " + ATTEMPTS + " attempts", e);
                 }
                 page.sleep(2000);
             }
@@ -195,7 +206,7 @@ public class SandwichGen {
      * Step 2: Solve the initial PerimeterX captcha.
      */
     private void solveInitialCaptcha() {
-        System.out.println("[SandwichGen] Solving initial captcha...");
+        logger.log("Solving initial captcha...");
 
         int captchaWait = 10000;
 
@@ -206,7 +217,7 @@ public class SandwichGen {
 
             try {
                 if (page.exists(FIRST_NAME_TEXT)) {
-                    System.out.println("[SandwichGen] Initial captcha passed");
+                    logger.log("Initial captcha passed");
                     return;
                 }
             } catch (TimeoutException e) {
@@ -226,9 +237,9 @@ public class SandwichGen {
      * Step 3: Fill in personal information (name, phone, birthday).
      */
     private void fillPersonalInfo() {
-        System.out.println("[SandwichGen] Filling personal information...");
+        logger.log("Filling personal information...");
 
-        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
             try {
                 fillFormField(FIRST_NAME_TEXT, profile.firstName(), true);
                 fillFormField(LAST_NAME_TEXT, profile.lastName(), true);
@@ -239,13 +250,13 @@ public class SandwichGen {
                 fillFormField(DAY_TEXT, birthday.day(), true);
                 fillFormField(YEAR_TEXT, birthday.year(), true);
 
-                System.out.println("[SandwichGen] Personal information filled");
+                logger.log("Personal information filled");
                 return;
 
-            } catch (TimeoutException e) {
-                System.err.println("[SandwichGen] Fill personal info attempt " + attempt + " failed: " + e.getMessage());
-                if (attempt == MAX_ATTEMPTS) {
-                    throw new RuntimeException("Failed to fill personal info after " + MAX_ATTEMPTS + " attempts", e);
+            } catch (TimeoutException | InterruptedException e) {
+                logger.log("Fill personal info attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
+                if (attempt == ATTEMPTS) {
+                    throw new RuntimeException("Failed to fill personal info after " + ATTEMPTS + " attempts", e);
                 }
                 page.sleep(1000);
             }
@@ -256,9 +267,9 @@ public class SandwichGen {
      * Step 4: Fill in account credentials (email, password, opt-in).
      */
     private void fillAccountCredentials() {
-        System.out.println("[SandwichGen] Filling account credentials...");
+        logger.log("Filling account credentials...");
 
-        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
             try {
                 fillFormField(EMAIL_TEXT, profile.emailAddress(), true);
                 fillFormField(PASSWORD_TEXT, password, true);
@@ -268,13 +279,13 @@ public class SandwichGen {
                 page.click(EMAIL_OPT_IN_CHECKBOX);
                 page.sleep(500);
 
-                System.out.println("[SandwichGen] Account credentials filled");
+                logger.log("Account credentials filled");
                 return;
 
-            } catch (TimeoutException e) {
-                System.err.println("[SandwichGen] Fill credentials attempt " + attempt + " failed: " + e.getMessage());
-                if (attempt == MAX_ATTEMPTS) {
-                    throw new RuntimeException("Failed to fill credentials after " + MAX_ATTEMPTS + " attempts", e);
+            } catch (TimeoutException | InterruptedException e) {
+                logger.log("Fill credentials attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
+                if (attempt == ATTEMPTS) {
+                    throw new RuntimeException("Failed to fill credentials after " + ATTEMPTS + " attempts", e);
                 }
                 page.sleep(1000);
             }
@@ -285,9 +296,9 @@ public class SandwichGen {
      * Step 5: Select location preferences (state, store) and handle secondary captcha.
      */
     private void selectLocationPreferences() {
-        System.out.println("[SandwichGen] Selecting location preferences...");
+        logger.log("Selecting location preferences...");
 
-        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
             try {
                 // Scroll to bottom for dropdowns
                 page.scrollToBottom();
@@ -308,13 +319,13 @@ public class SandwichGen {
                 page.select(STORE_DROPDOWN, STORE_DEL_MAR);
                 page.sleep(1500);
 
-                System.out.println("[SandwichGen] Location preferences selected");
+                logger.log("Location preferences selected");
                 return;
 
             } catch (TimeoutException e) {
-                System.err.println("[SandwichGen] Select location attempt " + attempt + " failed: " + e.getMessage());
-                if (attempt == MAX_ATTEMPTS) {
-                    throw new RuntimeException("Failed to select location after " + MAX_ATTEMPTS + " attempts", e);
+                logger.log("Select location attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
+                if (attempt == ATTEMPTS) {
+                    throw new RuntimeException("Failed to select location after " + ATTEMPTS + " attempts", e);
                 }
                 page.sleep(1000);
             }
@@ -340,7 +351,7 @@ public class SandwichGen {
 
             // Log only once that we detected a second captcha
             if (!logged && result.wasAttempted()) {
-                System.out.println("[SandwichGen] Secondary captcha detected for: " + profile.emailAddress());
+                logger.log("Secondary captcha detected for: " + profile.emailAddress());
                 logged = true;
             }
 
@@ -363,21 +374,21 @@ public class SandwichGen {
      * Step 6: Submit the form and verify success.
      */
     private void submitForm() {
-        System.out.println("[SandwichGen] Submitting form...");
+        logger.log("Submitting form...");
 
-        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
             try {
                 page.click(SUBMIT_BUTTON);
                 page.sleep(3000);
 
                 page.waitForSelector(SUCCESS_MESSAGE, 15000);
-                System.out.println("[SandwichGen] Form submitted successfully");
+                logger.log("Form submitted successfully");
                 return;
 
             } catch (TimeoutException e) {
-                System.err.println("[SandwichGen] Submit attempt " + attempt + " failed: " + e.getMessage());
-                if (attempt == MAX_ATTEMPTS) {
-                    throw new RuntimeException("Failed to submit form after " + MAX_ATTEMPTS + " attempts", e);
+                logger.log("Submit attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
+                if (attempt == ATTEMPTS) {
+                    throw new RuntimeException("Failed to submit form after " + ATTEMPTS + " attempts", e);
                 }
                 page.sleep(2000);
             }
@@ -392,48 +403,34 @@ public class SandwichGen {
      * @param selector the XPath or CSS selector
      * @param value    the value to type
      * @param validate whether to validate the value was entered correctly
-     * @throws TimeoutException if the field cannot be filled after retries
+     * @throws TimeoutException     if the field cannot be filled after retries
+     * @throws InterruptedException if interrupted while filling
      */
-    private void fillFormField(String selector, String value, boolean validate) throws TimeoutException {
-        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-            try {
-                page.fillFormField(selector, value, 900, 2000);
+    private void fillFormField(String selector, String value, boolean validate) throws TimeoutException, InterruptedException {
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            page.fillFormField(selector, value, 900, 2000);
 
-                if (!validate || page.validateValue(selector, value)) {
-                    return;
-                }
-
-                // Value mismatch - clear and retry
-                page.sleep(200);
-                page.clear(selector);
-
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new TimeoutException("Interrupted while filling field: " + selector);
-            } catch (TimeoutException e) {
-                if (attempt == MAX_ATTEMPTS) {
-                    throw e;
-                }
-                page.sleep(500);
+            if (!validate || page.validateValue(selector, value)) {
+                return;
             }
+
+            // Value mismatch — clear and retry
+            page.sleep(200);
+            page.clear(selector);
         }
 
-        throw new TimeoutException("Failed to fill field after " + MAX_ATTEMPTS + " attempts: " + selector);
+        throw new TimeoutException("Failed to fill field after " + ATTEMPTS + " attempts: " + selector);
     }
 
     /**
-     * Writes the completed profile to the output file with extra fields.
+     * Persists the generated account data to the profile notes.
      */
-    private void writeCompletedProfile() throws IOException {
-        Profile completed = profile.toBuilder()
-                .accountLoginInfo(profile.emailAddress() + ":" + password)
-                .extraField("Birthday Month", birthday.month())
-                .extraField("Birthday Day", birthday.day())
-                .extraField("Birthday Year", birthday.year())
-                .extraField("Referrer URL", referrerUrl != null ? referrerUrl : "")
-                .build();
+    private void persistCompletedProfile() {
+        String note = String.format("Password: %s:%s | Birthday: %s | Referrer: %s",
+                profile.emailAddress(), password, birthday,
+                REFERRER_URL != null ? REFERRER_URL : "");
 
-        profilePool.writeCompleted(completed);
+        AutomationScript.persistNote(profile, note, profileRepository);
     }
 
     // ==================== Data Generation ====================
@@ -459,13 +456,9 @@ public class SandwichGen {
             nextMonth = 1;
         }
 
-        // Format month as 2-digit string
         String month = String.format("%02d", nextMonth);
-
-        // Day is always 1st
         String day = "01";
 
-        // Year: 1945 to (current_year - 20)
         int maxBirthYear = today.getYear() - MIN_AGE_YEARS;
         int randomYear = ThreadLocalRandom.current().nextInt(MIN_BIRTH_YEAR, maxBirthYear + 1);
         String year = String.valueOf(randomYear);

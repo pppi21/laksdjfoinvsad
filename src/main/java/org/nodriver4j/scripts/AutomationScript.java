@@ -3,6 +3,7 @@ package org.nodriver4j.scripts;
 import org.nodriver4j.core.Page;
 import org.nodriver4j.persistence.entity.ProfileEntity;
 import org.nodriver4j.persistence.repository.ProfileRepository;
+import org.nodriver4j.services.TaskContext;
 import org.nodriver4j.services.TaskLogger;
 
 /**
@@ -18,23 +19,39 @@ import org.nodriver4j.services.TaskLogger;
  *   <li>{@link org.nodriver4j.services.TaskExecutionService} loads the task,
  *       profile, and proxy from the database</li>
  *   <li>A headless browser is launched with the correct config</li>
+ *   <li>A {@link TaskContext} is created and infrastructure resources
+ *       (e.g., AutoSolveAIService) are registered on it</li>
  *   <li>The {@link ScriptRegistry} creates an instance of the script</li>
- *   <li>{@link #run(Page, ProfileEntity, TaskLogger)} is invoked on a
- *       background thread</li>
+ *   <li>{@link #run(Page, ProfileEntity, TaskLogger, TaskContext)} is invoked
+ *       on a background thread</li>
  *   <li>On normal return → task status is set to COMPLETED, profile is saved</li>
  *   <li>On exception → task status is set to FAILED, error is logged</li>
  * </ol>
  *
  * <h2>Cancellation Contract</h2>
- * <p>Scripts run on a background thread that may be interrupted via
- * {@link Thread#interrupt()} when the user clicks Stop. Implementations
- * should:</p>
+ * <p>Scripts run on a background thread that may be cancelled via two
+ * complementary mechanisms when the user clicks Stop:</p>
  * <ul>
- *   <li>Allow {@link InterruptedException} to propagate (do not swallow it)</li>
- *   <li>Periodically check {@link Thread#currentThread()}.isInterrupted()
- *       in long-running loops</li>
- *   <li>Treat interruption as a signal to stop cleanly — not an error</li>
+ *   <li><b>Context cancellation:</b> {@link TaskContext#cancel()} closes all
+ *       registered resources, unblocking threads stuck on non-interruptible
+ *       I/O (IMAP reads, HTTP requests). Scripts should register services
+ *       they create via {@link TaskContext#register} and can check
+ *       {@link TaskContext#isCancelled()} or call
+ *       {@link TaskContext#checkCancelled()} at safe checkpoints.</li>
+ *   <li><b>Thread interruption:</b> {@link Thread#interrupt()} handles
+ *       interruptible operations ({@code Thread.sleep}, {@code Object.wait},
+ *       NIO channels). Allow {@link InterruptedException} to propagate.</li>
  * </ul>
+ *
+ * <h2>Resource Registration</h2>
+ * <p>Scripts should register any {@link AutoCloseable} services they create
+ * on the {@link TaskContext} so that cancellation can tear them down
+ * immediately. The fluent API works naturally with try-with-resources:</p>
+ * <pre>{@code
+ * try (var extractor = context.register(new UberOtpExtractor(email, catchall, pass))) {
+ *     String otp = extractor.extractOtp();
+ * }
+ * }</pre>
  *
  * <h2>Profile Modification</h2>
  * <p>Scripts may modify the {@link ProfileEntity} passed to them (e.g.,
@@ -51,7 +68,8 @@ import org.nodriver4j.services.TaskLogger;
  * public class UberGen implements AutomationScript {
  *
  *     @Override
- *     public void run(Page page, ProfileEntity profile, TaskLogger logger) throws Exception {
+ *     public void run(Page page, ProfileEntity profile, TaskLogger logger,
+ *                     TaskContext context) throws Exception {
  *         logger.log("Navigating to Uber Eats...");
  *
  *         page.navigate("https://www.ubereats.com/");
@@ -82,6 +100,7 @@ import org.nodriver4j.services.TaskLogger;
  *   <li>Task status transitions (managed by {@link org.nodriver4j.services.TaskExecutionService})</li>
  * </ul>
  *
+ * @see TaskContext
  * @see TaskLogger
  * @see ScriptRegistry
  * @see org.nodriver4j.services.TaskExecutionService
@@ -100,13 +119,19 @@ public interface AutomationScript {
      * {@link InterruptedException} indicates the user requested cancellation
      * and should be allowed to propagate.</p>
      *
+     * <p>Scripts should register any {@link AutoCloseable} services they
+     * create on the context via {@link TaskContext#register}, so that
+     * cancellation can tear them down immediately.</p>
+     *
      * @param page    the browser page to automate (never null)
      * @param profile the profile data for this task (never null, may be modified)
      * @param logger  the logger for pushing live messages to the UI (never null)
+     * @param context the task context for resource registration and cancellation
+     *                checking (never null)
      * @throws InterruptedException if the script is cancelled via thread interruption
      * @throws Exception            if the script fails for any reason
      */
-    void run(Page page, ProfileEntity profile, TaskLogger logger) throws Exception;
+    void run(Page page, ProfileEntity profile, TaskLogger logger, TaskContext context) throws Exception;
 
     /**
      * Appends a note to a profile's notes field and persists it immediately.

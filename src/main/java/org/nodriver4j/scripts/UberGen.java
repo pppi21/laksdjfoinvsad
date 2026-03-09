@@ -3,10 +3,7 @@ package org.nodriver4j.scripts;
 import org.nodriver4j.captcha.ReCaptchaSolver;
 import org.nodriver4j.core.Page;
 import org.nodriver4j.persistence.entity.ProfileEntity;
-import org.nodriver4j.services.EmailPollingBase;
-import org.nodriver4j.services.GmailClient;
-import org.nodriver4j.services.TaskLogger;
-import org.nodriver4j.services.UberOtpExtractor;
+import org.nodriver4j.services.*;
 
 import java.util.concurrent.TimeoutException;
 
@@ -19,8 +16,8 @@ import java.util.concurrent.TimeoutException;
  *
  * <h2>Lifecycle</h2>
  * <p>Instances are created by {@link ScriptRegistry} via the no-arg constructor.
- * {@link #run(Page, ProfileEntity, TaskLogger)} is called once per instance on
- * a background thread managed by
+ * {@link #run(Page, ProfileEntity, TaskLogger, TaskContext)} is called once per
+ * instance on a background thread managed by
  * {@link org.nodriver4j.services.TaskExecutionService}.</p>
  *
  * <h2>Success / Failure</h2>
@@ -66,6 +63,7 @@ public class UberGen implements AutomationScript {
     private Page page;
     private ProfileEntity profile;
     private TaskLogger logger;
+    private TaskContext context;
 
     // ==================== Constructor ====================
 
@@ -86,23 +84,32 @@ public class UberGen implements AutomationScript {
      * @param page    the browser page to automate
      * @param profile the profile containing user data
      * @param logger  the logger for live UI messages
+     * @param context the task context for resource registration and cancellation
      * @throws Exception if the signup fails for any reason
      */
     @Override
-    public void run(Page page, ProfileEntity profile, TaskLogger logger) throws Exception {
+    public void run(Page page, ProfileEntity profile, TaskLogger logger,
+                    TaskContext context) throws Exception {
         this.page = page;
         this.profile = profile;
         this.logger = logger;
+        this.context = context;
 
         try {
             logger.log("Navigating to Uber Eats...");
             navigateToUber();
 
+            context.checkCancelled();
+
             logger.log("Signing up with email...");
             signUpWithEmail();
 
+            context.checkCancelled();
+
             logger.log("Waiting for email OTP...");
             enterEmailOTP();
+
+            context.checkCancelled();
 
             if (page.exists(FIRST_NAME_TEXT)) {
                 logger.log("Entering name...");
@@ -113,6 +120,8 @@ public class UberGen implements AutomationScript {
                 logger.log("Entering name...");
                 enterName();
             }
+
+            context.checkCancelled();
 
             logger.log("Accepting terms...");
             acceptTerms();
@@ -209,8 +218,8 @@ public class UberGen implements AutomationScript {
         logger.log("IMAP credentials — catchall: " + catchall
                 + ", password: " + (imap == null ? "NULL" : imap.length() + " chars"));
 
-        try (UberOtpExtractor extractor = new UberOtpExtractor(
-                profile.emailAddress(), catchall, imap)) {
+        try (UberOtpExtractor extractor = context.register(new UberOtpExtractor(
+                profile.emailAddress(), catchall, imap))) {
 
             for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
                 try {
