@@ -1,0 +1,145 @@
+From 88e87c4ded2a21157b33b2aa8e1a0bd7142e963e Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Mon, 9 Mar 2026 15:49:03 -0700
+Subject: [PATCH 32/32] new build args
+
+---
+ components/nodriver4j/font_whitelist.cc       | 27 +++++++++----------
+ .../platform/fonts/shaping/harfbuzz_shaper.cc | 16 ++++++-----
+ 2 files changed, 22 insertions(+), 21 deletions(-)
+
+diff --git a/components/nodriver4j/font_whitelist.cc b/components/nodriver4j/font_whitelist.cc
+index a9986a3982..ec9422e546 100644
+--- a/components/nodriver4j/font_whitelist.cc
++++ b/components/nodriver4j/font_whitelist.cc
+@@ -2,9 +2,11 @@
+ #include "components/nodriver4j/font_whitelist.h"
+ 
+ #include <string>
++#include <string_view>
+ #include <unordered_set>
+ 
+ #include "base/command_line.h"
++#include "base/containers/span.h"
+ #include "base/strings/string_util.h"
+ #include "components/nodriver4j/nodriver4j_switches.h"
+ 
+@@ -13,7 +15,7 @@ namespace switches {
+ namespace {
+ 
+ // Generic CSS families — always allowed, never blocked.
+-const char* const kGenericFamilies[] = {
++constexpr std::string_view kGenericFamilies[] = {
+     "sans-serif", "serif", "monospace", "system-ui", "cursive",
+     "fantasy", "emoji", "ui-sans-serif", "ui-serif", "ui-monospace",
+     "ui-rounded", "math", "fangsong",
+@@ -21,7 +23,7 @@ const char* const kGenericFamilies[] = {
+ 
+ // PASTE FONT LISTS BELOW — one string literal per font name.
+ 
+-const char* const kWindowsFonts[] = {
++constexpr std::string_view kWindowsFonts[] = {
+     "Arial",
+     "Arial Black",
+     "Bahnschrift",
+@@ -131,7 +133,7 @@ const char* const kWindowsFonts[] = {
+     "\xef\xbc\xad\xef\xbc\xb3 \xef\xbc\xb0\xe3\x82\xb4\xe3\x82\xb7\xe3\x83\x83\xe3\x82\xaf"
+ };
+ 
+-const char* const kMacFonts[] = {
++constexpr std::string_view kMacFonts[] = {
+     ".Al Bayan PUA",
+     ".Al Nile PUA",
+     ".Al Tarikh PUA",
+@@ -707,7 +709,7 @@ const char* const kMacFonts[] = {
+     "\xec\x8b\x9c\xec\x8a\xa4\xed\x85\x9c \xec\x84\x9c\xec\xb2\xb4"
+ };
+ 
+-const char* const kLinuxFonts[] = {
++constexpr std::string_view kLinuxFonts[] = {
+     "Arimo",
+     "Cousine",
+     "Noto Naskh Arabic",
+@@ -851,29 +853,25 @@ const std::unordered_set<std::string>* BuildWhitelist() {
+   if (!command_line->HasSwitch(kFingerprintPlatform))
+     return nullptr;
+ 
+-   std::string platform = base::ToLowerASCII(
++  std::string platform = base::ToLowerASCII(
+       command_line->GetSwitchValueASCII(kFingerprintPlatform));
+ 
+-  const char* const* fonts = nullptr;
+-  size_t count = 0;
++  base::span<const std::string_view> fonts;
+ 
+   if (platform == "windows") {
+     fonts = kWindowsFonts;
+-    count = sizeof(kWindowsFonts) / sizeof(kWindowsFonts[0]);
+   } else if (platform == "macos") {
+     fonts = kMacFonts;
+-    count = sizeof(kMacFonts) / sizeof(kMacFonts[0]);
+   } else if (platform == "linux") {
+     fonts = kLinuxFonts;
+-    count = sizeof(kLinuxFonts) / sizeof(kLinuxFonts[0]);
+   } else {
+     return nullptr;
+   }
+ 
+   auto* set = new std::unordered_set<std::string>();
+-  set->reserve(count);
+-  for (size_t i = 0; i < count; ++i) {
+-    set->insert(base::ToLowerASCII(fonts[i]));
++  set->reserve(fonts.size());
++  for (std::string_view font : fonts) {
++    set->insert(base::ToLowerASCII(font));
+   }
+   return set;
+ }
+@@ -890,8 +888,7 @@ bool IsFontBlocked(const std::string& family_name) {
+   if (!whitelist)
+     return false;
+ 
+-  // Generic CSS families are always allowed — check before allocating.
+-  for (const char* generic : kGenericFamilies) {
++  for (std::string_view generic : kGenericFamilies) {
+     if (base::EqualsCaseInsensitiveASCII(family_name, generic))
+       return false;
+   }
+diff --git a/third_party/blink/renderer/platform/fonts/shaping/harfbuzz_shaper.cc b/third_party/blink/renderer/platform/fonts/shaping/harfbuzz_shaper.cc
+index fe529ac453..8bd8aabd2a 100644
+--- a/third_party/blink/renderer/platform/fonts/shaping/harfbuzz_shaper.cc
++++ b/third_party/blink/renderer/platform/fonts/shaping/harfbuzz_shaper.cc
+@@ -68,6 +68,7 @@
+ #include "base/command_line.h"
+ #include "base/strings/string_number_conversions.h"
+ #include "components/nodriver4j/nodriver4j_switches.h"
++#include "base/compiler_specific.h"
+ 
+ namespace blink {
+ 
+@@ -335,13 +336,16 @@ static void ApplyFontSpacingNoise(hb_buffer_t* buffer) {
+   bool is_vertical =
+       HB_DIRECTION_IS_VERTICAL(hb_buffer_get_direction(buffer));
+ 
+-  for (unsigned int i = 0; i < glyph_count; ++i) {
+-    if (is_vertical) {
+-      positions[i].y_advance += spacing;
+-    } else {
+-      positions[i].x_advance += spacing;
++  // SAFETY: `positions` is a HarfBuzz-owned array of `glyph_count` elements.
++  UNSAFE_BUFFERS({
++    for (unsigned int i = 0; i < glyph_count; ++i) {
++      if (is_vertical) {
++        positions[i].y_advance += spacing;
++      } else {
++        positions[i].x_advance += spacing;
++      }
+     }
+-  }
++  });
+ }
+ 
+ 
+-- 
+2.45.1.windows.1
+

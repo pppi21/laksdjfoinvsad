@@ -614,9 +614,9 @@ public class Browser implements AutoCloseable {
     /**
      * Sets up CDP Fetch interception for proxy authentication.
      *
-     * <p>Enables the Fetch domain with auth handling and no request patterns,
-     * so only {@code Fetch.authRequired} events fire — requests are not
-     * intercepted or paused.</p>
+     * <p>Enables the Fetch domain with auth handling and a wildcard request pattern.
+     * All paused requests are immediately continued; only {@code Fetch.authRequired}
+     * events trigger credential injection.</p>
      */
     private void setupFetchInterception() {
         Proxy proxy = config.proxyConfig();
@@ -625,11 +625,18 @@ public class Browser implements AutoCloseable {
                 proxy.host() + ":" + proxy.port());
 
         try {
+            JsonObject wildcard = new JsonObject();
+            wildcard.addProperty("urlPattern", "*");
+
+            JsonArray patterns = new JsonArray();
+            patterns.add(wildcard);
+
             JsonObject enableParams = new JsonObject();
             enableParams.addProperty("handleAuthRequests", true);
-            enableParams.add("patterns", new JsonArray());
+            enableParams.add("patterns", patterns);
             browserCdpClient.send("Fetch.enable", enableParams);
 
+            browserCdpClient.addEventListener("Fetch.requestPaused", this::handleRequestPaused);
             browserCdpClient.addEventListener("Fetch.authRequired", this::handleProxyAuthRequired);
 
             System.out.println("[Browser] Proxy auth interception configured");
@@ -637,6 +644,21 @@ public class Browser implements AutoCloseable {
         } catch (TimeoutException e) {
             throw new RuntimeException("Failed to setup proxy auth interception: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Handles paused requests by immediately continuing them.
+     *
+     * <p>Required because CDP's Fetch domain pauses all matching requests
+     * when enabled. Since resource blocking has been removed, every request
+     * is continued without modification.</p>
+     */
+    private void handleRequestPaused(JsonObject event) {
+        String requestId = event.get("requestId").getAsString();
+
+        JsonObject continueParams = new JsonObject();
+        continueParams.addProperty("requestId", requestId);
+        browserCdpClient.sendAsync("Fetch.continueRequest", continueParams);
     }
 
     /**
@@ -1119,25 +1141,68 @@ public class Browser implements AutoCloseable {
         // Core browser arguments
         args.add("--remote-debugging-port=" + port);
         args.add("--user-data-dir=" + userDataDir.toAbsolutePath());
+        args.add("--remote-allow-origins=*");
+
+        // Startup suppression
         args.add("--no-first-run");
         args.add("--no-default-browser-check");
-        args.add("--disable-breakpad");
-        args.add("--disable-translate");
-        args.add("--disable-password-generation");
-        args.add("--disable-prompt-on-repost");
-        args.add("--disable-backgrounding-occluded-windows");
-        args.add("--disable-renderer-backgrounding");
-        args.add("--remote-allow-origins=*");
-        args.add("--no-service-autorun");
-        args.add("--disable-ipc-flooding-protection");
-        args.add("--disable-client-side-phishing-detection");
+        args.add("--no-pings");
+        args.add("--hide-crash-restore-bubble");
+
+        // Background service suppression
         args.add("--disable-background-networking");
-        args.add("--disable-features=BlockThirdPartyCookies,UseEcoQoSForBackgroundProcess,ReduceAcceptLanguage,ReduceAcceptLanguageHTTP");
-        args.add("--disable-hang-monitor");
-        args.add("--disable-domain-reliability");
-        args.add("--metrics-recording-only");
-        args.add("--mute-audio");
+        args.add("--disable-component-update");
+        args.add("--disable-client-side-phishing-detection");
         args.add("--disable-sync");
+        args.add("--disable-domain-reliability");
+        args.add("--disable-breakpad");
+        args.add("--disable-field-trial-config");
+        args.add("--metrics-recording-only");
+        args.add("--connectivity-check-url=");
+        args.add("--variations-server-url=");
+
+        // UI and extension suppression
+        args.add("--disable-component-extensions-with-background-pages");
+        args.add("--disable-default-apps");
+        args.add("--disable-hang-monitor");
+        args.add("--disable-prompt-on-repost");
+        args.add("--disable-search-engine-choice-screen");
+        args.add("--disable-password-generation");
+
+        // Process and renderer control
+        args.add("--disable-renderer-backgrounding");
+        args.add("--disable-backgrounding-occluded-windows");
+        args.add("--disable-background-timer-throttling");
+        args.add("--disable-ipc-flooding-protection");
+        args.add("--no-service-autorun");
+        args.add("--password-store=basic");
+        args.add("--use-mock-keychain");
+        args.add("--mute-audio");
+
+        // Feature flags
+        args.add("--disable-features="
+                + "Translate,"
+                + "OptimizationHints,"
+                + "MediaRouter,"
+                + "DialMediaRouteProvider,"
+                + "CertificateTransparencyComponentUpdater,"
+                + "AutofillServerCommunication,"
+                + "SafeBrowsing,"
+                + "PasswordLeakDetection,"
+                + "InterestFeedContentSuggestions,"
+                + "CrashReporting,"
+                + "GlobalMediaControls,"
+                + "DestroyProfileOnBrowserClose,"
+                + "AvoidUnnecessaryBeforeUnloadCheckSync,"
+                + "LensOverlay,"
+                + "ServiceWorkerPaymentApps,"
+                + "BlockThirdPartyCookies,"
+                + "UseEcoQoSForBackgroundProcess,"
+                + "ReduceAcceptLanguage,"
+                + "ReduceAcceptLanguageHTTP,"
+                + "Prerender2,"
+                + "SpeculationRulesPrefetchProxy"
+        );
 
         // Proxy configuration
         if (config.hasProxy()) {
@@ -1148,6 +1213,10 @@ public class Browser implements AutoCloseable {
         // Headless mode
         if (config.headless()) {
             args.add("--headless=new");
+            args.add("--renderer-process-limit=2");
+            args.add("--js-flags=--max-old-space-size=512 --expose-gc");
+            args.add("--disable-renderer-accessibility");
+            args.add("--disable-smooth-scrolling");
 
             // Random screen dimensions
             int[] resolution = HEADLESS_RESOLUTIONS[new Random().nextInt(HEADLESS_RESOLUTIONS.length)];
@@ -1177,7 +1246,7 @@ public class Browser implements AutoCloseable {
             // Temporary:
             int commit = (int)(Math.random() * 10) + 110;
 
-            // UA metadata
+            // UA metadata - These are hardcoded until we can properly spoof browser version.
             // args.add("--fingerprint-brand=" + fp.browserBrand());
             // args.add("--fingerprint-brand-version=" + fp.browserMajorVersion());
             // args.add("--fingerprint-brand-version-long=" + fp.brandVersionLong());
@@ -1222,6 +1291,8 @@ public class Browser implements AutoCloseable {
                 }
             }
         }
+
+        args.add("about:blank");
 
         return args;
     }
