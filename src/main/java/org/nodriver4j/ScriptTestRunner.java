@@ -99,7 +99,6 @@ public class ScriptTestRunner {
                 .executablePath(settings.chromePath())
                 .headless(false)
                 .headlessGpuAcceleration(false)
-                .resourceBlocking(true)
                 .build();
 
         int port = 9222;

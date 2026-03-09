@@ -49,7 +49,6 @@ public class ManualBrowser {
                 .headless(false)
                 //.webrtcPolicy("default")
                 .headlessGpuAcceleration(false)
-                .resourceBlocking(false)
                 .userDataDir(Path.of("C:/Users/leofo/Documents/NoDriver4j/ue-cookies/nodriver4j-e7ad1adb"))
                 .build();
 

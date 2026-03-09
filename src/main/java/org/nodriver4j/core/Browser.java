@@ -28,8 +28,7 @@ import java.util.function.IntConsumer;
  *   <li>Launching Chrome with appropriate command-line arguments</li>
  *   <li>Establishing a single browser-level CDP connection</li>
  *   <li>Session-based multi-tab control via {@link CDPSession}</li>
- *   <li>Setting up proxy authentication via CDP Fetch domain</li>
- *   <li>Resource blocking for performance optimization</li>
+ *   <li>Setting up proxy authentication via CDP Fetch domain (when proxy requires auth)</li>
  *   <li>Applying fingerprint settings via command-line arguments</li>
  *   <li>Tracking and managing Page instances for all browser tabs</li>
  *   <li>Attaching to tabs on demand for automation</li>
@@ -111,44 +110,6 @@ public class Browser implements AutoCloseable {
             {2560, 1440}   // 1440p
     };
 
-    // ==================== Resource Blocking Constants ====================
-
-    /**
-     * Resource types to block when resource blocking is enabled.
-     * These types are unnecessary for most automation tasks.
-     */
-    private static final Set<String> BLOCKED_RESOURCE_TYPES = Set.of(
-            "Media",
-            "Font",
-            "Prefetch",
-            "Ping",
-            "Manifest",
-            "CSPViolationReport",
-            "SignedExchange",
-            "TextTrack"
-    );
-
-    /**
-     * URL patterns for analytics/tracking services to block.
-     * Uses simple substring matching for performance.
-     */
-    private static final List<String> BLOCKED_URL_PATTERNS = List.of(
-            "google-analytics.com",
-            "googletagmanager.com",
-            "facebook.net",
-            "doubleclick.net",
-            "googlesyndication.com",
-            "hotjar.com",
-            "segment.io",
-            "segment.com",
-            "mixpanel.com",
-            "newrelic.com",
-            "sentry.io",
-            "clarity.ms",
-            "optimizely.com",
-            "cdn.amplitude.com"
-    );
-
     // ==================== Instance Fields ====================
 
     private final BrowserConfig config;
@@ -162,9 +123,6 @@ public class Browser implements AutoCloseable {
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private final AtomicBoolean warmed = new AtomicBoolean(false);
     private final boolean ownsUserDataDir;
-
-    // Resource blocking counter
-    private final AtomicInteger blockedResourceCount = new AtomicInteger(0);
 
     // Page tracking
     private final Map<String, Page> pages = new ConcurrentHashMap<>();
@@ -642,116 +600,43 @@ public class Browser implements AutoCloseable {
     }
 
 
-    // ==================== Fetch Interception (Proxy Auth + Resource Blocking) ====================
+    // ==================== Fetch Interception (Proxy Auth) ====================
 
     /**
-     * Checks if Fetch interception is needed for this browser configuration.
+     * Checks if Fetch interception is needed for proxy authentication.
      *
-     * @return true if proxy auth or resource blocking is enabled
+     * @return true if proxy requires authentication
      */
     private boolean needsFetchInterception() {
-        return (config.hasProxy() && config.proxyConfig().requiresAuth()) || config.resourceBlocking();
+        return config.hasProxy() && config.proxyConfig().requiresAuth();
     }
 
     /**
-     * Sets up CDP Fetch interception for proxy authentication and/or resource blocking.
+     * Sets up CDP Fetch interception for proxy authentication.
      *
-     * <p>This method consolidates both proxy auth and resource blocking into a single
-     * Fetch.enable call to avoid conflicts from multiple handlers.</p>
+     * <p>Enables the Fetch domain with auth handling and no request patterns,
+     * so only {@code Fetch.authRequired} events fire — requests are not
+     * intercepted or paused.</p>
      */
     private void setupFetchInterception() {
-        boolean hasProxy = config.hasProxy() && config.proxyConfig().requiresAuth();
-        boolean hasBlocking = config.resourceBlocking();
+        Proxy proxy = config.proxyConfig();
 
-        if (hasProxy) {
-            System.out.println("[Browser] Setting up proxy authentication for " +
-                    config.proxyConfig().host() + ":" + config.proxyConfig().port());
-        }
-        if (hasBlocking) {
-            System.out.println("[Browser] Setting up resource blocking");
-        }
+        System.out.println("[Browser] Setting up proxy authentication for " +
+                proxy.host() + ":" + proxy.port());
 
         try {
-            // Enable Fetch domain - only enable auth handling if proxy is configured
             JsonObject enableParams = new JsonObject();
-            enableParams.addProperty("handleAuthRequests", hasProxy);
+            enableParams.addProperty("handleAuthRequests", true);
+            enableParams.add("patterns", new JsonArray());
             browserCdpClient.send("Fetch.enable", enableParams);
 
-            // Handle paused requests (resource blocking + continue)
-            browserCdpClient.addEventListener("Fetch.requestPaused", this::handleRequestPaused);
+            browserCdpClient.addEventListener("Fetch.authRequired", this::handleProxyAuthRequired);
 
-            // Handle auth challenges (only relevant if proxy is configured)
-            if (hasProxy) {
-                browserCdpClient.addEventListener("Fetch.authRequired", this::handleProxyAuthRequired);
-            }
-
-            System.out.println("[Browser] Fetch interception configured (proxy=" + hasProxy +
-                    ", blocking=" + hasBlocking + ")");
+            System.out.println("[Browser] Proxy auth interception configured");
 
         } catch (TimeoutException e) {
-            throw new RuntimeException("Failed to setup Fetch interception: " + e.getMessage(), e);
+            throw new RuntimeException("Failed to setup proxy auth interception: " + e.getMessage(), e);
         }
-    }
-
-    /**
-     * Handles paused requests from CDP Fetch domain.
-     *
-     * <p>This method decides whether to block or continue each request based on:</p>
-     * <ol>
-     *   <li>Resource type (if resource blocking is enabled)</li>
-     *   <li>URL patterns matching analytics/tracking services</li>
-     * </ol>
-     */
-    private void handleRequestPaused(JsonObject event) {
-        String requestId = event.get("requestId").getAsString();
-
-        // Check if we should block this request
-        if (config.resourceBlocking() && shouldBlockRequest(event)) {
-            // Block the request
-            JsonObject failParams = new JsonObject();
-            failParams.addProperty("requestId", requestId);
-            failParams.addProperty("errorReason", "Aborted");
-            browserCdpClient.sendAsync("Fetch.failRequest", failParams);
-
-            blockedResourceCount.incrementAndGet();
-            return;
-        }
-
-        // Continue the request
-        JsonObject continueParams = new JsonObject();
-        continueParams.addProperty("requestId", requestId);
-        browserCdpClient.sendAsync("Fetch.continueRequest", continueParams);
-    }
-
-    /**
-     * Determines if a request should be blocked based on resource type and URL.
-     *
-     * @param event the Fetch.requestPaused event
-     * @return true if the request should be blocked
-     */
-    private boolean shouldBlockRequest(JsonObject event) {
-        // Check resource type
-        if (event.has("resourceType")) {
-            String resourceType = event.get("resourceType").getAsString();
-            if (BLOCKED_RESOURCE_TYPES.contains(resourceType)) {
-                return true;
-            }
-        }
-
-        // Check URL patterns
-        if (event.has("request")) {
-            JsonObject request = event.getAsJsonObject("request");
-            if (request.has("url")) {
-                String url = request.get("url").getAsString().toLowerCase();
-                for (String pattern : BLOCKED_URL_PATTERNS) {
-                    if (url.contains(pattern)) {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        return false;
     }
 
     /**
@@ -780,27 +665,6 @@ public class Browser implements AutoCloseable {
         browserCdpClient.sendAsync("Fetch.continueWithAuth", authResponse);
 
         System.out.println("[Browser] Proxy credentials provided for request: " + requestId);
-    }
-
-    /**
-     * Gets the count of blocked resources since browser launch.
-     *
-     * @return the number of blocked resources
-     */
-    public int blockedResourceCount() {
-        return blockedResourceCount.get();
-    }
-
-    /**
-     * Logs a summary of blocked resources and resets the counter.
-     *
-     * <p>Call this after a page load or navigation to see how many resources were blocked.</p>
-     */
-    public void logAndResetBlockedCount() {
-        int count = blockedResourceCount.getAndSet(0);
-        if (count > 0) {
-            System.out.println("[Browser] Blocked " + count + " resources");
-        }
     }
 
     // ==================== CDP Connection Helpers ====================
@@ -1129,14 +993,6 @@ public class Browser implements AutoCloseable {
             return; // Already closed
         }
 
-        // Log blocked resources summary
-        if (config.resourceBlocking()) {
-            int count = blockedResourceCount.get();
-            if (count > 0) {
-                System.out.println("[Browser] Total blocked resources: " + count);
-            }
-        }
-
         try {
             // Close CDP — this closes all sessions and the WebSocket
             if (browserCdpClient != null) {
@@ -1306,12 +1162,6 @@ public class Browser implements AutoCloseable {
             }
         }
 
-//        // WebRTC policy
-//        String webrtcPolicy = config.webrtcPolicy();
-//        if (webrtcPolicy != null && !webrtcPolicy.isBlank()) {
-//            args.add("--webrtc-ip-handling-policy=" + webrtcPolicy);
-//        }
-
         // Custom arguments from config
         List<String> customArgs = config.arguments();
         if (customArgs != null && !customArgs.isEmpty()) {
@@ -1378,13 +1228,12 @@ public class Browser implements AutoCloseable {
 
     @Override
     public String toString() {
-        return String.format("Browser{port=%d, open=%s, warmed=%s, pages=%d, fingerprint=%s, proxy=%s, resourceBlocking=%s}",
+        return String.format("Browser{port=%d, open=%s, warmed=%s, pages=%d, fingerprint=%s, proxy=%s}",
                 port,
                 !closed.get(),
                 warmed.get(),
                 pages.size(),
                 config.hasFingerprint() ? "enabled" : "disabled",
-                config.proxyConfig() != null ? config.proxyConfig().host() : "none",
-                config.resourceBlocking() ? "enabled" : "disabled");
+                config.proxyConfig() != null ? config.proxyConfig().host() : "none");
     }
 }

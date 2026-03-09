@@ -22,7 +22,6 @@ import java.util.List;
  *     .headless(false)
  *     .fingerprint(fingerprintEntity)
  *     .resourceBlocking(true)
- *     .webrtcPolicy("disable_non_proxied_udp")
  *     .interactionOptions(InteractionOptions.defaults())
  *     .build();
  * }</pre>
@@ -47,21 +46,16 @@ import java.util.List;
  * @see BrowserManager
  */
 public class BrowserConfig {
-
-    private static final String DEFAULT_WEBRTC_POLICY = "disable_non_proxied_udp";
-
     // Required
     private final String executablePath;
 
     // Launch settings
     private final boolean headless;
     private final boolean headlessGpuAcceleration;
-    private final String webrtcPolicy;
     private final List<String> arguments;
 
     // Features
     private final FingerprintEntity fingerprint;
-    private final boolean resourceBlocking;
     private final InteractionOptions interactionOptions;
 
     // Optional services/resources (can be set per-browser or shared)
@@ -75,10 +69,8 @@ public class BrowserConfig {
         this.executablePath = builder.executablePath;
         this.headless = builder.headless;
         this.headlessGpuAcceleration = builder.headlessGpuAcceleration;
-        this.webrtcPolicy = builder.webrtcPolicy;
         this.arguments = Collections.unmodifiableList(new ArrayList<>(builder.arguments));
         this.fingerprint = builder.fingerprint;
-        this.resourceBlocking = builder.resourceBlocking;
         this.interactionOptions = builder.interactionOptions;
         this.proxy = builder.proxy;
         this.autoSolveAIService = builder.autoSolveAIService;
@@ -115,15 +107,6 @@ public class BrowserConfig {
     }
 
     /**
-     * Gets the WebRTC IP handling policy.
-     *
-     * @return the WebRTC policy string
-     */
-    public String webrtcPolicy() {
-        return webrtcPolicy;
-    }
-
-    /**
      * Gets additional Chrome command-line arguments.
      *
      * @return unmodifiable list of arguments
@@ -153,25 +136,6 @@ public class BrowserConfig {
      */
     public boolean hasFingerprint() {
         return fingerprint != null;
-    }
-
-    /**
-     * Checks if resource blocking is enabled.
-     *
-     * <p>When enabled, unnecessary resources (fonts, media, tracking scripts)
-     * are blocked to improve page load performance. Images and stylesheets
-     * are preserved for CAPTCHA compatibility and accurate element positioning.</p>
-     *
-     * <p>Blocked resource types: Media, Font, Prefetch, Ping, Manifest,
-     * CSPViolationReport, SignedExchange, TextTrack</p>
-     *
-     * <p>Blocked URL patterns: Analytics and tracking services (Google Analytics,
-     * Facebook, Hotjar, Mixpanel, Sentry, etc.)</p>
-     *
-     * @return true if resource blocking is enabled
-     */
-    public boolean resourceBlocking() {
-        return resourceBlocking;
     }
 
     /**
@@ -252,10 +216,8 @@ public class BrowserConfig {
         builder.executablePath = this.executablePath;
         builder.headless = this.headless;
         builder.headlessGpuAcceleration = this.headlessGpuAcceleration;
-        builder.webrtcPolicy = this.webrtcPolicy;
         builder.arguments = new ArrayList<>(this.arguments);
         builder.fingerprint = this.fingerprint;
-        builder.resourceBlocking = this.resourceBlocking;
         builder.interactionOptions = this.interactionOptions;
         builder.proxy = this.proxy;
         builder.autoSolveAIService = this.autoSolveAIService;
@@ -275,11 +237,10 @@ public class BrowserConfig {
     @Override
     public String toString() {
         return String.format(
-                "BrowserConfig{executable=%s, headless=%s, fingerprint=%s, resourceBlocking=%s, proxy=%s, autoSolve=%s, userDataDir=%s}",
+                "BrowserConfig{executable=%s, headless=%s, fingerprint=%s, proxy=%s, autoSolve=%s, userDataDir=%s}",
                 executablePath,
                 headless,
                 fingerprint != null ? "enabled(seed=" + fingerprint.seed() + ")" : "disabled",
-                resourceBlocking ? "enabled" : "disabled",
                 proxy != null ? proxy.host() : "none",
                 autoSolveAIService != null ? "configured" : "none",
                 userDataDir != null ? userDataDir : "auto"
@@ -300,7 +261,6 @@ public class BrowserConfig {
      *     .headless(false)
      *     .fingerprintEnabled(true)
      *     .resourceBlocking(true)
-     *     .webrtcPolicy("disable_non_proxied_udp")
      *     .interactionOptions(InteractionOptions.defaults())
      *     .build();
      * }</pre>
@@ -310,10 +270,8 @@ public class BrowserConfig {
         private String executablePath;
         private boolean headless = false;
         private boolean headlessGpuAcceleration = false;
-        private String webrtcPolicy = DEFAULT_WEBRTC_POLICY;
         private List<String> arguments = new ArrayList<>();
         private FingerprintEntity fingerprint;
-        private boolean resourceBlocking = false;
         private InteractionOptions interactionOptions = InteractionOptions.defaults();
         private Proxy proxy;
         private AutoSolveAIService autoSolveAIService;
@@ -362,20 +320,6 @@ public class BrowserConfig {
         }
 
         /**
-         * Sets the WebRTC IP handling policy.
-         *
-         * <p>Default: "disable_non_proxied_udp" (prevents WebRTC IP leaks when using proxy)</p>
-         *
-         * @param webrtcPolicy one of: "default", "default_public_interface_only",
-         *                     "default_public_and_private_interfaces", "disable_non_proxied_udp"
-         * @return this builder
-         */
-        public Builder webrtcPolicy(String webrtcPolicy) {
-            this.webrtcPolicy = webrtcPolicy;
-            return this;
-        }
-
-        /**
          * Adds a Chrome command-line argument.
          *
          * @param argument the argument to add (e.g., "--disable-extensions")
@@ -413,29 +357,6 @@ public class BrowserConfig {
          */
         public Builder fingerprint(FingerprintEntity fingerprint) {
             this.fingerprint = fingerprint;
-            return this;
-        }
-
-        /**
-         * Enables or disables resource blocking for improved performance.
-         *
-         * <p>When enabled, unnecessary resources are blocked via CDP Fetch interception:</p>
-         * <ul>
-         *   <li><strong>Blocked types:</strong> Media, Font, Prefetch, Ping, Manifest,
-         *       CSPViolationReport, SignedExchange, TextTrack</li>
-         *   <li><strong>Blocked URLs:</strong> Analytics/tracking (Google Analytics, Facebook,
-         *       Hotjar, Mixpanel, Sentry, etc.)</li>
-         *   <li><strong>Preserved:</strong> Document, Stylesheet, Image, Script, XHR, Fetch,
-         *       WebSocket (required for CAPTCHAs and accurate automation)</li>
-         * </ul>
-         *
-         * <p>Default: false</p>
-         *
-         * @param enabled true to enable resource blocking
-         * @return this builder
-         */
-        public Builder resourceBlocking(boolean enabled) {
-            this.resourceBlocking = enabled;
             return this;
         }
 

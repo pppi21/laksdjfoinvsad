@@ -63,8 +63,6 @@ public final class Settings {
     private String chromePath;
     private boolean defaultHeadless;
     private boolean defaultFingerprintEnabled;
-    private boolean defaultResourceBlocking;
-    private String defaultWebrtcPolicy;
 
     // Warming
     private boolean defaultWarmProfile;
@@ -87,8 +85,6 @@ public final class Settings {
         // Browser defaults
         this.defaultHeadless = false;
         this.defaultFingerprintEnabled = true;
-        this.defaultResourceBlocking = false;
-        this.defaultWebrtcPolicy = "disable_non_proxied_udp";
 
         // Warming
         this.defaultWarmProfile = false;
@@ -283,46 +279,6 @@ public final class Settings {
      */
     public Settings defaultFingerprintEnabled(boolean enabled) {
         this.defaultFingerprintEnabled = enabled;
-        return this;
-    }
-
-    /**
-     * Gets the default resource blocking setting.
-     *
-     * @return true if resource blocking enabled by default
-     */
-    public boolean defaultResourceBlocking() {
-        return defaultResourceBlocking;
-    }
-
-    /**
-     * Sets the default resource blocking setting.
-     *
-     * @param enabled true to enable resource blocking by default
-     * @return this Settings for chaining
-     */
-    public Settings defaultResourceBlocking(boolean enabled) {
-        this.defaultResourceBlocking = enabled;
-        return this;
-    }
-
-    /**
-     * Gets the default WebRTC policy.
-     *
-     * @return the WebRTC policy string
-     */
-    public String defaultWebrtcPolicy() {
-        return defaultWebrtcPolicy;
-    }
-
-    /**
-     * Sets the default WebRTC policy.
-     *
-     * @param policy the WebRTC policy
-     * @return this Settings for chaining
-     */
-    public Settings defaultWebrtcPolicy(String policy) {
-        this.defaultWebrtcPolicy = policy != null ? policy : "disable_non_proxied_udp";
         return this;
     }
 

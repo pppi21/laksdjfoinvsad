@@ -687,8 +687,6 @@ public class TaskExecutionService {
 
         BrowserConfig.Builder builder = BrowserConfig.builder()
                 .executablePath(settings.chromePath())
-                .resourceBlocking(settings.defaultResourceBlocking())
-                .webrtcPolicy(settings.defaultWebrtcPolicy())
                 .userDataDir(Path.of(task.userdataPath()));
 
         if (settings.defaultFingerprintEnabled() && task.hasFingerprint()) {
