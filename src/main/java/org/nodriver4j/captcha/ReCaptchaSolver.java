@@ -1,6 +1,5 @@
 package org.nodriver4j.captcha;
 
-import com.google.gson.JsonObject;
 import org.nodriver4j.core.Page;
 import org.nodriver4j.core.Page.IframeInfo;
 import org.nodriver4j.services.AutoSolveAIResponse;

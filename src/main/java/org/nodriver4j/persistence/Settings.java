@@ -69,6 +69,7 @@ public final class Settings {
 
     // API Keys
     private String autoSolveApiKey;
+    private String capsolverApiKey;
 
     // Userdata management
     private String userdataBasePath;
@@ -91,6 +92,7 @@ public final class Settings {
 
         // API Keys
         this.autoSolveApiKey = "";
+        this.capsolverApiKey = "";
 
         // Userdata - default to data directory
         this.userdataBasePath = Path.of(DATA_DIRECTORY, "userdata").toString();
@@ -333,6 +335,35 @@ public final class Settings {
      */
     public boolean hasAutoSolveApiKey() {
         return autoSolveApiKey != null && !autoSolveApiKey.isBlank();
+    }
+
+    /**
+     * Gets the CapSolver API key.
+     *
+     * @return the API key, or empty string if not set
+     */
+    public String capsolverApiKey() {
+        return capsolverApiKey;
+    }
+
+    /**
+     * Sets the CapSolver API key.
+     *
+     * @param apiKey the API key
+     * @return this Settings for chaining
+     */
+    public Settings capsolverApiKey(String apiKey) {
+        this.capsolverApiKey = apiKey != null ? apiKey : "";
+        return this;
+    }
+
+    /**
+     * Checks if CapSolver API key is configured.
+     *
+     * @return true if a non-empty key is set
+     */
+    public boolean hasCapsolverApiKey() {
+        return capsolverApiKey != null && !capsolverApiKey.isBlank();
     }
 
     // ==================== Userdata ====================

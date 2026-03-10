@@ -52,6 +52,13 @@
                     <TextField fx:id="autoSolveApiKeyField"
                                promptText="Enter your AutoSolve AI API key"/>
                 </VBox>
+
+                <!-- CapSolver API Key -->
+                <VBox styleClass="form-group">
+                    <Label text="CapSolver API Key" styleClass="form-label"/>
+                    <TextField fx:id="capsolverApiKeyField"
+                               promptText="Enter your CapSolver API key"/>
+                </VBox>
             </VBox>
 
             <!-- ==================== Paths Section (Read-Only) ==================== -->
