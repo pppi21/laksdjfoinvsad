@@ -70,6 +70,7 @@ public final class Settings {
     // API Keys
     private String autoSolveApiKey;
     private String capsolverApiKey;
+    private String twoCaptchaApiKey;
 
     // Userdata management
     private String userdataBasePath;
@@ -93,6 +94,7 @@ public final class Settings {
         // API Keys
         this.autoSolveApiKey = "";
         this.capsolverApiKey = "";
+        this.twoCaptchaApiKey = "";
 
         // Userdata - default to data directory
         this.userdataBasePath = Path.of(DATA_DIRECTORY, "userdata").toString();
@@ -364,6 +366,35 @@ public final class Settings {
      */
     public boolean hasCapsolverApiKey() {
         return capsolverApiKey != null && !capsolverApiKey.isBlank();
+    }
+
+    /**
+     * Gets the 2Captcha API key.
+     *
+     * @return the API key, or empty string if not set
+     */
+    public String twoCaptchaApiKey() {
+        return twoCaptchaApiKey;
+    }
+
+    /**
+     * Sets the 2Captcha API key.
+     *
+     * @param apiKey the API key
+     * @return this Settings for chaining
+     */
+    public Settings twoCaptchaApiKey(String apiKey) {
+        this.twoCaptchaApiKey = apiKey != null ? apiKey : "";
+        return this;
+    }
+
+    /**
+     * Checks if 2Captcha API key is configured.
+     *
+     * @return true if a non-empty key is set
+     */
+    public boolean hasTwoCaptchaApiKey() {
+        return twoCaptchaApiKey != null && !twoCaptchaApiKey.isBlank();
     }
 
     // ==================== Userdata ====================

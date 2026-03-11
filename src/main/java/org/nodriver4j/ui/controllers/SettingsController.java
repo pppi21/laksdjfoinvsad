@@ -51,6 +51,9 @@ public class SettingsController implements Initializable {
     private TextField capsolverApiKeyField;
 
     @FXML
+    private TextField twoCaptchaApiKeyField;
+
+    @FXML
     private Label fingerprintsPathLabel;
 
     @FXML
@@ -97,6 +100,7 @@ public class SettingsController implements Initializable {
             settings.chromePath(chromePathField.getText().trim());
             settings.autoSolveApiKey(autoSolveApiKeyField.getText().trim());
             settings.capsolverApiKey(capsolverApiKeyField.getText().trim());
+            settings.twoCaptchaApiKey(twoCaptchaApiKeyField.getText().trim());
 
             Settings.save();
 
@@ -121,6 +125,7 @@ public class SettingsController implements Initializable {
         chromePathField.setText(settings.chromePath() != null ? settings.chromePath() : "");
         autoSolveApiKeyField.setText(settings.autoSolveApiKey() != null ? settings.autoSolveApiKey() : "");
         capsolverApiKeyField.setText(settings.capsolverApiKey() != null ? settings.capsolverApiKey() : "");
+        twoCaptchaApiKeyField.setText(settings.twoCaptchaApiKey() != null ? settings.twoCaptchaApiKey() : "");
 
         // Read-only labels
         fingerprintsPathLabel.setText(settings.fingerprintsPath() != null ? settings.fingerprintsPath() : "Not configured");

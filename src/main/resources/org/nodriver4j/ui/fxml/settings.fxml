@@ -59,6 +59,13 @@
                     <TextField fx:id="capsolverApiKeyField"
                                promptText="Enter your CapSolver API key"/>
                 </VBox>
+
+                <!-- 2Captcha API Key -->
+                <VBox styleClass="form-group">
+                    <Label text="2Captcha API Key" styleClass="form-label"/>
+                    <TextField fx:id="twoCaptchaApiKeyField"
+                               promptText="Enter your 2Captcha API key"/>
+                </VBox>
             </VBox>
 
             <!-- ==================== Paths Section (Read-Only) ==================== -->
