@@ -3,8 +3,10 @@ package org.nodriver4j.scripts;
 import org.nodriver4j.captcha.ArkoseSolver;
 import org.nodriver4j.captcha.ReCaptchaSolver;
 import org.nodriver4j.core.Page;
+import org.nodriver4j.persistence.Settings;
 import org.nodriver4j.persistence.entity.ProfileEntity;
 import org.nodriver4j.services.*;
+import org.nodriver4j.services.exceptions.SmsProviderException;
 
 import java.util.concurrent.TimeoutException;
 
@@ -114,14 +116,20 @@ public class UberGen implements AutomationScript {
 
             context.checkCancelled();
 
-            if (page.exists(FIRST_NAME_TEXT)) {
-                logger.log("Entering name...");
-                enterName();
-            } else if (page.exists(SKIP_PHONE_BUTTON)) {
-                logger.log("Skipping phone number...");
-                skipPhoneNumber();
-                logger.log("Entering name...");
-                enterName();
+            for (int i = 0; i < 2; i++) {
+                if (page.exists(FIRST_NAME_TEXT)) {
+                    logger.log("Entering name...");
+                    enterName();
+                    break;
+                } else if (page.exists(SKIP_PHONE_BUTTON)) {
+                    logger.log("Skipping phone number...");
+                    skipPhoneNumber();
+                    logger.log("Entering name...");
+                    enterName();
+                    break;
+                } else {
+                    page.sleep(5000);
+                }
             }
 
             context.checkCancelled();
@@ -129,13 +137,13 @@ public class UberGen implements AutomationScript {
             logger.log("Accepting terms...");
             acceptTerms();
 
-            page.sleep(1000);
-            if (page.exists(CONTINUE_SECURITY_BUTTON)) {
+            page.sleep(5000);
+            if (page.exists(SKIP_SECURITY_BUTTON)) {
                 logger.log("Skipping security prompt...");
                 skipSecurity();
             } else {
                 logger.log("Verifying phone number...");
-
+                verifyPhone();
             }
 
             page.waitForLoadEvent(15000);
@@ -179,6 +187,7 @@ public class UberGen implements AutomationScript {
                 }
                 page.sleep(1500);
                 page.click(UE_RESULT_BUTTON);
+                page.waitForLoadEvent(20000);
                 return;
 
             } catch (TimeoutException | InterruptedException e) {
@@ -319,21 +328,39 @@ public class UberGen implements AutomationScript {
     private void verifyPhone() throws RuntimeException {
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
             try {
-                page.waitForSelector(CONTINUE_SECURITY_BUTTON, 1000);
+                page.waitForSelector(CONTINUE_SECURITY_BUTTON, 4000);
                 page.click(CONTINUE_SECURITY_BUTTON);
                 page.sleep(1000);
                 if(!page.exists(PHONE_NUMBER_TEXT)) {
                     page.click(CONTINUE_SECURITY_BUTTON);
                 }
-                fillFormField(PHONE_NUMBER_TEXT, "daisy sms number", true);
-                page.click(UPDATE_PHONE_BUTTON);
-                fillFormField("input", "code", false);
-                return;
+
+                String daisyKey = Settings.get().daisySmsApiKey();
+                try (DaisySmsService sms = context.register(new DaisySmsService(daisyKey, context))) {
+                    SmsActivation activation = sms.requestNumber(SmsService.UBER);
+                    logger.log("Phone number: " + activation.phoneNumber());
+
+                    fillFormField(PHONE_NUMBER_TEXT, activation.phoneNumber(), true);
+                    page.click(UPDATE_PHONE_BUTTON);
+
+                    String code = sms.pollForCode(activation);
+                    logger.log("Phone OTP: " + code);
+                    fillFormField("input", code, false);
+
+                    sms.completeActivation(activation.activationId());
+                }
+
+                page.sleep(3000);
+                if (!page.exists(PHONE_NUMBER_TEXT)) {
+                    return;
+                }
             } catch (TimeoutException | InterruptedException e) {
                 logger.log("Security attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
+            } catch (SmsProviderException e) {
+                logger.log("SMS attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
             }
         }
-        throw new RuntimeException("Skip security failed: session likely flagged");
+        throw new RuntimeException("Verify phone failed: session likely flagged");
     }
 
     // ==================== Form Helpers ====================
