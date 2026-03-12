@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * <ul>
  *   <li>Chrome executable path</li>
  *   <li>Default browser options (headless, fingerprinting, etc.)</li>
- *   <li>API keys for external services</li>
+ *   <li>API keys for external services (captcha solvers, SMS providers)</li>
  * </ul>
  *
  * <h2>Usage</h2>
@@ -67,10 +67,16 @@ public final class Settings {
     // Warming
     private boolean defaultWarmProfile;
 
-    // API Keys
+    // Captcha API Keys
     private String autoSolveApiKey;
     private String capsolverApiKey;
     private String twoCaptchaApiKey;
+
+    // SMS Provider API Keys
+    private String textVerifiedApiKey;
+    private String textVerifiedEmail;
+    private String smsManApiKey;
+    private String daisySmsApiKey;
 
     // Userdata management
     private String userdataBasePath;
@@ -91,10 +97,16 @@ public final class Settings {
         // Warming
         this.defaultWarmProfile = false;
 
-        // API Keys
+        // Captcha API Keys
         this.autoSolveApiKey = "";
         this.capsolverApiKey = "";
         this.twoCaptchaApiKey = "";
+
+        // SMS Provider API Keys
+        this.textVerifiedApiKey = "";
+        this.textVerifiedEmail = "";
+        this.smsManApiKey = "";
+        this.daisySmsApiKey = "";
 
         // Userdata - default to data directory
         this.userdataBasePath = Path.of(DATA_DIRECTORY, "userdata").toString();
@@ -308,7 +320,7 @@ public final class Settings {
         return this;
     }
 
-    // ==================== API Keys ====================
+    // ==================== Captcha API Keys ====================
 
     /**
      * Gets the AutoSolve AI API key.
@@ -395,6 +407,133 @@ public final class Settings {
      */
     public boolean hasTwoCaptchaApiKey() {
         return twoCaptchaApiKey != null && !twoCaptchaApiKey.isBlank();
+    }
+
+    // ==================== SMS Provider API Keys ====================
+
+    /**
+     * Gets the TextVerified API key.
+     *
+     * @return the API key, or empty string if not set
+     */
+    public String textVerifiedApiKey() {
+        return textVerifiedApiKey;
+    }
+
+    /**
+     * Sets the TextVerified API key.
+     *
+     * @param apiKey the API key
+     * @return this Settings for chaining
+     */
+    public Settings textVerifiedApiKey(String apiKey) {
+        this.textVerifiedApiKey = apiKey != null ? apiKey : "";
+        return this;
+    }
+
+    /**
+     * Checks if TextVerified API key is configured.
+     *
+     * @return true if a non-empty key is set
+     */
+    public boolean hasTextVerifiedApiKey() {
+        return textVerifiedApiKey != null && !textVerifiedApiKey.isBlank();
+    }
+
+    /**
+     * Gets the TextVerified account email (username).
+     *
+     * <p>TextVerified requires both an API key and an email for
+     * bearer token authentication.</p>
+     *
+     * @return the email, or empty string if not set
+     */
+    public String textVerifiedEmail() {
+        return textVerifiedEmail;
+    }
+
+    /**
+     * Sets the TextVerified account email (username).
+     *
+     * @param email the account email
+     * @return this Settings for chaining
+     */
+    public Settings textVerifiedEmail(String email) {
+        this.textVerifiedEmail = email != null ? email : "";
+        return this;
+    }
+
+    /**
+     * Checks if TextVerified email is configured.
+     *
+     * @return true if a non-empty email is set
+     */
+    public boolean hasTextVerifiedEmail() {
+        return textVerifiedEmail != null && !textVerifiedEmail.isBlank();
+    }
+
+    /**
+     * Gets the SMS-Man API token.
+     *
+     * @return the API token, or empty string if not set
+     */
+    public String smsManApiKey() {
+        return smsManApiKey;
+    }
+
+    /**
+     * Sets the SMS-Man API token.
+     *
+     * @param apiKey the API token
+     * @return this Settings for chaining
+     */
+    public Settings smsManApiKey(String apiKey) {
+        this.smsManApiKey = apiKey != null ? apiKey : "";
+        return this;
+    }
+
+    /**
+     * Checks if SMS-Man API token is configured.
+     *
+     * @return true if a non-empty token is set
+     */
+    public boolean hasSmsManApiKey() {
+        return smsManApiKey != null && !smsManApiKey.isBlank();
+    }
+
+    /**
+     * Gets the DaisySMS API key.
+     *
+     * @return the API key, or empty string if not set
+     * @deprecated DaisySMS is shutting down on March 26, 2026.
+     */
+    @Deprecated(since = "2026-03-26", forRemoval = true)
+    public String daisySmsApiKey() {
+        return daisySmsApiKey;
+    }
+
+    /**
+     * Sets the DaisySMS API key.
+     *
+     * @param apiKey the API key
+     * @return this Settings for chaining
+     * @deprecated DaisySMS is shutting down on March 26, 2026.
+     */
+    @Deprecated(since = "2026-03-26", forRemoval = true)
+    public Settings daisySmsApiKey(String apiKey) {
+        this.daisySmsApiKey = apiKey != null ? apiKey : "";
+        return this;
+    }
+
+    /**
+     * Checks if DaisySMS API key is configured.
+     *
+     * @return true if a non-empty key is set
+     * @deprecated DaisySMS is shutting down on March 26, 2026.
+     */
+    @Deprecated(since = "2026-03-26", forRemoval = true)
+    public boolean hasDaisySmsApiKey() {
+        return daisySmsApiKey != null && !daisySmsApiKey.isBlank();
     }
 
     // ==================== Userdata ====================

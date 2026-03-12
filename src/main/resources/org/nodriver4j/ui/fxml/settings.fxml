@@ -2,6 +2,7 @@
 
 <?import javafx.geometry.Insets?>
 <?import javafx.scene.control.Button?>
+<?import javafx.scene.control.ComboBox?>
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.control.ScrollPane?>
 <?import javafx.scene.control.TextField?>
@@ -41,9 +42,9 @@
                 </VBox>
             </VBox>
 
-            <!-- ==================== API Keys Section ==================== -->
+            <!-- ==================== Captcha API Keys Section ==================== -->
             <VBox spacing="8">
-                <Label text="API Keys" style="-fx-font-size: 16px; -fx-font-weight: bold; -fx-text-fill: #e5e5e5;"/>
+                <Label text="Captcha API Keys" style="-fx-font-size: 16px; -fx-font-weight: bold; -fx-text-fill: #e5e5e5;"/>
                 <Region style="-fx-background-color: #404040; -fx-pref-height: 1px; -fx-max-height: 1px;"/>
 
                 <!-- AutoSolve AI API Key -->
@@ -66,6 +67,23 @@
                     <TextField fx:id="twoCaptchaApiKeyField"
                                promptText="Enter your 2Captcha API key"/>
                 </VBox>
+            </VBox>
+
+            <!-- ==================== SMS Providers Section ==================== -->
+            <VBox spacing="8">
+                <Label text="SMS Providers" style="-fx-font-size: 16px; -fx-font-weight: bold; -fx-text-fill: #e5e5e5;"/>
+                <Region style="-fx-background-color: #404040; -fx-pref-height: 1px; -fx-max-height: 1px;"/>
+                <Label text="Configure API keys for SMS verification providers"
+                       style="-fx-font-size: 12px; -fx-text-fill: #737373; -fx-padding: 0 0 4px 0;"/>
+
+                <!-- Provider Dropdown -->
+                <VBox styleClass="form-group">
+                    <Label text="Provider" styleClass="form-label"/>
+                    <ComboBox fx:id="smsProviderComboBox"/>
+                </VBox>
+
+                <!-- Dynamic Fields Container (populated by controller) -->
+                <VBox fx:id="smsFieldsContainer" spacing="0"/>
             </VBox>
 
             <!-- ==================== Paths Section (Read-Only) ==================== -->
