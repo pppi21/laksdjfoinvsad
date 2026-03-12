@@ -1147,7 +1147,6 @@ public class Browser implements AutoCloseable {
         args.add("--no-first-run");
         args.add("--no-default-browser-check");
         args.add("--no-pings");
-        args.add("--hide-crash-restore-bubble");
 
         // Background service suppression
         args.add("--disable-background-networking");
@@ -1229,6 +1228,8 @@ public class Browser implements AutoCloseable {
                 args.add("--use-gl=desktop");
                 args.add("--disable-software-rasterizer");
             }
+        } else {
+            args.add("--hide-crash-restore-bubble");
         }
 
         // Custom arguments from config

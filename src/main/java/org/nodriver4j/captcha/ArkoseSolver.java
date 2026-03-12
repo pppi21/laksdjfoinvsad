@@ -405,7 +405,7 @@ public final class ArkoseSolver {
             }
 
             String host = proxyConfig.host();
-            String port = proxyConfig.port();
+            String port = String.valueOf(proxyConfig.port());
 
             if (host == null || host.isBlank() || port == null || port.isBlank()) {
                 return null;

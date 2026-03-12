@@ -1,5 +1,6 @@
 package org.nodriver4j.scripts;
 
+import org.nodriver4j.captcha.ArkoseSolver;
 import org.nodriver4j.captcha.ReCaptchaSolver;
 import org.nodriver4j.core.Page;
 import org.nodriver4j.persistence.entity.ProfileEntity;
@@ -52,7 +53,9 @@ public class UberGen implements AutomationScript {
     private static final String ACCEPT_TERMS_CHECKBOX = "#LEGAL_ACCEPT_TERMS > span";
     private static final String CONTINUE_TERMS_BUTTON = "#forward-button";
     private static final String SKIP_SECURITY_BUTTON = "button[data-testid='skip']";
-    private static final String CONTINUE_SECURITY_BUTTON = "#guided-security-upgrade-ui > div[data-baseweb='block'] > button";
+    private static final String CONTINUE_SECURITY_BUTTON = "button[data-testid='gsu-next']";
+    private static final String PHONE_NUMBER_TEXT = "input[type='text']";
+    private static final String UPDATE_PHONE_BUTTON = "button[aria-label='Update']";
     private static final String HOMEPAGE_SUCCESS_ID = "#main-content";
 
     // ==================== Instance Fields ====================
@@ -130,6 +133,9 @@ public class UberGen implements AutomationScript {
             if (page.exists(CONTINUE_SECURITY_BUTTON)) {
                 logger.log("Skipping security prompt...");
                 skipSecurity();
+            } else {
+                logger.log("Verifying phone number...");
+
             }
 
             page.waitForLoadEvent(15000);
@@ -191,6 +197,7 @@ public class UberGen implements AutomationScript {
                 int signInSeed = (int) (Math.random() * 100);
                 if (attempt > 1) page.navigate("https://www.ubereats.com/");
                 page.waitForLoadEvent(60000);
+                ArkoseSolver.installEnforcementHook(page);
                 page.click(SIGN_IN_BUTTON);
                 page.waitForLoadEvent(100000);
                 page.sleep(2000);
@@ -225,7 +232,7 @@ public class UberGen implements AutomationScript {
                 try {
                     if (attempt > 1) {
                         page.click(EMAIL_OTP_RESEND_BUTTON);
-                        page.sleep(1500);
+                        page.sleep(2500);
                         page.click(EMAIL_OTP_RESEND_CONFIRM_BUTTON);
                     }
                     String otp = extractor.extractOtp();
@@ -303,6 +310,26 @@ public class UberGen implements AutomationScript {
                 page.click(SKIP_SECURITY_BUTTON);
                 return;
             } catch (TimeoutException e) {
+                logger.log("Security attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
+            }
+        }
+        throw new RuntimeException("Skip security failed: session likely flagged");
+    }
+
+    private void verifyPhone() throws RuntimeException {
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            try {
+                page.waitForSelector(CONTINUE_SECURITY_BUTTON, 1000);
+                page.click(CONTINUE_SECURITY_BUTTON);
+                page.sleep(1000);
+                if(!page.exists(PHONE_NUMBER_TEXT)) {
+                    page.click(CONTINUE_SECURITY_BUTTON);
+                }
+                fillFormField(PHONE_NUMBER_TEXT, "daisy sms number", true);
+                page.click(UPDATE_PHONE_BUTTON);
+                fillFormField("input", "code", false);
+                return;
+            } catch (TimeoutException | InterruptedException e) {
                 logger.log("Security attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
             }
         }
