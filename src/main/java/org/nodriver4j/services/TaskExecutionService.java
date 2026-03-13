@@ -149,6 +149,7 @@ public class TaskExecutionService {
     private final ConcurrentHashMap<Long, Thread> scriptThreads;
     private final ConcurrentHashMap<Long, TaskCallbacks> taskCallbacks;
     private final ConcurrentHashMap<Long, TaskContext> taskContexts;
+    private final ConcurrentHashMap<Long, FingerprintMonitor> fpMonitors;
     private final BlockingQueue<Integer> availablePorts;
     private final AtomicBoolean isShutdown;
     private final Thread shutdownHook;
@@ -170,6 +171,7 @@ public class TaskExecutionService {
         this.scriptThreads = new ConcurrentHashMap<>();
         this.taskCallbacks = new ConcurrentHashMap<>();
         this.taskContexts = new ConcurrentHashMap<>();
+        this.fpMonitors = new ConcurrentHashMap<>();
         this.isShutdown = new AtomicBoolean(false);
         this.taskRepository = new TaskRepository();
         this.taskGroupRepository = new TaskGroupRepository();
@@ -361,11 +363,16 @@ public class TaskExecutionService {
             }
 
             // Optional fingerprint monitoring (debug diagnostic)
-            FingerprintMonitor fpMonitor = null;
             if (Settings.get().fingerprintMonitoringEnabled()) {
-                fpMonitor = context.register(new FingerprintMonitor(myBrowser.page(), false));
-                fpMonitor.start();
-                logger.log("Fingerprint monitoring enabled");
+                try {
+                    FingerprintMonitor monitor = new FingerprintMonitor(myBrowser.page(), false);
+                    fpMonitors.put(taskId, monitor);
+                    monitor.start();
+                    logger.log("Fingerprint monitoring enabled");
+                } catch (Exception e) {
+                    System.err.println("[TaskExecutionService] Failed to start fingerprint monitor: " +
+                            e.getMessage());
+                }
             }
 
             // Warm session if enabled
@@ -384,25 +391,6 @@ public class TaskExecutionService {
             AutomationScript script = ScriptRegistry.create(group.scriptName());
             logger.log("Running " + group.scriptName() + "...");
             script.run(myBrowser.page(), profile, logger, context);
-
-            // Export fingerprint monitoring report if active
-            if (fpMonitor != null) {
-                try {
-                    fpMonitor.stop();
-                    FingerprintReport fpReport = fpMonitor.report();
-                    if (fpReport.totalAccesses() > 0) {
-                        Path reportDir = Path.of("nodriver4j-data", "fp-reports");
-                        Files.createDirectories(reportDir);
-                        fpReport.exportToFile(reportDir.resolve(
-                                "task-" + taskId + "-" + System.currentTimeMillis() + ".json"));
-                        logger.log("Fingerprint report: " + fpReport.uniqueApis() +
-                                " unique APIs across " + fpReport.probedCategories().size() + " categories");
-                    }
-                } catch (Exception e) {
-                    System.err.println("[TaskExecutionService] Failed to export fingerprint report: " +
-                            e.getMessage());
-                }
-            }
 
             // Script completed successfully — update profile notes
             appendCompletionNote(profile, group.scriptName());
@@ -432,6 +420,9 @@ public class TaskExecutionService {
             }
 
         } finally {
+            // Export fingerprint report while browser is still open
+            exportFingerprintReport(taskId);
+
             // Close context — tears down any remaining registered resources
             context.close();
             taskContexts.remove(taskId, context);
@@ -482,7 +473,23 @@ public class TaskExecutionService {
     public Browser startManualBrowser(long taskId) throws IOException, InterruptedException {
         ensureNotActive(taskId);
         validateSettings();
-        return launchBrowser(taskId, false, TaskEntity.STATUS_MANUAL);
+        Browser browser = launchBrowser(taskId, false, TaskEntity.STATUS_MANUAL);
+
+        // Start fingerprint monitoring for manual sessions
+        if (Settings.get().fingerprintMonitoringEnabled()) {
+            try {
+                FingerprintMonitor monitor = new FingerprintMonitor(browser.page(), false);
+                fpMonitors.put(taskId, monitor);
+                monitor.start();
+                System.out.println("[TaskExecutionService] Fingerprint monitoring enabled for manual session " +
+                        taskId);
+            } catch (Exception e) {
+                System.err.println("[TaskExecutionService] Failed to start fingerprint monitor: " +
+                        e.getMessage());
+            }
+        }
+
+        return browser;
     }
 
     // ==================== Stop ====================
@@ -510,21 +517,24 @@ public class TaskExecutionService {
     public void stopBrowser(long taskId) {
         ensureNotShutdown();
 
-        // 1. Cancel context — closes all registered resources, unblocking
+        // 1. Export fingerprint report while browser is still running
+        exportFingerprintReport(taskId);
+
+        // 2. Cancel context — closes all registered resources, unblocking
         //    threads stuck on non-interruptible I/O (IMAP, HTTP)
         TaskContext context = taskContexts.remove(taskId);
         if (context != null) {
             context.cancel();
         }
 
-        // 2. Interrupt thread — handles interruptible operations
+        // 3. Interrupt thread — handles interruptible operations
         Thread thread = scriptThreads.remove(taskId);
         if (thread != null) {
             thread.interrupt();
             System.out.println("[TaskExecutionService] Interrupted script thread for task " + taskId);
         }
 
-        // 3. Close browser
+        // 4. Close browser
         Browser browser = runningBrowsers.remove(taskId);
         if (browser != null) {
             System.out.println("[TaskExecutionService] Stopping browser for task " + taskId +
@@ -668,6 +678,38 @@ public class TaskExecutionService {
             profile.notes(existing + " | " + note);
         } else {
             profile.notes(note);
+        }
+    }
+
+    // ==================== Fingerprint Monitoring ====================
+
+    /**
+     * Stops the fingerprint monitor for a task and exports the report.
+     *
+     * <p>Uses atomic {@link ConcurrentHashMap#remove} so concurrent calls
+     * from {@code stopBrowser()} and {@code executeTask()} are safe —
+     * only the first caller exports.</p>
+     *
+     * @param taskId the task ID
+     */
+    private void exportFingerprintReport(long taskId) {
+        FingerprintMonitor monitor = fpMonitors.remove(taskId);
+        if (monitor == null) {
+            return;
+        }
+
+        try {
+            monitor.stop();
+            FingerprintReport report = monitor.report();
+            Path reportDir = Path.of("nodriver4j-data", "fp-reports");
+            Files.createDirectories(reportDir);
+            report.exportToFile(reportDir.resolve(
+                    "task-" + taskId + "-" + System.currentTimeMillis() + ".json"));
+            System.out.println("[TaskExecutionService] Fingerprint report exported for task " + taskId +
+                    ": " + report.uniqueApis() + " unique APIs, " + report.totalAccesses() + " accesses");
+        } catch (Exception e) {
+            System.err.println("[TaskExecutionService] Failed to export fingerprint report for task " +
+                    taskId + ": " + e.getMessage());
         }
     }
 
@@ -1012,10 +1054,16 @@ public class TaskExecutionService {
             }
         }
 
+        // Export any remaining fingerprint reports
+        for (Long taskId : fpMonitors.keySet()) {
+            exportFingerprintReport(taskId);
+        }
+
         runningBrowsers.clear();
         scriptThreads.clear();
         taskCallbacks.clear();
         taskContexts.clear();
+        fpMonitors.clear();
     }
 
     /**
@@ -1029,6 +1077,11 @@ public class TaskExecutionService {
         // Collect all active task IDs from both maps
         Set<Long> taskIds = new HashSet<>(runningBrowsers.keySet());
         taskIds.addAll(scriptThreads.keySet());
+
+        // Export fingerprint reports while browsers are still open
+        for (Long taskId : fpMonitors.keySet()) {
+            exportFingerprintReport(taskId);
+        }
 
         // Cancel all contexts first — unblocks stuck threads immediately
         for (TaskContext context : taskContexts.values()) {

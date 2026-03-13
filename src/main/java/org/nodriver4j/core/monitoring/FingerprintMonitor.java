@@ -146,6 +146,13 @@ public class FingerprintMonitor implements AutoCloseable {
                     ? "window.__nd4j_fp_stacks = true;\n" + MONITOR_SCRIPT
                     : MONITOR_SCRIPT;
 
+            // Ensure Page domain is enabled — required for addScriptToEvaluateOnNewDocument
+            // to fire on future navigations. The existing codebase (cursor overlay, Arkose
+            // hook) always calls ensurePageEnabled() before this command.
+            try {
+                page.cdpSession().send("Page.enable", null);
+            } catch (Exception ignored) { /* may already be enabled */ }
+
             // Inject for all future navigations
             JsonObject params = new JsonObject();
             params.addProperty("source", script);
@@ -153,6 +160,14 @@ public class FingerprintMonitor implements AutoCloseable {
 
             // Also run immediately on the current page
             page.evaluate(script);
+
+            // Verify the drain function was created
+            String check = page.evaluate("typeof window.__nd4j_fp_drain");
+            if (!"function".equals(check)) {
+                active.set(false);
+                throw new RuntimeException(
+                        "Monitoring script injection failed: __nd4j_fp_drain is " + check);
+            }
 
         } catch (Exception e) {
             active.set(false);
