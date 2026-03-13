@@ -1284,6 +1284,12 @@ public class Browser implements AutoCloseable {
             args.add("--fingerprint-media=" + fp.mediaMics() + "," + fp.mediaWebcams() + ","
                     + fp.mediaSpeakers());
 
+            // Per-session values (randomized each launch, not persisted)
+            Random sessionRandom = new Random();
+            args.add("--fingerprint-battery=" + generateBattery(fp, sessionRandom));
+            args.add("--fingerprint-history-length=" + generateHistoryLength(sessionRandom));
+            args.add("--fingerprint-screen-position=" + generateScreenPosition(fp, sessionRandom));
+
             // Extra switches from entity (future-proofing)
             if (fp.hasExtraSwitches()) {
                 for (var entry : fp.extraSwitchesMap().entrySet()) {
@@ -1295,6 +1301,109 @@ public class Browser implements AutoCloseable {
         args.add("about:blank");
 
         return args;
+    }
+
+    // ==================== Per-Session Value Generation ====================
+
+    /**
+     * Generates a randomized battery status string for each browser session.
+     *
+     * <p>Desktops always report as plugged in with a full battery. Laptops
+     * randomize between charging (~70%) and on-battery (~30%) states with
+     * realistic charge levels and timing values.</p>
+     *
+     * <p>Format: {@code "charging,level,chargingTime,dischargingTime"}</p>
+     *
+     * @param fp     the fingerprint entity (for device type classification)
+     * @param random the random instance for this session
+     * @return the battery status string
+     */
+    private static String generateBattery(FingerprintEntity fp, Random random) {
+        if (fp.isDesktop()) {
+            return "true,1.0,0,Infinity";
+        }
+
+        // Laptop
+        boolean charging = random.nextInt(100) < 70;
+
+        if (charging) {
+            // Charging: level 0.5–1.0, chargingTime 0–3600, dischargingTime Infinity
+            double level = roundToTwoDecimals(0.5 + random.nextDouble() * 0.5);
+            int chargingTime = level >= 1.0 ? 0 : random.nextInt(3601);
+            return "true," + level + "," + chargingTime + ",Infinity";
+        } else {
+            // On battery: level 0.2–0.95, chargingTime Infinity, dischargingTime 1800–28800
+            double level = roundToTwoDecimals(0.2 + random.nextDouble() * 0.75);
+            int dischargingTime = 1800 + random.nextInt(27001);
+            return "false," + level + ",Infinity," + dischargingTime;
+        }
+    }
+
+    /**
+     * Generates a randomized history.length value for each browser session.
+     *
+     * @param random the random instance for this session
+     * @return the history length (1–5)
+     */
+    private static int generateHistoryLength(Random random) {
+        return 1 + random.nextInt(5);
+    }
+
+    /**
+     * Generates a randomized screen position for each browser session.
+     *
+     * <p>Simulates two common window states:</p>
+     * <ul>
+     *   <li><b>Maximized (~70%):</b> Small offsets near origin. On macOS,
+     *       the Y offset accounts for the menu bar (25–38px).</li>
+     *   <li><b>Non-maximized (~30%):</b> Random position in the top-left
+     *       quadrant of the screen.</li>
+     * </ul>
+     *
+     * <p>Format: {@code "x,y"}</p>
+     *
+     * @param fp     the fingerprint entity (for platform and screen dimensions)
+     * @param random the random instance for this session
+     * @return the screen position string
+     */
+    private static String generateScreenPosition(FingerprintEntity fp, Random random) {
+        boolean maximized = random.nextInt(100) < 70;
+
+        if (maximized) {
+            return switch (fp.platform()) {
+                case FingerprintEntity.PLATFORM_MACOS -> {
+                    int x = random.nextInt(5);          // 0–4
+                    int y = 25 + random.nextInt(14);    // 25–38 (below menu bar/notch)
+                    yield x + "," + y;
+                }
+                default -> {
+                    // Windows and Linux: small jitter near origin
+                    int x = random.nextInt(9);  // 0–8
+                    int y = random.nextInt(9);  // 0–8
+                    yield x + "," + y;
+                }
+            };
+        }
+
+        // Non-maximized: random position in top-left quadrant
+        int maxX = Math.max(1, fp.screenWidth() / 4);
+        int maxY = Math.max(1, fp.screenHeight() / 4);
+        int x = random.nextInt(maxX);
+        int y = random.nextInt(maxY);
+
+        // On macOS, ensure Y is at least below the menu bar
+        if (FingerprintEntity.PLATFORM_MACOS.equals(fp.platform())) {
+            y = Math.max(y, fp.availTop());
+        }
+
+        return x + "," + y;
+    }
+
+    /**
+     * Rounds a double to two decimal places.
+     */
+    private static double roundToTwoDecimals(double value) {
+        return Math.round(value * 100.0) / 100.0;
     }
 
     @Override

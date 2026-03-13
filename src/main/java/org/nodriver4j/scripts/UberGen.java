@@ -64,6 +64,7 @@ public class UberGen implements AutomationScript {
     private static final String CONTINUE_SECURITY_BUTTON = "button[data-testid='gsu-next']";
     private static final String PHONE_NUMBER_TEXT = "input[type='text']";
     private static final String UPDATE_PHONE_BUTTON = "button[aria-label='Update']";
+    private static final String PHONE_INPUT_ERROR = "p[data-testid='phone-input-error']";
     private static final String HOMEPAGE_SUCCESS_ID = "#main-content";
 
     // ==================== Instance Fields ====================
