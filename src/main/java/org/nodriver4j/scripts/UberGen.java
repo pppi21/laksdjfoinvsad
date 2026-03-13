@@ -6,7 +6,13 @@ import org.nodriver4j.core.Page;
 import org.nodriver4j.persistence.Settings;
 import org.nodriver4j.persistence.entity.ProfileEntity;
 import org.nodriver4j.services.*;
-import org.nodriver4j.services.exceptions.SmsProviderException;
+import org.nodriver4j.services.sms.SmsProviderException;
+import org.nodriver4j.services.imap.EmailPollingBase;
+import org.nodriver4j.services.imap.GmailClient;
+import org.nodriver4j.services.imap.impl.UberOtpExtractor;
+import org.nodriver4j.services.response.sms.SmsActivation;
+import org.nodriver4j.services.sms.DaisySmsService;
+import org.nodriver4j.services.sms.SmsService;
 
 import java.util.concurrent.TimeoutException;
 
@@ -40,7 +46,7 @@ public class UberGen implements AutomationScript {
 
     // ==================== Form Selectors ====================
 
-    private static final String GOOGLE_SEARCH_TEXT = "/html/body/div[2]/div[4]/form/div[1]/div[1]/div[1]/div[1]/div[3]/textarea";
+    private static final String GOOGLE_SEARCH_TEXT = "textarea[aria-label='Search']";
     private static final String UE_RESULT_BUTTON = "a[href^='https://www.ubereats.com/'] > :nth-child(1)";
     private static final String SIGN_IN_BUTTON = "[tabindex='0'][href^='https://auth.uber.com/v2/']";
     private static final String EMAIL_TEXT = "input#PHONE_NUMBER_or_EMAIL_ADDRESS[type='email']";
@@ -69,6 +75,7 @@ public class UberGen implements AutomationScript {
     private ProfileEntity profile;
     private TaskLogger logger;
     private TaskContext context;
+    private String phoneNumber;
 
     // ==================== Constructor ====================
 
@@ -116,7 +123,7 @@ public class UberGen implements AutomationScript {
 
             context.checkCancelled();
 
-            for (int i = 0; i < 2; i++) {
+            for (int i = 0; i < 3; i++) {
                 if (page.exists(FIRST_NAME_TEXT)) {
                     logger.log("Entering name...");
                     enterName();
@@ -146,13 +153,8 @@ public class UberGen implements AutomationScript {
                 verifyPhone();
             }
 
-            page.waitForLoadEvent(15000);
-            page.sleep(3000);
-
-            if (page.exists(HOMEPAGE_SUCCESS_ID)) {
-                logger.success("Signup successful for: " + profile.emailAddress());
-                return;
-            }
+            logger.success("Signup successful for: " + profile.emailAddress());
+            return;
 
         } catch (GmailClient.GmailClientException e) {
             logger.error("IMAP connection failed: " + e.getMessage());
@@ -177,17 +179,18 @@ public class UberGen implements AutomationScript {
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
             try {
                 page.navigate("https://www.google.com/");
+                page.sleep(3000);
                 fillFormField(GOOGLE_SEARCH_TEXT, "uber eats", true);
                 page.pressKey("Enter", false, false, false);
                 page.sleep(1000);
-                page.waitForLoadEvent(20000);
+                waitForLoadEvent(10000);
                 if (!page.exists(UE_RESULT_BUTTON)) {
                     ReCaptchaSolver.solve(page);
-                    page.waitForSelector(UE_RESULT_BUTTON, 100000);
+                    page.waitForSelector(UE_RESULT_BUTTON, 15000);
                 }
                 page.sleep(1500);
                 page.click(UE_RESULT_BUTTON);
-                page.waitForLoadEvent(20000);
+                page.waitForSelector(SIGN_IN_BUTTON, 60000);
                 return;
 
             } catch (TimeoutException | InterruptedException e) {
@@ -204,18 +207,18 @@ public class UberGen implements AutomationScript {
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
             try {
                 int signInSeed = (int) (Math.random() * 100);
-                if (attempt > 1) page.navigate("https://www.ubereats.com/");
-                page.waitForLoadEvent(60000);
-                ArkoseSolver.installEnforcementHook(page);
+                if (attempt > 1) page.reload(true, 30000);
+                // ArkoseSolver.installEnforcementHook(page);
                 page.click(SIGN_IN_BUTTON);
-                page.waitForLoadEvent(100000);
+                page.waitForLoadEvent(20000);
                 page.sleep(2000);
-                fillFormField(EMAIL_TEXT, profile.emailAddress(), true);
+                fillFormField(EMAIL_TEXT, profile.emailAddress(), !Character.isDigit(profile.emailAddress().charAt(0)));
                 if (signInSeed % 3 == 0) {
                     page.pressKey("Enter", false, false, false);
                 } else {
                     page.click(SUMBIT_EMAIL_BUTTON);
                 }
+                page.waitForSelector(EMAIL_OTP_TEXT, 15000);
                 return;
 
             } catch (TimeoutException | InterruptedException e) {
@@ -239,7 +242,8 @@ public class UberGen implements AutomationScript {
 
             for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
                 try {
-                    if (attempt > 1) {
+                    if (attempt > 1 || !page.exists(EMAIL_OTP_TEXT)) {
+                        page.reload(true, 30000);
                         page.click(EMAIL_OTP_RESEND_BUTTON);
                         page.sleep(2500);
                         page.click(EMAIL_OTP_RESEND_CONFIRM_BUTTON);
@@ -342,6 +346,11 @@ public class UberGen implements AutomationScript {
 
                     fillFormField(PHONE_NUMBER_TEXT, activation.phoneNumber(), true);
                     page.click(UPDATE_PHONE_BUTTON);
+                    page.sleep(3000);
+                    if(page.exists(UPDATE_PHONE_BUTTON)) {
+                        page.jsClick(UPDATE_PHONE_BUTTON);
+                    }
+                    phoneNumber = activation.phoneNumber();
 
                     String code = sms.pollForCode(activation);
                     logger.log("Phone OTP: " + code);
@@ -350,8 +359,9 @@ public class UberGen implements AutomationScript {
                     sms.completeActivation(activation.activationId());
                 }
 
-                page.sleep(3000);
+                page.sleep(20000);
                 if (!page.exists(PHONE_NUMBER_TEXT)) {
+                    profile.shippingPhone(phoneNumber);
                     return;
                 }
             } catch (TimeoutException | InterruptedException e) {
@@ -363,11 +373,11 @@ public class UberGen implements AutomationScript {
         throw new RuntimeException("Verify phone failed: session likely flagged");
     }
 
-    // ==================== Form Helpers ====================
+    // ==================== Helpers ====================
 
     private void fillFormField(String selector, String value, boolean validate) throws InterruptedException, TimeoutException {
         for (int attempt = 0; attempt <= ATTEMPTS; attempt++) {
-            page.fillFormField(selector, value, 300, 600);
+            page.fillFormField(selector, value, randomDelay(), randomDelay(), randomSpeed());
             if (page.validateValue(selector, value) || !validate) {
                 return;
             }
@@ -375,6 +385,18 @@ public class UberGen implements AutomationScript {
             page.clear(selector);
         }
         throw new TimeoutException("Failed to fill field after " + ATTEMPTS + " attempts: " + selector);
+    }
+
+    private int randomDelay(){
+        return 300 + (int)(Math.random() * 600);
+    }
+
+    private double randomSpeed(){
+        return 0.8 + (Math.random() * 0.5);
+    }
+
+    private void waitForLoadEvent(int timeout) {
+        try{page.waitForLoadEvent(timeout);}catch(TimeoutException _){}
     }
 
     // ==================== Inner Exception Classes ====================

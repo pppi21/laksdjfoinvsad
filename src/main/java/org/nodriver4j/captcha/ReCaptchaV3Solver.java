@@ -2,9 +2,9 @@ package org.nodriver4j.captcha;
 
 import org.nodriver4j.core.Page;
 import org.nodriver4j.persistence.Settings;
-import org.nodriver4j.services.CapSolverService;
-import org.nodriver4j.services.ReCaptchaV3Response;
-import org.nodriver4j.services.exceptions.CapSolverException;
+import org.nodriver4j.services.captcha.capsolver.CapSolverService;
+import org.nodriver4j.services.response.captcha.ReCaptchaV3Response;
+import org.nodriver4j.services.captcha.capsolver.CapSolverException;
 
 import java.util.concurrent.TimeoutException;
 

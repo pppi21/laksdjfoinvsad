@@ -14,13 +14,12 @@ import org.nodriver4j.persistence.repository.TaskRepository;
 import org.nodriver4j.scripts.ScriptRegistry;
 import org.nodriver4j.services.ScreencastService;
 import org.nodriver4j.services.TaskExecutionService;
-import org.nodriver4j.ui.windows.ViewBrowserWindow;
+import org.nodriver4j.ui.task.detail.ViewBrowserWindow;
 
 import java.io.IOException;
 import java.util.List;
 import java.util.Scanner;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Test harness for Stage 3B — runs a scripted task through the full

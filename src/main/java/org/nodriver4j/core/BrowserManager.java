@@ -1,7 +1,7 @@
 package org.nodriver4j.core;
 
 import org.nodriver4j.profiles.ProfilePool;
-import org.nodriver4j.services.AutoSolveAIService;
+import org.nodriver4j.services.aycd.AutoSolveAIService;
 
 import java.io.IOException;
 import java.util.ArrayList;

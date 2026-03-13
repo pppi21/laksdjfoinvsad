@@ -2,6 +2,7 @@ package org.nodriver4j.services;
 
 import org.nodriver4j.persistence.entity.TaskEntity;
 import org.nodriver4j.persistence.repository.TaskRepository;
+import org.nodriver4j.ui.task.detail.TaskRow;
 
 import java.util.function.BiConsumer;
 
@@ -16,7 +17,7 @@ import java.util.function.BiConsumer;
  *       {@link TaskRepository#updateLog(long, String, String)} so that log
  *       state survives app restarts.</li>
  *   <li><b>UI notification:</b> Fires an optional callback so the controller
- *       can update the {@link org.nodriver4j.ui.components.TaskRow} in real time.</li>
+ *       can update the {@link TaskRow} in real time.</li>
  * </ol>
  *
  * <h2>Usage in Scripts</h2>

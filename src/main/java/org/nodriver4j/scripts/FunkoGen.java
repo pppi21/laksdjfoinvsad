@@ -4,6 +4,9 @@ import org.nodriver4j.core.Page;
 import org.nodriver4j.persistence.entity.ProfileEntity;
 import org.nodriver4j.persistence.repository.ProfileRepository;
 import org.nodriver4j.services.*;
+import org.nodriver4j.services.imap.EmailPollingBase;
+import org.nodriver4j.services.imap.GmailClient;
+import org.nodriver4j.services.imap.impl.FunkoVerificationExtractor;
 
 import java.security.SecureRandom;
 import java.util.concurrent.TimeoutException;

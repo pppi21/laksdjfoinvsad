@@ -7,6 +7,12 @@ import javafx.scene.Node;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import org.nodriver4j.ui.profile.detail.ProfileGroupDetailController;
+import org.nodriver4j.ui.profile.ProfileManagerController;
+import org.nodriver4j.ui.proxy.detail.ProxyGroupDetailController;
+import org.nodriver4j.ui.proxy.ProxyManagerController;
+import org.nodriver4j.ui.task.detail.TaskGroupDetailController;
+import org.nodriver4j.ui.task.TaskManagerController;
 
 import java.io.IOException;
 import java.net.URL;
@@ -238,7 +244,7 @@ public class MainController implements Initializable {
 
         // Load from FXML
         try {
-            FXMLLoader loader = new FXMLLoader(getClass().getResource("../" + page.fxmlPath()));
+            FXMLLoader loader = new FXMLLoader(getClass().getResource("/org/nodriver4j/ui/" + page.fxmlPath()));
 
             // Set controller programmatically for shared FXML layouts
             if (page.hasControllerFactory()) {

@@ -7,7 +7,7 @@ import org.nodriver4j.cdp.CDPClient;
 import org.nodriver4j.cdp.CDPSession;
 import org.nodriver4j.persistence.entity.FingerprintEntity;
 import org.nodriver4j.scripts.SessionWarmer;
-import org.nodriver4j.services.AutoSolveAIService;
+import org.nodriver4j.services.aycd.AutoSolveAIService;
 import org.nodriver4j.services.TaskLogger;
 
 import java.io.IOException;
@@ -16,7 +16,6 @@ import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 

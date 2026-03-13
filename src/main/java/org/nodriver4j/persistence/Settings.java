@@ -63,6 +63,7 @@ public final class Settings {
     private String chromePath;
     private boolean defaultHeadless;
     private boolean defaultFingerprintEnabled;
+    private boolean fingerprintMonitoringEnabled;
 
     // Warming
     private boolean defaultWarmProfile;
@@ -93,6 +94,7 @@ public final class Settings {
         // Browser defaults
         this.defaultHeadless = false;
         this.defaultFingerprintEnabled = true;
+        this.fingerprintMonitoringEnabled = false;
 
         // Warming
         this.defaultWarmProfile = false;
@@ -295,6 +297,30 @@ public final class Settings {
      */
     public Settings defaultFingerprintEnabled(boolean enabled) {
         this.defaultFingerprintEnabled = enabled;
+        return this;
+    }
+
+    /**
+     * Gets the fingerprint monitoring enabled setting.
+     *
+     * <p>When enabled, task execution injects a diagnostic script
+     * that records which fingerprint-related APIs a website accesses.
+     * Results are exported to JSON files in {@code nodriver4j-data/fp-reports/}.</p>
+     *
+     * @return true if fingerprint monitoring is enabled
+     */
+    public boolean fingerprintMonitoringEnabled() {
+        return fingerprintMonitoringEnabled;
+    }
+
+    /**
+     * Sets the fingerprint monitoring enabled setting.
+     *
+     * @param enabled true to enable fingerprint monitoring
+     * @return this Settings for chaining
+     */
+    public Settings fingerprintMonitoringEnabled(boolean enabled) {
+        this.fingerprintMonitoringEnabled = enabled;
         return this;
     }
 

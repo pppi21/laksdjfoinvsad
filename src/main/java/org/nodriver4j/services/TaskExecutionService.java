@@ -3,12 +3,17 @@ package org.nodriver4j.services;
 import org.nodriver4j.core.Browser;
 import org.nodriver4j.core.BrowserConfig;
 import org.nodriver4j.core.Fingerprint;
+import org.nodriver4j.core.monitoring.FingerprintMonitor;
+import org.nodriver4j.core.monitoring.FingerprintReport;
 import org.nodriver4j.persistence.Settings;
 import org.nodriver4j.persistence.entity.*;
 import org.nodriver4j.persistence.importer.FingerprintExtractor;
 import org.nodriver4j.persistence.repository.*;
 import org.nodriver4j.scripts.AutomationScript;
 import org.nodriver4j.scripts.ScriptRegistry;
+import org.nodriver4j.services.aycd.AutoSolveAIService;
+import org.nodriver4j.services.proxy.ProxyDiagnosticService;
+import org.nodriver4j.services.response.proxy.ProxyDiagnosticResult;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -355,6 +360,14 @@ public class TaskExecutionService {
                 context.register(aiService);
             }
 
+            // Optional fingerprint monitoring (debug diagnostic)
+            FingerprintMonitor fpMonitor = null;
+            if (Settings.get().fingerprintMonitoringEnabled()) {
+                fpMonitor = context.register(new FingerprintMonitor(myBrowser.page(), false));
+                fpMonitor.start();
+                logger.log("Fingerprint monitoring enabled");
+            }
+
             // Warm session if enabled
             if (task.warmSession()) {
                 myBrowser.warm(logger);
@@ -371,6 +384,25 @@ public class TaskExecutionService {
             AutomationScript script = ScriptRegistry.create(group.scriptName());
             logger.log("Running " + group.scriptName() + "...");
             script.run(myBrowser.page(), profile, logger, context);
+
+            // Export fingerprint monitoring report if active
+            if (fpMonitor != null) {
+                try {
+                    fpMonitor.stop();
+                    FingerprintReport fpReport = fpMonitor.report();
+                    if (fpReport.totalAccesses() > 0) {
+                        Path reportDir = Path.of("nodriver4j-data", "fp-reports");
+                        Files.createDirectories(reportDir);
+                        fpReport.exportToFile(reportDir.resolve(
+                                "task-" + taskId + "-" + System.currentTimeMillis() + ".json"));
+                        logger.log("Fingerprint report: " + fpReport.uniqueApis() +
+                                " unique APIs across " + fpReport.probedCategories().size() + " categories");
+                    }
+                } catch (Exception e) {
+                    System.err.println("[TaskExecutionService] Failed to export fingerprint report: " +
+                            e.getMessage());
+                }
+            }
 
             // Script completed successfully — update profile notes
             appendCompletionNote(profile, group.scriptName());

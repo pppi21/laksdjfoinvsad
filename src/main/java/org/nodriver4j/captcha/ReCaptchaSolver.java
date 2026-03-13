@@ -2,9 +2,9 @@ package org.nodriver4j.captcha;
 
 import org.nodriver4j.core.Page;
 import org.nodriver4j.core.Page.IframeInfo;
-import org.nodriver4j.services.AutoSolveAIResponse;
-import org.nodriver4j.services.AutoSolveAIService;
-import org.nodriver4j.services.exceptions.AutoSolveAIException;
+import org.nodriver4j.services.response.captcha.AutoSolveAIResponse;
+import org.nodriver4j.services.aycd.AutoSolveAIService;
+import org.nodriver4j.services.aycd.AutoSolveAIException;
 
 import java.util.*;
 import java.util.concurrent.TimeoutException;

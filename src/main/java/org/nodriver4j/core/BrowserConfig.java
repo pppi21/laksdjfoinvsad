@@ -1,7 +1,7 @@
 package org.nodriver4j.core;
 
 import org.nodriver4j.persistence.entity.FingerprintEntity;
-import org.nodriver4j.services.AutoSolveAIService;
+import org.nodriver4j.services.aycd.AutoSolveAIService;
 
 import java.nio.file.Path;
 import java.util.ArrayList;

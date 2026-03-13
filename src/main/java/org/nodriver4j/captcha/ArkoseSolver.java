@@ -2,9 +2,9 @@ package org.nodriver4j.captcha;
 
 import org.nodriver4j.core.Page;
 import org.nodriver4j.persistence.Settings;
-import org.nodriver4j.services.ArkoseResponse;
-import org.nodriver4j.services.TwoCaptchaService;
-import org.nodriver4j.services.exceptions.TwoCaptchaException;
+import org.nodriver4j.services.response.captcha.ArkoseResponse;
+import org.nodriver4j.services.captcha.twocaptcha.TwoCaptchaService;
+import org.nodriver4j.services.captcha.twocaptcha.TwoCaptchaException;
 
 import java.util.concurrent.TimeoutException;
 

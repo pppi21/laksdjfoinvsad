@@ -2356,7 +2356,7 @@ public class Page {
             keyDown.addProperty("text", textToInsert);
         }
 
-        cdp.send("Input.dispatchKeyEvent", keyDown);
+        cdp.send("Input.dispatchKeyEvent", keyDown, 3, TimeUnit.SECONDS);
 
         JsonObject keyUp = new JsonObject();
         keyUp.addProperty("type", "keyUp");
@@ -2365,7 +2365,7 @@ public class Page {
         keyUp.addProperty("windowsVirtualKeyCode", windowsVirtualKeyCode);
         keyUp.addProperty("nativeVirtualKeyCode", windowsVirtualKeyCode);
         keyUp.addProperty("modifiers", modifiers);
-        cdp.send("Input.dispatchKeyEvent", keyUp);
+        cdp.send("Input.dispatchKeyEvent", keyUp, 3, TimeUnit.SECONDS);
     }
 
     /**

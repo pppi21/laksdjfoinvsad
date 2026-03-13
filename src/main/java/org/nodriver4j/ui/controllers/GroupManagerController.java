@@ -365,7 +365,7 @@ public abstract class GroupManagerController<C extends GroupCard> implements Ini
         // Style the alert with our dark theme if possible
         try {
             alert.getDialogPane().getStylesheets().add(
-                    getClass().getResource("../css/dark-theme.css").toExternalForm()
+                    getClass().getResource("/org/nodriver4j/ui/css/dark-theme.css").toExternalForm()
             );
             alert.getDialogPane().getStyleClass().add("dialog-pane");
         } catch (Exception e) {

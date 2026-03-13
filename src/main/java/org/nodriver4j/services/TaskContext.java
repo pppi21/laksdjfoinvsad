@@ -1,5 +1,7 @@
 package org.nodriver4j.services;
 
+import org.nodriver4j.services.aycd.AutoSolveAIService;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;

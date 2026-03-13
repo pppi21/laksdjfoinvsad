@@ -22,7 +22,7 @@
 -->
 <VBox xmlns="http://javafx.com/javafx/21"
       xmlns:fx="http://javafx.com/fxml/1"
-      fx:controller="org.nodriver4j.ui.controllers.ProfileGroupDetailController"
+      fx:controller="org.nodriver4j.ui.profile.detail.ProfileGroupDetailController"
       styleClass="content-area"
       spacing="0">
 
