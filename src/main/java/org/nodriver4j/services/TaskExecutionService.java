@@ -763,9 +763,12 @@ public class TaskExecutionService {
                 .executablePath(settings.chromePath())
                 .userDataDir(Path.of(task.userdataPath()));
 
+        FingerprintEntity fp = null;
         if (settings.defaultFingerprintEnabled() && task.hasFingerprint()) {
-            fingerprintRepository.findById(task.fingerprintId())
-                    .ifPresent(builder::fingerprint);
+            fp = fingerprintRepository.findById(task.fingerprintId()).orElse(null);
+            if (fp != null) {
+                builder.fingerprint(fp);
+            }
         }
 
         if (headless) {
@@ -789,6 +792,27 @@ public class TaskExecutionService {
             builder.argument("--fingerprint-timezone=" + diagnostic.timezone());
             builder.argument("--fingerprint-geolocation=" + diagnostic.toGeolocationArg());
             builder.argument("--webrtc-ip4=" + diagnostic.exitIp());
+        }
+
+        // Per-session connection fingerprint (conditions naturally vary between sessions)
+        if (fp != null) {
+            // Connection: "effectiveType,downlink,rtt,saveData,type"
+            Random sessionRandom = new Random();
+            String connType = sessionRandom.nextInt(100) < 65 ? "wifi" : "ethernet";
+            double downlink = connType.equals("wifi")
+                    ? 15.0 + sessionRandom.nextDouble() * 35.0
+                    : 50.0 + sessionRandom.nextDouble() * 50.0;
+            int rtt = connType.equals("wifi")
+                    ? 50 + sessionRandom.nextInt(100)
+                    : 20 + sessionRandom.nextInt(60);
+            builder.argument("--fingerprint-connection=4g,"
+                    + String.format("%.1f", downlink) + "," + rtt + ",false," + connType);
+
+            // Media features: "colorScheme,reducedMotion,contrast,forcedColors,colorGamut"
+            String colorScheme = fp.prefersColorScheme() != null ? fp.prefersColorScheme() : "light";
+            String colorGamut = fp.colorGamut() != null ? fp.colorGamut() : "srgb";
+            builder.argument("--fingerprint-media-features=" + colorScheme
+                    + ",no-preference,no-preference,none," + colorGamut);
         }
 
         return builder.build();

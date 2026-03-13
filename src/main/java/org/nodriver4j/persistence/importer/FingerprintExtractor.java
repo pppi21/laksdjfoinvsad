@@ -227,7 +227,7 @@ public class FingerprintExtractor {
                 .availHeight(availHeight)
                 .availTop(availTop)
                 .colorDepth(colorDepth)
-                .devicePixelRatio(null) // Placeholder until DPR switch is implemented
+                .devicePixelRatio(deriveDPR(screenWidth, platform))
                 .audioSampleRate(audioSampleRate)
                 .audioBaseLatency(audioBaseLatency)
                 .audioOutputLatency(audioOutputLatency)
@@ -235,6 +235,8 @@ public class FingerprintExtractor {
                 .mediaMics(media[0])
                 .mediaWebcams(media[1])
                 .mediaSpeakers(media[2])
+                .prefersColorScheme(deriveColorScheme(platform, seed))
+                .colorGamut(deriveColorGamut(platform, screenWidth))
                 .build();
     }
 
@@ -506,6 +508,74 @@ public class FingerprintExtractor {
             }
         }
         return 25; // Standard macOS menu bar
+    }
+
+    // ==================== Device Pixel Ratio ====================
+
+    /**
+     * Derives the device pixel ratio from screen width and platform.
+     *
+     * <p>Known DPR mappings:</p>
+     * <ul>
+     *   <li>1536 (Windows 125% scale of 1920x1080) → 1.25</li>
+     *   <li>macOS laptop widths (1440, 1470, 1512, 1728) → 2.0 (Retina)</li>
+     *   <li>macOS desktop widths (2240, 2048) → 2.0 (Retina iMac)</li>
+     *   <li>All other widths → 1.0 (native resolution)</li>
+     * </ul>
+     */
+    private static double deriveDPR(int screenWidth, String platform) {
+        // Windows 125% scaling
+        if (screenWidth == 1536) {
+            return 1.25;
+        }
+
+        // macOS Retina displays
+        if (FingerprintEntity.PLATFORM_MACOS.equals(platform)) {
+            return switch (screenWidth) {
+                case 1440, 1470, 1512, 1728, 2240, 2048 -> 2.0;
+                default -> 1.0;
+            };
+        }
+
+        return 1.0;
+    }
+
+    // ==================== Media Features (CSS) ====================
+
+    /**
+     * Derives the preferred color scheme based on platform and seed.
+     *
+     * <p>Distributions:</p>
+     * <ul>
+     *   <li>Windows: ~85% light, ~15% dark</li>
+     *   <li>macOS: ~55% light, ~45% dark</li>
+     *   <li>Linux: ~80% light, ~20% dark</li>
+     * </ul>
+     */
+    private static String deriveColorScheme(String platform, int seed) {
+        int pick = deterministic(seed, 73, 100);
+        return switch (platform) {
+            case FingerprintEntity.PLATFORM_WINDOWS -> pick < 85 ? "light" : "dark";
+            case FingerprintEntity.PLATFORM_MACOS -> pick < 55 ? "light" : "dark";
+            case FingerprintEntity.PLATFORM_LINUX -> pick < 80 ? "light" : "dark";
+            default -> "light";
+        };
+    }
+
+    /**
+     * Derives the color gamut based on platform and screen width.
+     *
+     * <p>macOS Retina displays (~40%) report P3 gamut. All others report sRGB.</p>
+     */
+    private static String deriveColorGamut(String platform, int screenWidth) {
+        if (FingerprintEntity.PLATFORM_MACOS.equals(platform)) {
+            // Retina MacBook/iMac displays support P3
+            return switch (screenWidth) {
+                case 1440, 1470, 1512, 1728, 2240, 2048 -> "p3";
+                default -> "srgb";
+            };
+        }
+        return "srgb";
     }
 
     // ==================== Value Generation ====================

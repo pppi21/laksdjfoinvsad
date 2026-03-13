@@ -47,7 +47,7 @@ public final class Database {
 
     private static final String DATA_DIRECTORY = "nodriver4j-data";
     private static final String DATABASE_FILE = "data.db";
-    private static final int CURRENT_SCHEMA_VERSION = 6;
+    private static final int CURRENT_SCHEMA_VERSION = 7;
     private static final AtomicBoolean initialized = new AtomicBoolean(false);
     private static String connectionUrl;
 
@@ -221,6 +221,7 @@ public final class Database {
             case 4 -> migrateV4(conn);
             case 5 -> migrateV5(conn);
             case 6 -> migrateV6(conn);
+            case 7 -> migrateV7(conn);
             default -> throw new DatabaseException("Unknown migration version: " + version);
         }
     }
@@ -471,6 +472,19 @@ public final class Database {
 
             // Index for the FK join
             stmt.execute("CREATE INDEX idx_tasks_fingerprint_id ON tasks(fingerprint_id)");
+        }
+    }
+
+    /**
+     * V7: Add media feature columns to fingerprints table.
+     *
+     * <p>Stores CSS media feature preferences (prefers-color-scheme, color-gamut)
+     * so they remain consistent across browser sessions for the same fingerprint.</p>
+     */
+    private static void migrateV7(Connection conn) throws SQLException {
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute("ALTER TABLE fingerprints ADD COLUMN prefers_color_scheme TEXT");
+            stmt.execute("ALTER TABLE fingerprints ADD COLUMN color_gamut TEXT");
         }
     }
 

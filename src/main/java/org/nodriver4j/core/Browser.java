@@ -1270,10 +1270,14 @@ public class Browser implements AutoCloseable {
                 args.add("\"--fingerprint-gpu-renderer=" + fp.gpuRenderer() + "\"");
             }
 
-            // Screen: "width,height,availWidth,availHeight,availTop,colorDepth"
-            args.add("--fingerprint-screen=" + fp.screenWidth() + "," + fp.screenHeight() + ","
+            // Screen: "width,height,availWidth,availHeight,availTop,colorDepth[,devicePixelRatio]"
+            String screenArg = fp.screenWidth() + "," + fp.screenHeight() + ","
                     + fp.availWidth() + "," + fp.availHeight() + "," + fp.availTop() + ","
-                    + fp.colorDepth());
+                    + fp.colorDepth();
+            if (fp.hasDevicePixelRatio()) {
+                screenArg += "," + fp.devicePixelRatio();
+            }
+            args.add("--fingerprint-screen=" + screenArg);
 
             // AudioContext: "sampleRate,baseLatency,outputLatency,maxChannelCount"
             args.add("--fingerprint-audio-context=" + fp.audioSampleRate() + ","

@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -70,21 +71,18 @@ public class FingerprintMonitor implements AutoCloseable {
 
     private static final long DEFAULT_POLL_INTERVAL_MS = 2000;
 
-    /**
-     * JavaScript to drain the buffer. Returns JSON: {@code {"e":[...], "d":0}}.
-     * Buffer is cleared atomically by the drain function defined in the IIFE.
-     */
-    private static final String DRAIN_SCRIPT = "window.__nd4j_fp_drain()";
+    /** Placeholder token in the JS template that gets replaced with the randomized key. */
+    private static final String DRAIN_KEY_PLACEHOLDER = "__DRAIN_KEY__";
 
-    /** The monitoring script, loaded once from classpath. */
-    private static final String MONITOR_SCRIPT;
+    /** The monitoring script template, loaded once from classpath. */
+    private static final String MONITOR_SCRIPT_TEMPLATE;
 
     static {
         try (InputStream is = FingerprintMonitor.class.getResourceAsStream("fingerprint-monitor.js")) {
             if (is == null) {
                 throw new IllegalStateException("fingerprint-monitor.js not found on classpath");
             }
-            MONITOR_SCRIPT = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            MONITOR_SCRIPT_TEMPLATE = new String(is.readAllBytes(), StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new ExceptionInInitializerError(e);
         }
@@ -94,6 +92,8 @@ public class FingerprintMonitor implements AutoCloseable {
 
     private final Page page;
     private final boolean captureStackTraces;
+    private final String drainKey;
+    private final String drainScript;
     private final AtomicBoolean active = new AtomicBoolean(false);
     private final List<FingerprintAccessEvent> events = Collections.synchronizedList(new ArrayList<>());
 
@@ -116,6 +116,8 @@ public class FingerprintMonitor implements AutoCloseable {
         }
         this.page = page;
         this.captureStackTraces = captureStackTraces;
+        this.drainKey = "_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        this.drainScript = "window['" + drainKey + "']()";
     }
 
     // ==================== Lifecycle ====================
@@ -141,10 +143,13 @@ public class FingerprintMonitor implements AutoCloseable {
         monitoringStartMs = System.currentTimeMillis();
 
         try {
+            // Replace placeholder with randomized drain key
+            String monitorScript = MONITOR_SCRIPT_TEMPLATE.replace(DRAIN_KEY_PLACEHOLDER, drainKey);
+
             // Build the script to inject (optionally prepend stack trace flag)
             String script = captureStackTraces
-                    ? "window.__nd4j_fp_stacks = true;\n" + MONITOR_SCRIPT
-                    : MONITOR_SCRIPT;
+                    ? "window['" + drainKey + "_s'] = true;\n" + monitorScript
+                    : monitorScript;
 
             // Ensure Page domain is enabled — required for addScriptToEvaluateOnNewDocument
             // to fire on future navigations. The existing codebase (cursor overlay, Arkose
@@ -162,11 +167,11 @@ public class FingerprintMonitor implements AutoCloseable {
             page.evaluate(script);
 
             // Verify the drain function was created
-            String check = page.evaluate("typeof window.__nd4j_fp_drain");
+            String check = page.evaluate("typeof window['" + drainKey + "']");
             if (!"function".equals(check)) {
                 active.set(false);
                 throw new RuntimeException(
-                        "Monitoring script injection failed: __nd4j_fp_drain is " + check);
+                        "Monitoring script injection failed: drain function is " + check);
             }
 
         } catch (Exception e) {
@@ -275,7 +280,7 @@ public class FingerprintMonitor implements AutoCloseable {
      */
     private void poll() {
         try {
-            String json = page.evaluate(DRAIN_SCRIPT);
+            String json = page.evaluate(drainScript);
             if (json == null || json.isEmpty()) {
                 return;
             }

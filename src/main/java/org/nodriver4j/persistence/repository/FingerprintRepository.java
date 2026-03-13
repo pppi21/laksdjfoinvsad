@@ -89,6 +89,7 @@ public class FingerprintRepository implements Repository<FingerprintEntity> {
         screen_width, screen_height, avail_width, avail_height, avail_top, color_depth,
         device_pixel_ratio,
         audio_sample_rate, audio_base_latency, audio_output_latency, audio_max_channel_count,
+        prefers_color_scheme, color_gamut,
         media_mics, media_webcams, media_speakers,
         extra_switches, created_at, updated_at
         """;
@@ -101,9 +102,10 @@ public class FingerprintRepository implements Repository<FingerprintEntity> {
             screen_width, screen_height, avail_width, avail_height, avail_top, color_depth,
             device_pixel_ratio,
             audio_sample_rate, audio_base_latency, audio_output_latency, audio_max_channel_count,
+            prefers_color_scheme, color_gamut,
             media_mics, media_webcams, media_speakers,
             extra_switches, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """;
 
     private static final String UPDATE_SQL = """
@@ -116,6 +118,7 @@ public class FingerprintRepository implements Repository<FingerprintEntity> {
             avail_top = ?, color_depth = ?, device_pixel_ratio = ?,
             audio_sample_rate = ?, audio_base_latency = ?, audio_output_latency = ?,
             audio_max_channel_count = ?,
+            prefers_color_scheme = ?, color_gamut = ?,
             media_mics = ?, media_webcams = ?, media_speakers = ?,
             extra_switches = ?,
             updated_at = datetime('now')
@@ -393,6 +396,8 @@ public class FingerprintRepository implements Repository<FingerprintEntity> {
         stmt.setDouble(i++, e.audioBaseLatency());
         stmt.setDouble(i++, e.audioOutputLatency());
         stmt.setInt(i++, e.audioMaxChannelCount());
+        stmt.setString(i++, e.prefersColorScheme());
+        stmt.setString(i++, e.colorGamut());
         stmt.setInt(i++, e.mediaMics());
         stmt.setInt(i++, e.mediaWebcams());
         stmt.setInt(i++, e.mediaSpeakers());
@@ -432,6 +437,8 @@ public class FingerprintRepository implements Repository<FingerprintEntity> {
         stmt.setDouble(i++, e.audioBaseLatency());
         stmt.setDouble(i++, e.audioOutputLatency());
         stmt.setInt(i++, e.audioMaxChannelCount());
+        stmt.setString(i++, e.prefersColorScheme());
+        stmt.setString(i++, e.colorGamut());
         stmt.setInt(i++, e.mediaMics());
         stmt.setInt(i++, e.mediaWebcams());
         stmt.setInt(i++, e.mediaSpeakers());
@@ -488,6 +495,8 @@ public class FingerprintRepository implements Repository<FingerprintEntity> {
                 .audioBaseLatency(rs.getDouble("audio_base_latency"))
                 .audioOutputLatency(rs.getDouble("audio_output_latency"))
                 .audioMaxChannelCount(rs.getInt("audio_max_channel_count"))
+                .prefersColorScheme(rs.getString("prefers_color_scheme"))
+                .colorGamut(rs.getString("color_gamut"))
                 .mediaMics(rs.getInt("media_mics"))
                 .mediaWebcams(rs.getInt("media_webcams"))
                 .mediaSpeakers(rs.getInt("media_speakers"))

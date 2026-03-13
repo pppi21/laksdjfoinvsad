@@ -172,6 +172,11 @@ public class FingerprintEntity {
     private double audioOutputLatency;
     private int audioMaxChannelCount;
 
+    // ==================== Media Features (CSS) ====================
+
+    private String prefersColorScheme;
+    private String colorGamut;
+
     // ==================== Media Devices ====================
 
     private int mediaMics;
@@ -234,6 +239,8 @@ public class FingerprintEntity {
         this.audioBaseLatency = builder.audioBaseLatency;
         this.audioOutputLatency = builder.audioOutputLatency;
         this.audioMaxChannelCount = builder.audioMaxChannelCount;
+        this.prefersColorScheme = builder.prefersColorScheme;
+        this.colorGamut = builder.colorGamut;
         this.mediaMics = builder.mediaMics;
         this.mediaWebcams = builder.mediaWebcams;
         this.mediaSpeakers = builder.mediaSpeakers;
@@ -284,6 +291,8 @@ public class FingerprintEntity {
                 .audioBaseLatency(audioBaseLatency)
                 .audioOutputLatency(audioOutputLatency)
                 .audioMaxChannelCount(audioMaxChannelCount)
+                .prefersColorScheme(prefersColorScheme)
+                .colorGamut(colorGamut)
                 .mediaMics(mediaMics)
                 .mediaWebcams(mediaWebcams)
                 .mediaSpeakers(mediaSpeakers)
@@ -519,6 +528,24 @@ public class FingerprintEntity {
      */
     public int audioMaxChannelCount() {
         return audioMaxChannelCount;
+    }
+
+    /**
+     * Gets the preferred color scheme for CSS media features.
+     *
+     * @return "light" or "dark", or null if not set
+     */
+    public String prefersColorScheme() {
+        return prefersColorScheme;
+    }
+
+    /**
+     * Gets the color gamut for CSS media features.
+     *
+     * @return "srgb" or "p3", or null if not set
+     */
+    public String colorGamut() {
+        return colorGamut;
     }
 
     /**
@@ -873,6 +900,28 @@ public class FingerprintEntity {
     }
 
     /**
+     * Sets the preferred color scheme.
+     *
+     * @param prefersColorScheme "light" or "dark"
+     * @return this entity for chaining
+     */
+    public FingerprintEntity prefersColorScheme(String prefersColorScheme) {
+        this.prefersColorScheme = prefersColorScheme;
+        return this;
+    }
+
+    /**
+     * Sets the color gamut.
+     *
+     * @param colorGamut "srgb" or "p3"
+     * @return this entity for chaining
+     */
+    public FingerprintEntity colorGamut(String colorGamut) {
+        this.colorGamut = colorGamut;
+        return this;
+    }
+
+    /**
      * Sets the spoofed microphone count.
      *
      * @param mediaMics the mic count
@@ -1147,6 +1196,8 @@ public class FingerprintEntity {
         private double audioBaseLatency;
         private double audioOutputLatency;
         private int audioMaxChannelCount;
+        private String prefersColorScheme;
+        private String colorGamut;
         private int mediaMics = 1;
         private int mediaWebcams = 1;
         private int mediaSpeakers = 1;
@@ -1273,6 +1324,16 @@ public class FingerprintEntity {
 
         public Builder audioMaxChannelCount(int audioMaxChannelCount) {
             this.audioMaxChannelCount = audioMaxChannelCount;
+            return this;
+        }
+
+        public Builder prefersColorScheme(String prefersColorScheme) {
+            this.prefersColorScheme = prefersColorScheme;
+            return this;
+        }
+
+        public Builder colorGamut(String colorGamut) {
+            this.colorGamut = colorGamut;
             return this;
         }
 

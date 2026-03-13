@@ -9,7 +9,6 @@
     var _stringify = JSON.stringify;
     var _now = Date.now;
     var _Reflect = Reflect;
-    var _WeakMap = WeakMap;
 
     // ==================== Buffer Setup ====================
     var buf = [];
@@ -17,10 +16,10 @@
     var MAX_BUF = 10000;
     var lastLog = {};           // api -> last timestamp (rate limiting)
     var RATE_LIMIT_MS = 100;
-    var CAPTURE_STACKS = !!(typeof window.__nd4j_fp_stacks !== 'undefined' && window.__nd4j_fp_stacks);
+    var CAPTURE_STACKS = !!(typeof window['__DRAIN_KEY___s'] !== 'undefined' && window['__DRAIN_KEY___s']);
 
     // Expose drain function — non-enumerable, closure-scoped access to buffer.
-    _defineProperty(window, '__nd4j_fp_drain', {
+    _defineProperty(window, '__DRAIN_KEY__', {
         value: function() {
             var result = _stringify({ e: buf.slice(0), d: dropped });
             buf.length = 0;
@@ -65,19 +64,12 @@
     }
 
     // ==================== toString Spoofing ====================
-    // WeakMap: wrapped fn -> spoofed toString result
-    var origToString = Function.prototype.toString;
-    var spoofMap = new _WeakMap();
-
-    // Override Function.prototype.toString globally
-    Function.prototype.toString = function() {
-        var s = spoofMap.get(this);
-        return s !== undefined ? s : origToString.call(this);
-    };
-    spoofMap.set(Function.prototype.toString, 'function toString() { [native code] }');
-
+    // Per-instance toString shadowing — leaves Function.prototype.toString untouched.
     function spoofToString(fn, nativeString) {
-        spoofMap.set(fn, nativeString);
+        _defineProperty(fn, 'toString', {
+            value: function() { return nativeString; },
+            writable: true, configurable: true, enumerable: false
+        });
     }
 
     // ==================== Wrapping Strategies ====================
@@ -93,12 +85,13 @@
             if (!desc.configurable) return;
 
             var originalGet = desc.get;
-            var originalToStr = origToString.call(originalGet);
+            var originalToStr = Function.prototype.toString.call(originalGet);
 
             var newGet = function() {
                 log(apiName);
                 return originalGet.call(this);
             };
+            try { _defineProperty(newGet, 'name', { value: 'get ' + prop, configurable: true }); } catch(e) {}
             spoofToString(newGet, originalToStr);
 
             _defineProperty(obj, prop, {
