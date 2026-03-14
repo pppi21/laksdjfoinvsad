@@ -1,6 +1,7 @@
 package org.nodriver4j.services.imap;
 
 import jakarta.mail.*;
+import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMultipart;
 import jakarta.mail.search.*;
 
@@ -9,9 +10,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Semaphore;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
@@ -23,10 +25,8 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  * <h2>Thread Safety</h2>
  * <p>A single {@code GmailClient} instance can be safely shared across multiple
  * threads. Connection lifecycle methods ({@link #connect()}, {@link #disconnect()})
- * acquire an exclusive write lock, while {@link #fetchMessages} acquires a shared
- * read lock — allowing multiple concurrent fetches against the same IMAP Store.
- * A {@link Semaphore} additionally caps the number of concurrent folder
- * open/search/close cycles to avoid triggering Gmail's IMAP rate limits.</p>
+ * acquire an exclusive write lock, while message reads use a shared read lock
+ * or a lock-free volatile snapshot.</p>
  *
  * <h2>Shared Instances (Connection Pooling)</h2>
  * <p>Use {@link #shared(String, String)} to obtain a reference-counted instance
@@ -35,48 +35,14 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  * underlying IMAP connection. Call {@link #release()} (or {@link #close()}) when
  * finished — the connection is closed automatically when the last consumer releases.</p>
  *
- * <h2>Batch Fetching (Shared Instances)</h2>
- * <p>Shared instances automatically batch IMAP operations. Instead of each caller
- * executing its own folder open/search/close cycle, one thread performs a broad
- * fetch against {@code [Gmail]/All Mail} and caches the results with a short TTL.
- * Subsequent callers within the TTL window filter the cached results in-memory
- * using their own criteria — collapsing N IMAP operations per poll cycle into 1.</p>
- *
- * <h2>Standalone Instances</h2>
- * <p>The public constructor creates a standalone instance that is not pooled and
- * does not use batch caching. Each {@link #fetchMessages} call executes a direct
- * IMAP operation against the requested folder. Suitable for testing and one-off use.</p>
- *
- * <h2>Usage Example (Shared)</h2>
- * <pre>{@code
- * GmailClient client = GmailClient.shared("catchall@gmail.com", "app-password");
- * try {
- *     EmailSearchCriteria criteria = EmailSearchCriteria.builder()
- *         .subject("Welcome")
- *         .recipient("user@gmail.com")
- *         .since(Instant.now().minusSeconds(60))
- *         .build();
- *
- *     List<EmailMessage> messages = client.fetchMessages("INBOX", criteria);
- * } finally {
- *     client.release();
- * }
- * }</pre>
- *
- * <h2>Usage Example (Standalone)</h2>
- * <pre>{@code
- * try (GmailClient client = new GmailClient("user@gmail.com", "catchall@gmail.com", "app-password")) {
- *     client.connect();
- *     List<EmailMessage> messages = client.fetchMessages("INBOX", criteria);
- * }
- * }</pre>
- *
- * <h2>Sender Filtering Modes</h2>
- * <ul>
- *   <li><strong>Exact match:</strong> {@code senderExact("noreply@uber.com")} — matches exactly</li>
- *   <li><strong>Domain match:</strong> {@code senderDomain("icloud.com")} — matches *@icloud.com</li>
- *   <li><strong>Domain contains:</strong> {@code senderDomainContains("icloud")} — matches *@*.icloud.* (subdomains)</li>
- * </ul>
+ * <h2>Background Polling (Shared Instances)</h2>
+ * <p>Shared instances use a background poller thread that fetches from INBOX every
+ * 2 seconds. Extractors register their monitoring start time via
+ * {@link #registerSinceTime(Object, Instant)}, and the poller fetches all emails
+ * since the earliest registered time. {@link #fetchMessages} on shared instances
+ * performs an instant in-memory filter on the latest polled snapshot — no IMAP
+ * latency in the critical path. This design ensures at most one IMAP operation
+ * every 2 seconds per Gmail account, regardless of how many tasks are running.</p>
  *
  * @see EmailSearchCriteria
  * @see EmailMessage
@@ -89,25 +55,11 @@ public class GmailClient implements AutoCloseable {
     private static final int GMAIL_IMAP_PORT = 993;
 
     /**
-     * Maximum number of concurrent folder open/search/close cycles allowed
-     * per GmailClient instance. Gmail caps IMAP connections at 15 per account;
-     * this limits concurrent folder operations well below that threshold to
-     * avoid triggering undocumented command-rate throttling.
+     * How often the background poller fetches from INBOX (shared instances only).
+     * Kept short to ensure near-real-time email detection while guaranteeing
+     * only one IMAP operation per interval per Gmail account.
      */
-    private static final int MAX_CONCURRENT_FETCHES = 7;
-
-    /**
-     * The Gmail folder that contains all messages across all labels.
-     * Used by shared instances for broad cache fetches.
-     */
-    private static final String ALL_MAIL_FOLDER = "[Gmail]/All Mail";
-
-    /**
-     * How long cached fetch results remain valid before a refresh is needed.
-     * Kept short to ensure near-real-time email detection while still
-     * collapsing concurrent IMAP operations into one.
-     */
-    private static final Duration CACHE_TTL = Duration.ofSeconds(3);
+    private static final Duration POLL_INTERVAL = Duration.ofSeconds(2);
 
     // ==================== Shared Instance Pool ====================
 
@@ -133,7 +85,7 @@ public class GmailClient implements AutoCloseable {
     private final String catchallEmail;
     private final String appPassword;
 
-    /** Whether this instance was created via {@link #shared} (pooled + cached). */
+    /** Whether this instance was created via {@link #shared} (pooled + polled). */
     private final boolean isShared;
 
     /** Cache key used for {@link #sharedInstances} lookup. Null for standalone instances. */
@@ -145,34 +97,40 @@ public class GmailClient implements AutoCloseable {
     /**
      * Guards all access to {@link #session}, {@link #store}, and {@link #connected}.
      *
-     * <p>Read lock: held during {@link #fetchMessages} and {@link #isConnected()} —
-     * multiple threads can fetch concurrently.</p>
-     * <p>Write lock: held during {@link #connect()} and {@link #disconnect()} —
-     * exclusive access while mutating connection state.</p>
+     * <p>Read lock: held during IMAP fetch operations (poller thread, standalone fetches).</p>
+     * <p>Write lock: held during {@link #connect()}, {@link #disconnect()}, and
+     * {@link #tryReconnect()} — exclusive access while mutating connection state.</p>
      */
     private final ReentrantReadWriteLock connectionLock = new ReentrantReadWriteLock();
 
-    /**
-     * Limits the number of threads that can execute an IMAP folder
-     * open/search/close cycle at the same time. Layered on top of the
-     * read lock — a thread must hold both the read lock AND a semaphore
-     * permit before touching a folder.
-     */
-    private final Semaphore fetchSemaphore = new Semaphore(MAX_CONCURRENT_FETCHES, true);
-
-    // --- Batch fetch cache (shared instances only) ---
+    // --- Background Poller (shared instances only) ---
 
     /**
-     * Most recent broad fetch result. Read via volatile for fast-path cache
-     * hits without locking. Written under {@link #cacheRefreshLock}.
+     * Background poller that fetches from INBOX every {@link #POLL_INTERVAL}.
+     * Created lazily on first extractor registration, shut down when the last
+     * extractor unregisters or the instance disconnects.
      */
-    private volatile CachedFetch cachedFetch;
+    private ScheduledExecutorService pollerExecutor;
 
     /**
-     * Serializes cache refresh operations so that only one thread performs
-     * the broad IMAP fetch while others wait and then read the fresh cache.
+     * Latest polled messages snapshot. Written by the poller thread, read by
+     * any extractor thread. Volatile for safe publication without locking.
+     * Always an immutable list ({@link List#copyOf}).
      */
-    private final ReentrantLock cacheRefreshLock = new ReentrantLock();
+    private volatile List<EmailMessage> polledMessages = List.of();
+
+    /**
+     * Registered monitoring start times, keyed by extractor identity. The poller
+     * uses the earliest value as its IMAP "since" parameter to ensure all
+     * extractors' time ranges are covered.
+     */
+    private final ConcurrentHashMap<Object, Instant> registeredSinceTimes = new ConcurrentHashMap<>();
+
+    /**
+     * Guards poller lifecycle transitions (start/stop) to prevent races between
+     * concurrent {@link #registerSinceTime} and {@link #unregisterSinceTime} calls.
+     */
+    private final Object pollerLifecycleLock = new Object();
 
     // --- IMAP connection state ---
 
@@ -185,7 +143,7 @@ public class GmailClient implements AutoCloseable {
     /**
      * Creates a new standalone GmailClient with the specified credentials.
      *
-     * <p>Standalone instances are not pooled and do not use batch caching.
+     * <p>Standalone instances are not pooled and do not use background polling.
      * Each {@link #fetchMessages} call executes a direct IMAP operation
      * against the requested folder.</p>
      *
@@ -244,9 +202,9 @@ public class GmailClient implements AutoCloseable {
      * when finished. The underlying IMAP connection is closed automatically when the
      * last consumer releases.</p>
      *
-     * <p>Shared instances use batch caching: {@link #fetchMessages} fetches broadly
-     * from {@code [Gmail]/All Mail} and caches results with a short TTL. Concurrent
-     * callers filter the cached results in-memory, collapsing N IMAP operations into 1.</p>
+     * <p>Shared instances use a background poller: INBOX is fetched every 2 seconds,
+     * and {@link #fetchMessages} performs an instant in-memory filter on the latest
+     * results.</p>
      *
      * @param catchallEmail the catchall email for IMAP authentication
      * @param appPassword   the app password
@@ -325,10 +283,25 @@ public class GmailClient implements AutoCloseable {
     public void connect() throws GmailClientException {
         connectionLock.writeLock().lock();
         try {
-            if (connected) {
-                return;
-            }
+            connectInternal();
+        } finally {
+            connectionLock.writeLock().unlock();
+        }
+    }
 
+    /**
+     * Establishes the IMAP connection. Must be called while holding the write lock.
+     *
+     * <p>Idempotent — returns immediately if already connected.</p>
+     *
+     * @throws GmailClientException if connection or authentication fails
+     */
+    private void connectInternal() throws GmailClientException {
+        if (connected) {
+            return;
+        }
+
+        try {
             Properties props = new Properties();
             props.put("mail.store.protocol", "imaps");
             props.put("mail.imaps.host", GMAIL_IMAP_HOST);
@@ -346,18 +319,22 @@ public class GmailClient implements AutoCloseable {
             throw new GmailClientException("Authentication failed. Check email and app password.", e);
         } catch (MessagingException e) {
             throw new GmailClientException("Failed to connect to Gmail IMAP server.", e);
-        } finally {
-            connectionLock.writeLock().unlock();
         }
     }
 
     /**
      * Disconnects from the Gmail IMAP server.
      *
-     * <p>Acquires the write lock to ensure no fetches are in progress
-     * when the store is closed. Clears the batch cache. Safe to call multiple times.</p>
+     * <p>Stops the background poller (if running) before closing the IMAP store.
+     * Acquires the write lock to ensure no fetches are in progress when the store
+     * is closed. Safe to call multiple times.</p>
      */
     public void disconnect() {
+        // Stop poller before closing connection (lock ordering: pollerLifecycleLock → connectionLock)
+        synchronized (pollerLifecycleLock) {
+            stopPoller();
+        }
+
         connectionLock.writeLock().lock();
         try {
             if (!connected || store == null) {
@@ -372,7 +349,6 @@ public class GmailClient implements AutoCloseable {
                 connected = false;
                 store = null;
                 session = null;
-                cachedFetch = null;
             }
         } finally {
             connectionLock.writeLock().unlock();
@@ -395,19 +371,174 @@ public class GmailClient implements AutoCloseable {
         }
     }
 
+    // ==================== Background Poller (Shared Instances) ====================
+
+    /**
+     * Registers an extractor's monitoring start time with the background poller.
+     *
+     * <p>The poller uses the earliest registered time as its IMAP "since"
+     * parameter, ensuring all extractors' time ranges are covered. If this
+     * is the first registration, the background poller is started.</p>
+     *
+     * @param key   the extractor identity (typically {@code this} from the caller)
+     * @param since the extractor's monitoring start time
+     * @throws IllegalStateException if called on a standalone instance
+     */
+    public void registerSinceTime(Object key, Instant since) {
+        if (!isShared) {
+            throw new IllegalStateException("registerSinceTime() is only for shared instances");
+        }
+
+        registeredSinceTimes.put(key, since);
+
+        synchronized (pollerLifecycleLock) {
+            if (pollerExecutor == null || pollerExecutor.isShutdown()) {
+                startPoller();
+            }
+        }
+    }
+
+    /**
+     * Unregisters an extractor's monitoring start time.
+     *
+     * <p>If no extractors remain registered, the background poller is stopped
+     * to avoid unnecessary IMAP traffic.</p>
+     *
+     * @param key the extractor identity previously passed to {@link #registerSinceTime}
+     */
+    public void unregisterSinceTime(Object key) {
+        if (!isShared) return;
+
+        registeredSinceTimes.remove(key);
+
+        synchronized (pollerLifecycleLock) {
+            if (registeredSinceTimes.isEmpty() && pollerExecutor != null
+                    && !pollerExecutor.isShutdown()) {
+                stopPoller();
+            }
+        }
+    }
+
+    /**
+     * Starts the background IMAP poller thread.
+     *
+     * <p>Must be called while holding {@link #pollerLifecycleLock}.</p>
+     */
+    private void startPoller() {
+        pollerExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "GmailPoller-" + catchallEmail);
+            t.setDaemon(true);
+            return t;
+        });
+
+        pollerExecutor.scheduleAtFixedRate(this::pollInbox,
+                0, POLL_INTERVAL.toMillis(), TimeUnit.MILLISECONDS);
+
+        System.err.println("[GmailPoller] Started for " + catchallEmail);
+    }
+
+    /**
+     * Stops the background IMAP poller thread.
+     *
+     * <p>Must be called while holding {@link #pollerLifecycleLock}.</p>
+     */
+    private void stopPoller() {
+        if (pollerExecutor != null && !pollerExecutor.isShutdown()) {
+            pollerExecutor.shutdownNow();
+            System.err.println("[GmailPoller] Stopped for " + catchallEmail);
+        }
+        pollerExecutor = null;
+        polledMessages = List.of();
+    }
+
+    /**
+     * Single poller iteration. Called every {@link #POLL_INTERVAL} by the scheduler.
+     *
+     * <p>Fetches all recent emails from INBOX using the earliest registered "since"
+     * time, then publishes the results to the volatile {@link #polledMessages} field.
+     * All exceptions are caught to prevent the scheduler from dying.</p>
+     */
+    private void pollInbox() {
+        try {
+            Instant broadSince = registeredSinceTimes.values().stream()
+                    .min(Instant::compareTo)
+                    .orElse(null);
+
+            if (broadSince == null) return;
+
+            EmailSearchCriteria broadCriteria = EmailSearchCriteria.builder()
+                    .since(broadSince)
+                    .build();
+
+            boolean needsReconnect = false;
+
+            connectionLock.readLock().lock();
+            try {
+                if (!connected || store == null || !store.isConnected()) {
+                    System.err.println("[GmailPoller] Connection lost, will attempt reconnect");
+                    needsReconnect = true;
+                } else {
+                    List<EmailMessage> messages = executeFetch("INBOX", broadCriteria);
+                    this.polledMessages = List.copyOf(messages);
+                    System.err.println("[GmailPoller] Polled INBOX: " + messages.size()
+                            + " messages (since=" + broadSince + ")");
+                }
+            } catch (GmailClientException e) {
+                System.err.println("[GmailPoller] Fetch failed: " + e.getMessage());
+                needsReconnect = true;
+            } finally {
+                connectionLock.readLock().unlock();
+            }
+
+            if (needsReconnect) {
+                tryReconnect();
+            }
+        } catch (Exception e) {
+            System.err.println("[GmailPoller] Unexpected error: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Attempts to re-establish the IMAP connection after a failure.
+     *
+     * <p>Closes the stale store and reconnects. Called by the poller thread
+     * when a disconnection is detected.</p>
+     */
+    private void tryReconnect() {
+        connectionLock.writeLock().lock();
+        try {
+            if (store != null) {
+                try {
+                    store.close();
+                } catch (MessagingException ignored) {}
+            }
+            connected = false;
+            store = null;
+            session = null;
+
+            connectInternal();
+            System.err.println("[GmailPoller] Reconnected successfully");
+
+        } catch (GmailClientException e) {
+            System.err.println("[GmailPoller] Reconnect failed: " + e.getMessage());
+        } finally {
+            connectionLock.writeLock().unlock();
+        }
+    }
+
     // ==================== Message Fetching ====================
 
     /**
      * Fetches messages matching the specified criteria.
      *
-     * <p><strong>Shared instances:</strong> Uses batch caching. A broad fetch against
-     * {@code [Gmail]/All Mail} is performed once and cached with a short TTL
-     * ({@value #CACHE_TTL}). Concurrent callers within the TTL window filter the
-     * cached results in-memory using their own criteria — no IMAP operation is
-     * executed. The {@code folderName} parameter is ignored (all mail is searched).</p>
+     * <p><strong>Shared instances:</strong> Returns an in-memory filtered view of
+     * the latest background poll results. No IMAP operation is performed — the
+     * result is instant. The {@code folderName} parameter is ignored (the poller
+     * always fetches from INBOX).</p>
      *
      * <p><strong>Standalone instances:</strong> Executes a direct IMAP fetch against
-     * the specified folder. Acquires the read lock and a semaphore permit.</p>
+     * the specified folder. Acquires the read lock.</p>
      *
      * @param folderName the folder to search (ignored for shared instances)
      * @param criteria   the search criteria (can be null for all messages)
@@ -418,31 +549,26 @@ public class GmailClient implements AutoCloseable {
     public List<EmailMessage> fetchMessages(String folderName, EmailSearchCriteria criteria)
             throws GmailClientException {
 
+        if (isShared) {
+            // In-memory filter on the latest polled snapshot (instant, no IMAP, no locks)
+            List<EmailMessage> snapshot = this.polledMessages;
+            List<EmailMessage> filtered = filterMessages(snapshot, criteria);
+            System.err.println("[GmailClient] fetchMessages (shared): snapshot=" + snapshot.size()
+                    + ", afterFilter=" + filtered.size()
+                    + ", criteria=" + criteria);
+            return filtered;
+        }
+
+        // Standalone: direct IMAP fetch against the requested folder
         connectionLock.readLock().lock();
         try {
             ensureConnected();
 
-            if (isShared) {
-                return fetchFromCacheOrRefresh(criteria);
-            }
-
-            // Standalone: direct IMAP fetch against the requested folder
             if (folderName == null || folderName.isBlank()) {
                 folderName = "INBOX";
             }
 
-            try {
-                fetchSemaphore.acquire();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new GmailClientException("Interrupted while waiting for fetch permit", e);
-            }
-
-            try {
-                return executeFetch(folderName, criteria);
-            } finally {
-                fetchSemaphore.release();
-            }
+            return executeFetch(folderName, criteria);
 
         } finally {
             connectionLock.readLock().unlock();
@@ -460,92 +586,20 @@ public class GmailClient implements AutoCloseable {
         return fetchMessages("INBOX", criteria);
     }
 
-    // ==================== Batch Cache (Shared Instances) ====================
+    // ==================== In-Memory Filtering ====================
 
     /**
-     * Attempts to serve results from the batch cache, refreshing if stale.
-     *
-     * <p>Uses double-checked locking: the fast path reads the volatile
-     * {@link #cachedFetch} without any lock. On a cache miss, the
-     * {@link #cacheRefreshLock} serializes refresh attempts so only one
-     * thread performs the broad IMAP fetch while others wait and then
-     * read the fresh cache.</p>
-     *
-     * <p>Must be called while holding the connection read lock.</p>
-     *
-     * @param criteria the caller's search criteria
-     * @return filtered list of matching messages, newest first
-     * @throws GmailClientException if the IMAP refresh fails
-     */
-    private List<EmailMessage> fetchFromCacheOrRefresh(EmailSearchCriteria criteria)
-            throws GmailClientException {
-
-        Instant callerSince = (criteria != null) ? criteria.since : null;
-
-        // Fast path: volatile read, no locking
-        CachedFetch cached = this.cachedFetch;
-        if (cached != null && cached.isFresh() && cached.covers(callerSince)) {
-            return filterCached(cached.messages, criteria);
-        }
-
-        // Slow path: serialize cache refreshes
-        cacheRefreshLock.lock();
-        try {
-            // Double-check after acquiring lock — another thread may have refreshed
-            cached = this.cachedFetch;
-            if (cached != null && cached.isFresh() && cached.covers(callerSince)) {
-                return filterCached(cached.messages, criteria);
-            }
-
-            // Determine the broadest since timestamp to maximize cache coverage.
-            // If the stale cache had a broader (earlier) since, preserve it so
-            // callers with older since values still get cache hits.
-            Instant broadSince = callerSince;
-            if (cached != null && cached.since != null
-                    && broadSince != null && cached.since.isBefore(broadSince)) {
-                broadSince = cached.since;
-            }
-
-            // Execute the broad IMAP fetch (requires semaphore permit)
-            try {
-                fetchSemaphore.acquire();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new GmailClientException("Interrupted while waiting for fetch permit", e);
-            }
-
-            try {
-                EmailSearchCriteria broadCriteria = broadSince != null
-                        ? EmailSearchCriteria.builder().since(broadSince).build()
-                        : null;
-
-                List<EmailMessage> allMessages = executeFetch(ALL_MAIL_FOLDER, broadCriteria);
-                System.err.println("[GmailClient] Broad cache fetch from " + ALL_MAIL_FOLDER
-                        + ": " + allMessages.size() + " messages (since=" + broadSince + ")");
-                this.cachedFetch = new CachedFetch(List.copyOf(allMessages), broadSince, Instant.now());
-            } finally {
-                fetchSemaphore.release();
-            }
-
-            return filterCached(this.cachedFetch.messages, criteria);
-
-        } finally {
-            cacheRefreshLock.unlock();
-        }
-    }
-
-    /**
-     * Filters a cached message list using the caller's full criteria.
+     * Filters a message list using the caller's full criteria.
      *
      * <p>Applies all filters in-memory: subject (substring), recipient (exact),
-     * sender (exact/domain/domain-contains), and timestamp. This mirrors the
-     * combined behavior of IMAP search terms and post-fetch filtering.</p>
+     * sender (exact/domain/domain-contains), and timestamp. Returns a new list
+     * containing only matching messages, sorted newest first.</p>
      *
-     * @param messages the cached messages to filter
+     * @param messages the messages to filter
      * @param criteria the caller's criteria (may be null for no filtering)
      * @return a new list containing only matching messages, newest first
      */
-    private List<EmailMessage> filterCached(List<EmailMessage> messages, EmailSearchCriteria criteria) {
+    private List<EmailMessage> filterMessages(List<EmailMessage> messages, EmailSearchCriteria criteria) {
         if (criteria == null) {
             List<EmailMessage> copy = new ArrayList<>(messages);
             copy.sort((a, b) -> b.receivedDate().compareTo(a.receivedDate()));
@@ -553,76 +607,40 @@ public class GmailClient implements AutoCloseable {
         }
 
         List<EmailMessage> results = new ArrayList<>();
-        int subjectFail = 0, senderFail = 0, recipientFail = 0, timestampFail = 0;
 
         for (EmailMessage message : messages) {
-            if (!matchesSubjectCriteria(message, criteria)) { subjectFail++; continue; }
-            if (!matchesSenderCriteria(message, criteria))  { senderFail++;  continue; }
-            if (!matchesRecipientCriteria(message, criteria)){ recipientFail++; continue; }
-            if (!matchesTimestampCriteria(message, criteria)){ timestampFail++; continue; }
+            if (!matchesSubjectCriteria(message, criteria)) continue;
+            if (!matchesSenderCriteria(message, criteria)) continue;
+            if (!matchesRecipientCriteria(message, criteria)) continue;
+            if (!matchesTimestampCriteria(message, criteria)) continue;
             results.add(message);
-        }
-
-        if (!messages.isEmpty() && results.isEmpty()) {
-            System.err.println("[GmailClient] filterCached: " + messages.size()
-                    + " messages → 0 results. Eliminated by — subject: " + subjectFail
-                    + ", sender: " + senderFail + ", recipient: " + recipientFail
-                    + ", timestamp: " + timestampFail);
-            System.err.println("[GmailClient] Criteria: " + criteria);
-            EmailMessage sample = messages.getFirst();
-            System.err.println("[GmailClient] Sample msg — subject=\"" + sample.subject()
-                    + "\", sender=\"" + sample.sender()
-                    + "\", recipient=\"" + sample.recipient()
-                    + "\", received=" + sample.receivedDate());
         }
 
         results.sort((a, b) -> b.receivedDate().compareTo(a.receivedDate()));
         return results;
     }
 
-    /**
-     * Snapshot of a broad fetch result with a time-to-live.
-     *
-     * @param messages  the fetched messages (immutable copy)
-     * @param since     the since timestamp used for the broad fetch (may be null)
-     * @param fetchedAt when this cache entry was created
-     */
-    private record CachedFetch(List<EmailMessage> messages, Instant since, Instant fetchedAt) {
-
-        /**
-         * Returns true if this cache entry is still within the TTL window.
-         */
-        boolean isFresh() {
-            return Duration.between(fetchedAt, Instant.now()).compareTo(CACHE_TTL) < 0;
-        }
-
-        /**
-         * Returns true if this cache entry covers the requested time range.
-         *
-         * <p>A cache with {@code since=T1} covers a request for {@code since=T2}
-         * if {@code T1 ≤ T2} (the cache fetched at least as far back). A null
-         * caller since (no time restriction) is only covered if the cache also
-         * has no time restriction.</p>
-         *
-         * @param callerSince the caller's since timestamp, or null
-         */
-        boolean covers(Instant callerSince) {
-            if (callerSince == null) {
-                return since == null;
-            }
-            if (since == null) {
-                return true;
-            }
-            return !since.isAfter(callerSince);
-        }
-    }
-
     // ==================== Direct IMAP Fetch ====================
 
     /**
-     * Executes the actual IMAP folder open/search/close cycle.
+     * Executes the actual IMAP folder open/search/close cycle using a two-phase
+     * approach to minimize body downloads.
      *
-     * <p>Called only while holding both the read lock and a semaphore permit.</p>
+     * <p><strong>Phase 1 (envelope):</strong> Runs the IMAP SEARCH, then prefetches
+     * only envelope data (subject, sender, recipient, date) for all matching messages
+     * in a single batch round-trip. Filters on header data to produce a small
+     * candidate set.</p>
+     *
+     * <p><strong>Phase 2 (body):</strong> Downloads full message content only for
+     * candidates that passed the header filter.</p>
+     *
+     * <p>This is critical for the background poller, whose broad criteria (only a
+     * {@code since} date at day granularity) may match dozens of today's emails.
+     * Without envelope pre-filtering, every one of those bodies would be downloaded
+     * over IMAP — potentially blocking the poller thread for longer than its 2-second
+     * cycle.</p>
+     *
+     * <p>Must be called while holding the connection read lock.</p>
      *
      * @param folderName the folder to search
      * @param criteria   the search criteria (may be null)
@@ -646,17 +664,51 @@ public class GmailClient implements AutoCloseable {
                 messages = folder.getMessages();
             }
 
+            if (messages.length == 0) {
+                return results;
+            }
+
+            // ── Phase 1: Envelope prefetch + header-only filter ──
+            // Batch-fetch envelope data (subject, from, to, date) in one IMAP
+            // round-trip. Without this, each getSubject()/getFrom() call triggers
+            // an individual IMAP FETCH command.
+            FetchProfile fp = new FetchProfile();
+            fp.add(FetchProfile.Item.ENVELOPE);
+            folder.fetch(messages, fp);
+
+            // Filter using only envelope data — no body download.
+            // This narrows the candidate set before committing to expensive body
+            // downloads. The key filter is timestamp: IMAP's ReceivedDateTerm
+            // only works at day granularity, but our criteria.since is second-
+            // precise. For a user who received 50 emails today, this typically
+            // narrows to just 1-3 recent ones.
+            List<Message> candidates = new ArrayList<>();
             for (Message message : messages) {
                 try {
-                    EmailMessage emailMessage = convertMessage(message);
-
-                    if (matchesSenderCriteria(emailMessage, criteria)
-                            && matchesRecipientCriteria(emailMessage, criteria)
-                            && matchesTimestampCriteria(emailMessage, criteria)) {
-                        results.add(emailMessage);
+                    EmailMessage headerOnly = convertHeaders(message);
+                    if (matchesSubjectCriteria(headerOnly, criteria)
+                            && matchesSenderCriteria(headerOnly, criteria)
+                            && matchesRecipientCriteria(headerOnly, criteria)
+                            && matchesTimestampCriteria(headerOnly, criteria)) {
+                        candidates.add(message);
                     }
+                } catch (MessagingException e) {
+                    System.err.println("[GmailClient] Failed to read message headers: "
+                            + e.getMessage());
+                }
+            }
+
+            System.err.println("[GmailClient] executeFetch: " + messages.length
+                    + " from IMAP search, " + candidates.size()
+                    + " passed header filter");
+
+            // ── Phase 2: Body download for candidates only ──
+            for (Message message : candidates) {
+                try {
+                    results.add(convertMessage(message));
                 } catch (Exception e) {
-                    System.err.println("[GmailClient] Failed to parse message: " + e.getMessage());
+                    System.err.println("[GmailClient] Failed to parse message body: "
+                            + e.getMessage());
                 }
             }
 
@@ -747,7 +799,7 @@ public class GmailClient implements AutoCloseable {
      * Checks if an email matches the subject criteria (case-insensitive substring match).
      *
      * <p>Mirrors the behavior of IMAP's {@link SubjectTerm}. Used by
-     * {@link #filterCached} where the broad fetch did not apply a subject filter.</p>
+     * {@link #filterMessages} where the broad fetch did not apply a subject filter.</p>
      */
     private boolean matchesSubjectCriteria(EmailMessage message, EmailSearchCriteria criteria) {
         if (criteria == null || criteria.subject == null || criteria.subject.isBlank()) {
@@ -769,7 +821,6 @@ public class GmailClient implements AutoCloseable {
         }
 
         String recipient = message.recipient();
-        System.out.println(recipient);
         if (recipient == null) {
             return false;
         }
@@ -783,6 +834,14 @@ public class GmailClient implements AutoCloseable {
      */
     private boolean matchesSenderCriteria(EmailMessage message, EmailSearchCriteria criteria) {
         if (criteria == null) {
+            return true;
+        }
+
+        // If criteria has no sender requirements, any sender (including null) matches
+        boolean hasSenderCriteria = (criteria.senderExact != null && !criteria.senderExact.isBlank())
+                || (criteria.senderDomain != null && !criteria.senderDomain.isBlank())
+                || (criteria.senderDomainContains != null && !criteria.senderDomainContains.isBlank());
+        if (!hasSenderCriteria) {
             return true;
         }
 
@@ -836,19 +895,59 @@ public class GmailClient implements AutoCloseable {
     // ==================== Message Conversion ====================
 
     /**
-     * Converts a JavaMail Message to our EmailMessage record.
+     * Extracts only envelope (header) data from a JavaMail Message — no body download.
+     *
+     * <p>Returns an {@link EmailMessage} with null {@code htmlBody} and {@code textBody}.
+     * All header fields ({@code subject}, {@code recipient}, {@code sender},
+     * {@code receivedDate}) are populated from the IMAP envelope, which is available
+     * without downloading the message body when a {@link FetchProfile} with
+     * {@link FetchProfile.Item#ENVELOPE} has been applied.</p>
+     *
+     * <p>Used by {@link #executeFetch} to pre-filter messages on header data before
+     * committing to the expensive body download.</p>
+     *
+     * @param message the raw IMAP message (envelope must be prefetched)
+     * @return an EmailMessage with header fields only (null bodies)
+     * @throws MessagingException if header extraction fails
+     */
+    private EmailMessage convertHeaders(Message message) throws MessagingException {
+        String subject = message.getSubject();
+
+        Address[] toAddress = message.getRecipients(Message.RecipientType.TO);
+        String recipient = (toAddress != null && toAddress.length > 0
+                && toAddress[0] instanceof InternetAddress ia) ? ia.getAddress() : null;
+
+        Address[] fromAddresses = message.getFrom();
+        String sender = (fromAddresses != null && fromAddresses.length > 0
+                && fromAddresses[0] instanceof InternetAddress ia) ? ia.getAddress() : null;
+
+        Date receivedDate = message.getReceivedDate();
+        Instant receivedInstant = (receivedDate != null) ? receivedDate.toInstant() : Instant.now();
+
+        return new EmailMessage(subject, recipient, sender, null, null, receivedInstant);
+    }
+
+    /**
+     * Converts a JavaMail Message to our EmailMessage record, including the full body.
+     *
+     * <p>Uses {@link InternetAddress#getAddress()} to extract clean email addresses
+     * from recipient and sender fields, handling all RFC 2822 formats including
+     * display names with angle brackets (e.g., "Hide My Email &lt;user@icloud.com&gt;").</p>
+     *
+     * <p><strong>Performance note:</strong> This method calls {@link Message#getContent()},
+     * which triggers a full body download over IMAP. Callers should pre-filter using
+     * {@link #convertHeaders} to avoid downloading bodies for non-matching messages.</p>
      */
     private EmailMessage convertMessage(Message message) throws MessagingException, IOException {
         String subject = message.getSubject();
 
         Address[] toAddress = message.getRecipients(Message.RecipientType.TO);
-        String recipient = extractBetweenBrackets(
-                (toAddress != null && toAddress.length > 0) ? toAddress[0].toString() : null);
+        String recipient = (toAddress != null && toAddress.length > 0
+                && toAddress[0] instanceof InternetAddress ia) ? ia.getAddress() : null;
 
         Address[] fromAddresses = message.getFrom();
-        String sender = (fromAddresses != null && fromAddresses.length > 0)
-                ? extractBetweenBrackets(fromAddresses[0].toString())
-                : null;
+        String sender = (fromAddresses != null && fromAddresses.length > 0
+                && fromAddresses[0] instanceof InternetAddress ia) ? ia.getAddress() : null;
 
         Date receivedDate = message.getReceivedDate();
         Instant receivedInstant = (receivedDate != null) ? receivedDate.toInstant() : Instant.now();
@@ -909,27 +1008,6 @@ public class GmailClient implements AutoCloseable {
     private record BodyContent(String html, String text) {}
 
     // ==================== Utility Methods ====================
-
-    /**
-     * Extracts the email address from between angle brackets.
-     *
-     * <p>Given {@code "John Doe <john@example.com>"}, returns {@code "john@example.com"}.
-     * If no brackets are found, returns an empty string.</p>
-     */
-    private static String extractBetweenBrackets(String input) {
-        if (input == null) {
-            return "";
-        }
-
-        int start = input.indexOf('<');
-        int end = input.indexOf('>');
-
-        if (start != -1 && end != -1 && start < end) {
-            return input.substring(start + 1, end);
-        }
-
-        return "";
-    }
 
     /**
      * Ensures the client is connected, throwing if not.
@@ -1018,7 +1096,7 @@ public class GmailClient implements AutoCloseable {
      *
      * @param subject      the email subject line
      * @param recipient    the recipient address
-     * @param sender       the sender address (may include display name)
+     * @param sender       the sender address
      * @param htmlBody     the HTML body content, or null if not available
      * @param textBody     the plain text body content, or null if not available
      * @param receivedDate when the email was received

@@ -191,7 +191,11 @@ public class UberGen implements AutomationScript {
                 }
                 page.sleep(1500);
                 page.click(UE_RESULT_BUTTON);
+                waitForLoadEvent(10000);
                 page.waitForSelector(SIGN_IN_BUTTON, 60000);
+                page.click(SIGN_IN_BUTTON);
+                waitForLoadEvent(20000);
+                page.waitForSelector(EMAIL_TEXT, 20000);
                 return;
 
             } catch (TimeoutException | InterruptedException e) {
@@ -210,9 +214,6 @@ public class UberGen implements AutomationScript {
                 int signInSeed = (int) (Math.random() * 100);
                 if (attempt > 1) page.reload(true, 30000);
                 // ArkoseSolver.installEnforcementHook(page);
-                page.click(SIGN_IN_BUTTON);
-                page.waitForLoadEvent(20000);
-                page.sleep(2000);
                 fillFormField(EMAIL_TEXT, profile.emailAddress(), !Character.isDigit(profile.emailAddress().charAt(0)));
                 if (signInSeed % 3 == 0) {
                     page.pressKey("Enter", false, false, false);
@@ -244,7 +245,7 @@ public class UberGen implements AutomationScript {
             for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
                 try {
                     if (attempt > 1 || !page.exists(EMAIL_OTP_TEXT)) {
-                        page.reload(true, 30000);
+                        page.reload(false, 30000);
                         page.click(EMAIL_OTP_RESEND_BUTTON);
                         page.sleep(2500);
                         page.click(EMAIL_OTP_RESEND_CONFIRM_BUTTON);

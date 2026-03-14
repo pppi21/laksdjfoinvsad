@@ -41,7 +41,7 @@ public abstract class EmailPollingBase<T> implements AutoCloseable {
     // ==================== Timing Defaults ====================
 
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(60);
-    private static final Duration DEFAULT_POLL_INTERVAL = Duration.ofSeconds(5);
+    private static final Duration DEFAULT_POLL_INTERVAL = Duration.ofSeconds(2);
 
     // ==================== Fields ====================
 
@@ -55,6 +55,12 @@ public abstract class EmailPollingBase<T> implements AutoCloseable {
      * released on {@link #close()}.
      */
     private GmailClient gmailClient;
+
+    /**
+     * The monitoring start time registered with the shared GmailClient poller.
+     * Stored so it can be unregistered on {@link #close()}.
+     */
+    private Instant registeredSinceTime;
 
     // ==================== Constructors ====================
 
@@ -170,11 +176,26 @@ public abstract class EmailPollingBase<T> implements AutoCloseable {
         ensureConnected();
 
         Instant monitoringStartTime = Instant.now().minusSeconds(2);
+
+        // Register our monitoring time with the shared poller so it fetches emails
+        // going back far enough to cover our window
+        if (gmailClient.isShared()) {
+            registeredSinceTime = monitoringStartTime;
+            gmailClient.registerSinceTime(this, monitoringStartTime);
+        }
+
         Instant deadline = Instant.now().plus(timeout);
 
         int pollCount = 0;
 
         while (Instant.now().isBefore(deadline)) {
+            // Cooperative cancellation: bail immediately if the task was stopped.
+            // Without this check, the interrupt is only consumed during sleep(),
+            // allowing the loop to spin through instant fetchMessages() calls.
+            if (Thread.currentThread().isInterrupted()) {
+                throw new RuntimeException("Interrupted while waiting for email");
+            }
+
             pollCount++;
 
             try {
@@ -216,17 +237,27 @@ public abstract class EmailPollingBase<T> implements AutoCloseable {
             return null;
         }
 
+        int afterTimeFilter = 0;
         for (EmailMessage message : messages) {
             if (message.receivedDate().isBefore(monitoringStartTime)) {
                 continue;
             }
+            afterTimeFilter++;
 
             T result = extractFromEmail(message);
             if (result != null) {
+                System.err.println("[" + extractorName() + "] Extracted result from email: "
+                        + "subject=\"" + message.subject()
+                        + "\", recipient=\"" + message.recipient()
+                        + "\", sender=\"" + message.sender()
+                        + "\", received=" + message.receivedDate());
                 return result;
             }
         }
 
+        System.err.println("[" + extractorName() + "] " + messages.size()
+                + " messages matched criteria, " + afterTimeFilter
+                + " passed time filter, but none yielded a result");
         return null;
     }
 
@@ -257,6 +288,11 @@ public abstract class EmailPollingBase<T> implements AutoCloseable {
     @Override
     public void close() {
         if (gmailClient != null) {
+            // Unregister from poller before releasing the shared reference
+            if (registeredSinceTime != null && gmailClient.isShared()) {
+                gmailClient.unregisterSinceTime(this);
+                registeredSinceTime = null;
+            }
             gmailClient.close();
             gmailClient = null;
         }

@@ -47,8 +47,10 @@ public class UberOtpExtractor extends EmailPollingBase<String> {
 
     // ==================== Uber Email Constants ====================
 
-    private static final String UBER_SUBJECT = "Welcome to Uber";
-    private static final String UBER_SENDER_DOMAIN = "uber.com";
+    // Uber uses multiple subject lines: "Welcome to Uber", "Your Uber account
+    // verification code", etc. We match the common substring "Uber" and rely on
+    // recipient filtering + OTP regex extraction to avoid false positives.
+    private static final String UBER_SUBJECT = "Uber";
 
     // ==================== OTP Extraction Patterns ====================
 
