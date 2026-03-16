@@ -8,6 +8,8 @@ A browser automation framework built from scratch in Java, paired with a custom-
 
 Note (3/5/26): This implementation is based on my fundemental misunderstanding of how rounding errors occur in the rendering pipeline. As of now this noise injection is easily detectable as artificial but I'm studying up and working on a fix.
 
+Note (3/16/26): I fixed this a couple weeks ago, now it applies similar deterministic noise to canvas methods like arc(), which is effective at changing the hashed output in a natural way, but doesn't change the hashed output of all getImageData() calls.
+
 Modern fingerprinting services (BrowserScan, CreepJS, FingerprintJS) hash the pixel output of canvas draw operations to identify browsers. The typical approach, adding random noise to every pixel, is trivially detected because it disrupts the visual coherence of the image.
 
 This implementation takes a fundamentally different approach: it identifies anti-aliased transition pixels (where neighboring pixels differ by a small amount) and applies ±1 sub-channel noise only to those edge regions. This makes the modifications visually imperceptible and statistically indistinguishable from natural rendering variance across GPUs:
