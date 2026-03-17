@@ -41,3 +41,4 @@ build/
 /src/main/resources/chrome/chrome-headless-shell-win64/
 /src/main/resources/chrome/chrome-win64/
 /.env
+/chromium-patches/src/0036-gonna-roll-this-back.patch
