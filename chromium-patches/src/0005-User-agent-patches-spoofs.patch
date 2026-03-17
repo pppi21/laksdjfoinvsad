@@ -1,7 +1,7 @@
 From 482b039b13d1a43eb5cce50e309146ee6aeb97a8 Mon Sep 17 00:00:00 2001
 From: Leo Rodarte <leorodarte07@gmail.com>
 Date: Mon, 23 Feb 2026 22:59:44 -0800
-Subject: [PATCH 05/32] User agent patches/spoofs
+Subject: [PATCH 05/37] User agent patches/spoofs
 
 ---
  third_party/blink/common/BUILD.gn             |   1 +

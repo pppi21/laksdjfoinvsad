@@ -2980,6 +2980,18 @@ public class Page {
         System.out.println("[Page] Screenshot saved to: " + outputPath);
     }
 
+    /**
+     * Scrolls an element into view, then takes a screenshot and saves
+     * it to the screenshots directory.
+     *
+     * @throws TimeoutException if screenshot capture times out or selector isn't found
+     * @throws IOException      if file cannot be written
+     */
+    public void screenshot(String selector) throws TimeoutException, IOException {
+        scrollIntoView(selector);
+        screenshot();
+    }
+
 
 
     /**

@@ -105,6 +105,7 @@ public final class ScriptRegistry {
         register("UberGen", "Uber Eats Account Gen", UberGen::new);
         register("FunkoGen", "Funko Account Gen", FunkoGen::new);
         register("SandwichGen", "Ike's Rewards Account Gen", SandwichGen::new);
+        register("BrowserScan", "Browser Scan (Test)", BrowserScan::new);
     }
 
     // ==================== Private Constructor ====================
