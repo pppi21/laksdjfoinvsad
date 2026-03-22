@@ -1,7 +1,7 @@
 From 3193144816facce215fee09884dab389748dfe42 Mon Sep 17 00:00:00 2001
 From: Leo Rodarte <leorodarte07@gmail.com>
 Date: Mon, 16 Mar 2026 16:16:27 -0700
-Subject: [PATCH 35/37] Strings mod #1 - unfinished
+Subject: [PATCH 35/39] Strings mod #1 - unfinished
 
 ---
  chrome/app/chromium_strings.grd               | 1155 ++++++++---------

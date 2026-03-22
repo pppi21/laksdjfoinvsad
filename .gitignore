@@ -42,3 +42,4 @@ build/
 /src/main/resources/chrome/chrome-win64/
 /.env
 /chromium-patches/src/0036-gonna-roll-this-back.patch
+/chromium-patches/src/0039-Stage-4C-done.-core-Google-service-disablement.patch

@@ -1,7 +1,7 @@
 From d3b3ab0c6383b9c71cf2b11fb3e65f99ee571841 Mon Sep 17 00:00:00 2001
 From: Leo Rodarte <leorodarte07@gmail.com>
 Date: Sat, 7 Mar 2026 16:21:49 -0800
-Subject: [PATCH 30/37] optomizations
+Subject: [PATCH 30/39] optomizations
 
 ---
  components/nodriver4j/audio_override.h        |  63 +++++++++++

@@ -1,7 +1,7 @@
 From 5c5f7bc219b6e0e200dcbddc38022ca9f14c0dc0 Mon Sep 17 00:00:00 2001
 From: Leo Rodarte <leorodarte07@gmail.com>
 Date: Tue, 17 Mar 2026 02:22:26 -0700
-Subject: [PATCH 37/37] Detection issue due to incorrect ch-ua header ordering
+Subject: [PATCH 37/39] Detection issue due to incorrect ch-ua header ordering
  fixed.
 
 ---

@@ -1,7 +1,7 @@
 From c24ea889de3044e0a661e542ad867e4f2c73ea96 Mon Sep 17 00:00:00 2001
 From: Leo Rodarte <leorodarte07@gmail.com>
 Date: Wed, 4 Mar 2026 23:48:14 -0800
-Subject: [PATCH 26/37] patched getParameter so that it still goes through the
+Subject: [PATCH 26/39] patched getParameter so that it still goes through the
  webgl string building pipline to avoid timing detection issues
 
 ---

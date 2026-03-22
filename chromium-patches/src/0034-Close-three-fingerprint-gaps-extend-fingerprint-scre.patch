@@ -1,7 +1,7 @@
 From 2c0351faab68d5ea4af42db60f781e4ca2d2ed43 Mon Sep 17 00:00:00 2001
 From: Leo Rodarte <leorodarte07@gmail.com>
 Date: Sat, 14 Mar 2026 15:32:39 -0700
-Subject: [PATCH 34/37] Close three fingerprint gaps: extend
+Subject: [PATCH 34/39] Close three fingerprint gaps: extend
  --fingerprint-screen with optional DPR (7th value), add
  --fingerprint-connection for navigator.connection spoofing, and add
  --fingerprint-media-features for CSS media query overrides (color-scheme,
