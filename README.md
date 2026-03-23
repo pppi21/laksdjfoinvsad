@@ -10,52 +10,34 @@ Note (3/5/26): This implementation is based on my fundemental misunderstanding o
 
 Note (3/16/26): I fixed this a couple weeks ago. Now it applies similar deterministic noise to canvas methods like arc(), which is effective at changing the hashed output in a natural way, but doesn't change the hashed output of all getImageData() calls.
 
-Modern fingerprinting services (BrowserScan, CreepJS, FingerprintJS) hash the pixel output of canvas draw operations to identify browsers. The typical approach, adding random noise to every pixel, is trivially detected because it disrupts the visual coherence of the image.
+Modern fingerprinting services (BrowserScan, CreepJS, FingerprintJS) hash the pixel output of canvas draw operations to identify browsers. This section covers both the original approach (since removed) and the current implementation.
 
-This implementation takes a fundamentally different approach: it identifies anti-aliased transition pixels (where neighboring pixels differ by a small amount) and applies ±1 sub-channel noise only to those edge regions. This makes the modifications visually imperceptible and statistically indistinguishable from natural rendering variance across GPUs:
+Previous Approach: Post-Render Pixel Noise (Removed)
+The original implementation scanned rendered pixel data for anti-aliased transition zones, pixels where neighboring color values differed by a small amount, then applied ±1 sub-channel noise to a seed-deterministic subset of those edge pixels. This was hooked into all four canvas pixel extraction surfaces that I'm aware of: toDataURL(), toBlob(), getImageData(), and WebGL readPixels().
 
-```cpp
-// Pass 1: Identify anti-aliased edge pixels (small neighbor difference)
-for (int y = 0; y < h; y++) {
-    for (int x = 0; x < w; x++) {
-        auto* current = (uint32_t*)((const char*)addr + y * fRowBytes + x * sizeof(uint32_t));
-        // ...extract r, g, b channels...
+The upside was complete coverage: regardless of what was drawn or how pixels were read back, the fingerprint hash changed. The flaw was that it modified pixels after rendering, which was detectable. I'm not sure of the specific methods used to detect the modified pixels (if I knew I'd be able to circumvent detection), but it's likely done by statistically analyzing noise patterns and comparing them to realistic patterns. This approach was becoming a waste of time so I decided to try something else.
 
-        // Check right neighbor
-        if (x < w - 1) {
-            auto* right = (uint32_t*)((const char*)addr + y * fRowBytes + (x + 1) * sizeof(uint32_t));
-            if (*current != *right) {
-                int diff = std::abs(cr - rr) + std::abs(cg - rg) + std::abs(cb - rb);
-                // Small difference = anti-aliasing zone (1-80 total across RGB)
-                // Large difference = hard edge boundary --- skip
-                if (diff >= 1 && diff <= 80) {
-                    is_transition = true;
-                }
-            }
-        }
-        if (is_transition) {
-            edge_indices.push_back(y * w + x);
-        }
-    }
-}
-```
+Current Approach: Pre-Render Geometry Shifts
+Rather than modifying pixel output, the current implementation shifts input geometry before the browser's own rasterizer runs. A pair of deterministic sub-pixel offsets (ranging from 0.01 to 0.09 pixels) are derived from the --canvas-fingerprint seed and cached at startup:
 
-A seed-deterministic subset of these edge pixels is then selected via a Fisher-Yates partial shuffle, and each pixel gets per-channel ±1 adjustments based on a per-pixel hash:
 
 ```cpp
-// Per-pixel hash determines which channels to modify and direction
-size_t pixel_hash = std::hash<std::string>{}(seed_str + "_p" + std::to_string(idx));
-
-bool mod_r = (pixel_hash & 0x7) >= 3;        // ~60% chance per channel
-bool mod_g = ((pixel_hash >> 3) & 0x7) >= 3;
-bool mod_b = ((pixel_hash >> 6) & 0x7) >= 3;
-
-int dr = ((pixel_hash >> 9) & 1) ? 1 : -1;   // ±1 only
-int dg = ((pixel_hash >> 10) & 1) ? 1 : -1;
-int db = ((pixel_hash >> 11) & 1) ? 1 : -1;
+size_t hash_x = std::hash<std::string>{}(seed_str + "_cx");
+size_t hash_y = std::hash<std::string>{}(seed_str + "_cy");
+float dx = 0.01f + static_cast<float>(hash_x % 80) * 0.001f;
+float dy = 0.01f + static_cast<float>(hash_y % 80) * 0.001f;
 ```
 
-This covers all four canvas pixel extraction surfaces: `toDataURL()`, `toBlob()`, `getImageData()`, and WebGL `readPixels()` --- the same seed produces the same fingerprint every time, but different seeds produce different fingerprints, enabling consistent profiles between browser sessions.
+These offsets are applied to three CanvasPath methods in Blink's rendering engine:
+
+- arc() - center point shifted by (dx, dy)
+- quadraticCurveTo() - control point and endpoint shifted
+- bezierCurveTo() - both control points and endpoint shifted
+
+When an arc center moves by 0.04 pixels, the rasterizer produces naturally different anti-aliasing gradients at every curved edge. I'm not entirely happy with this implementation because it doesn't touch nearly as many outputs as the previous methods, so any fingerprinting script that doesn't include one of these three functions in their test would be unnaffected. In order to introduce a bit more coverage, font-based canvas fingerprints are handled separately by ApplyFontSpacingNoise() in harfbuzz_shaper.cc, which adjusts glyph spacing during text shaping to vary fillText()/strokeText() output.
+
+### Summary
+The tradeoff is that this approach only affects drawing operations that pass through the three modified path methods. If a fingerprinting test draws only straight lines (lineTo), fills rectangles, or uses any canvas operation that doesn't involve arc(), quadraticCurveTo(), or bezierCurveTo(), the geometry shifts have no effect and the fingerprint hash will be unchanged. The old pixel-noise approach covered all extraction surfaces regardless of what was drawn; the new approach trades that breadth for undetectability on the surfaces it does cover.
 
 ---
 
@@ -202,149 +184,89 @@ public static int keystrokeDelay(char currentChar, Character previousChar,
 
 ---
 
-## 4. IMAP Connection Pooling with Batch-Cached Fetching
+## 4. IMAP Connection Pooling with Background Polling
 
-When dozens of automation tasks run concurrently --- each polling for its own email (OTP codes, verification links) --- the approach of one IMAP connection per task quickly hits Gmail's rate limits. This implementation solves the problem with a reference-counted shared connection pool and a broad fetch-then-filter-in-memory caching strategy that collapses N IMAP operations per poll cycle into 1.
+When dozens of automation tasks run concurrently, each polling for its own email (OTP codes, verification links), opening one IMAP connection per task quickly hits Gmail's rate limits. This implementation solves the problem with a shared connection pool and a background poller that collapses all email checking into a single IMAP operation every 2 seconds, regardless of how many tasks are active.
 
-The shared instance factory uses a `ConcurrentHashMap` keyed by `catchallEmail:appPassword`. Multiple extractors sharing the same catchall account receive the same `GmailClient` instance. An `AtomicInteger` tracks consumers, and the IMAP connection is closed only when the last one releases:
+The GmailClient.shared() factory returns a reference-counted instance cached by catchall email + app password. Multiple extractors using the same catchall account all receive the same GmailClient and share a single IMAP connection. An atomic counter tracks how many consumers are active, and the connection is only closed when the last one releases:
 
 ```java
-public static GmailClient shared(String catchallEmail, String appPassword)
-        throws GmailClientException {
+String key = catchallEmail.toLowerCase() + ":" + appPassword;
 
-    String key = catchallEmail.toLowerCase() + ":" + appPassword;
-
-    GmailClient client;
-    synchronized (SHARED_LOCK) {
-        client = sharedInstances.computeIfAbsent(key,
-                k -> new GmailClient(null, catchallEmail, appPassword, true, k));
-        client.refCount.incrementAndGet();
-    }
-
-    // connect() is idempotent and thread-safe, safe to call outside SHARED_LOCK
-    client.connect();
-    return client;
+synchronized (SHARED_LOCK) {
+    client = sharedInstances.computeIfAbsent(key,
+            k -> new GmailClient(null, catchallEmail, appPassword, true, k));
+    client.refCount.incrementAndGet();
 }
 
-public void release() {
-    boolean shouldDisconnect = false;
+// connect() is called outside the lock to avoid blocking the pool during network I/O
+client.connect();
+```
 
-    synchronized (SHARED_LOCK) {
-        int remaining = refCount.decrementAndGet();
-        if (remaining <= 0) {
-            sharedInstances.remove(cacheKey);
-            shouldDisconnect = true;
-        }
-    }
+Instead of each extractor hitting IMAP on its own schedule, shared instances use a single background thread that fetches from INBOX every 2 seconds. Each extractor registers the time it started monitoring, and the poller uses the earliest registered time to make sure its fetch window covers everyone:
 
-    // Disconnect outside SHARED_LOCK to avoid blocking the pool during I/O
-    if (shouldDisconnect) {
-        disconnect();
-    }
+```java
+private void pollInbox() {
+    Instant broadSince = registeredSinceTimes.values().stream()
+            .min(Instant::compareTo)
+            .orElse(null);
+
+    EmailSearchCriteria broadCriteria = EmailSearchCriteria.builder()
+            .since(broadSince)
+            .build();
+
+    List<EmailMessage> messages = executeFetch("INBOX", broadCriteria);
+    this.polledMessages = List.copyOf(messages);
 }
 ```
 
-Note that `connect()` and `disconnect()` are deliberately called **outside** the pool lock --- network I/O under a global lock would serialize all pool operations across all accounts.
-
-The batch caching layer is where the real throughput gain comes from. Instead of each extractor running its own IMAP folder-open/search/close cycle, one thread performs a broad fetch against `[Gmail]/All Mail` (no subject or sender filter --- just a `since` timestamp) and caches the results with a 3-second TTL. Every other extractor that polls within that window filters the cached results in-memory using its own criteria:
+The results are published to a volatile field. When any extractor calls fetchMessages(), it just reads that snapshot and filters it in memory --- no IMAP call, which speeds up the process significantly:
 
 ```java
-private List<EmailMessage> fetchFromCacheOrRefresh(EmailSearchCriteria criteria)
-        throws GmailClientException {
+if (isShared) {
+    List<EmailMessage> snapshot = this.polledMessages;
+    return filterMessages(snapshot, criteria);
+}
+```
+The poller starts when the first extractor registers and shuts down when the last one unregisters, so there's no background IMAP traffic when nothing is actively waiting for an email.
 
-    Instant callerSince = (criteria != null) ? criteria.since : null;
+IMAP's date filtering only works at day granularity, searching for "emails since 2:35 PM" actually returns everything from today. For a catchall account receiving dozens of emails a day, downloading every message body every 2 seconds would be wasteful.
+The fetch uses a two-phase approach to avoid this. Phase 1 batch-fetches only the lightweight envelope data (subject, sender, recipient, date) for all matches, then filters on that metadata to narrow down candidates. Phase 2 downloads the full body only for the messages that actually passed the filter:
 
-    // Fast path: volatile read, no locking
-    CachedFetch cached = this.cachedFetch;
-    if (cached != null && cached.isFresh() && cached.covers(callerSince)) {
-        return filterCached(cached.messages, criteria);
+```java
+// Phase 1: batch-fetch envelopes (one IMAP round-trip)
+FetchProfile fp = new FetchProfile();
+fp.add(FetchProfile.Item.ENVELOPE);
+folder.fetch(messages, fp);
+
+// Filter on headers only — no body download
+List<Message> candidates = new ArrayList<>();
+for (Message message : messages) {
+    EmailMessage headerOnly = convertHeaders(message);
+    if (matchesSubjectCriteria(headerOnly, criteria)
+            && matchesSenderCriteria(headerOnly, criteria)
+            && matchesRecipientCriteria(headerOnly, criteria)
+            && matchesTimestampCriteria(headerOnly, criteria)) {
+        candidates.add(message);
     }
+}
 
-    // Slow path: serialize cache refreshes
-    cacheRefreshLock.lock();
-    try {
-        // Double-check after acquiring lock
-        cached = this.cachedFetch;
-        if (cached != null && cached.isFresh() && cached.covers(callerSince)) {
-            return filterCached(cached.messages, criteria);
-        }
-
-        // Preserve the broadest 'since' timestamp for maximum cache coverage
-        Instant broadSince = callerSince;
-        if (cached != null && cached.since != null
-                && broadSince != null && cached.since.isBefore(broadSince)) {
-            broadSince = cached.since;
-        }
-
-        // One broad IMAP fetch --- all other threads will read from this cache
-        fetchSemaphore.acquire();
-        try {
-            EmailSearchCriteria broadCriteria = broadSince != null
-                    ? EmailSearchCriteria.builder().since(broadSince).build()
-                    : null;
-
-            List<EmailMessage> allMessages = executeFetch(ALL_MAIL_FOLDER, broadCriteria);
-            this.cachedFetch = new CachedFetch(
-                    List.copyOf(allMessages), broadSince, Instant.now());
-        } finally {
-            fetchSemaphore.release();
-        }
-
-        return filterCached(this.cachedFetch.messages, criteria);
-
-    } finally {
-        cacheRefreshLock.unlock();
-    }
+// Phase 2: download bodies for candidates only
+for (Message message : candidates) {
+    results.add(convertMessage(message));
 }
 ```
 
-The cache coverage check ensures correctness: a cache fetched with `since=T1` can serve a request for `since=T2` only if `T1 ≤ T2` (the cache looked at least as far back). When refreshing, the system preserves the **broadest** (earliest) `since` from the stale cache so that extractors with older time windows still get cache hits:
+If 40 emails matched the broad date filter but only 2 were received in the last minute, only those 2 bodies get downloaded.
+
+On the consumer side, EmailPollingBase<T> is an abstract class that handles the polling loop so individual extractors only need to define three things: what to search for (buildCriteria), how to extract a result from a matching email (extractFromEmail), and a name for logging (extractorName). The base class takes care of timeout enforcement, cooperative cancellation (checking Thread.interrupted() so tasks can be stopped cleanly), and managing the shared connection lifecycle through registerSinceTime / unregisterSinceTime:
 
 ```java
-private record CachedFetch(List<EmailMessage> messages, Instant since, Instant fetchedAt) {
-
-    boolean isFresh() {
-        return Duration.between(fetchedAt, Instant.now()).compareTo(CACHE_TTL) < 0;
-    }
-
-    boolean covers(Instant callerSince) {
-        if (callerSince == null) return since == null;
-        if (since == null) return true;
-        return !since.isAfter(callerSince);
-    }
+try (MyOtpExtractor extractor = new MyOtpExtractor("user@gmail.com", "catchall@gmail.com", "app-pass")) {
+    String otp = extractor.poll(); // blocks until found or timeout
 }
 ```
-
-The full system layers **four synchronization primitives**, each solving a distinct problem:
-
-| Primitive | Purpose |
-|---|---|
-| `ReentrantReadWriteLock` | Connection lifecycle (write lock) vs concurrent fetches (read lock) --- multiple threads can fetch simultaneously, but `connect()`/`disconnect()` get exclusive access |
-| `Semaphore(7)` | Caps concurrent IMAP folder operations below Gmail's 15-connection limit, preventing undocumented command-rate throttling |
-| `ReentrantLock` | Serializes cache refreshes --- only one thread performs the broad IMAP fetch while others wait, then all read from the fresh cache |
-| `volatile` field | Enables lock-free fast-path cache reads via double-checked locking --- the common case (cache hit) requires zero synchronization overhead |
-
-The in-memory filter applies the caller's full criteria (subject substring, recipient exact match, sender domain/exact/contains, timestamp) against the cached message list, mirroring the same logic used for direct IMAP search term construction:
-
-```java
-private List<EmailMessage> filterCached(List<EmailMessage> messages,
-                                        EmailSearchCriteria criteria) {
-    List<EmailMessage> results = new ArrayList<>();
-
-    for (EmailMessage message : messages) {
-        if (!matchesSubjectCriteria(message, criteria))  continue;
-        if (!matchesSenderCriteria(message, criteria))   continue;
-        if (!matchesRecipientCriteria(message, criteria)) continue;
-        if (!matchesTimestampCriteria(message, criteria)) continue;
-        results.add(message);
-    }
-
-    results.sort((a, b) -> b.receivedDate().compareTo(a.receivedDate()));
-    return results;
-}
-```
-
-The result: dozens of extractors polling every 5 seconds against the same catchall account produce at most one IMAP operation every 3 seconds, regardless of how many extractors are active. The shared connection, reference counting, and cache coverage tracking ensure this works correctly across varying extractor lifecycles without leaking connections or serving stale data.
+This system has worked pretty well in testing and emails are never outright missed.
 
 ---
 
