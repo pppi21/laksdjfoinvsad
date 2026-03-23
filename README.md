@@ -184,149 +184,89 @@ public static int keystrokeDelay(char currentChar, Character previousChar,
 
 ---
 
-## 4. IMAP Connection Pooling with Batch-Cached Fetching
+## 4. IMAP Connection Pooling with Background Polling
 
-When dozens of automation tasks run concurrently --- each polling for its own email (OTP codes, verification links) --- the approach of one IMAP connection per task quickly hits Gmail's rate limits. This implementation solves the problem with a reference-counted shared connection pool and a broad fetch-then-filter-in-memory caching strategy that collapses N IMAP operations per poll cycle into 1.
+When dozens of automation tasks run concurrently, each polling for its own email (OTP codes, verification links), opening one IMAP connection per task quickly hits Gmail's rate limits. This implementation solves the problem with a shared connection pool and a background poller that collapses all email checking into a single IMAP operation every 2 seconds, regardless of how many tasks are active.
 
-The shared instance factory uses a `ConcurrentHashMap` keyed by `catchallEmail:appPassword`. Multiple extractors sharing the same catchall account receive the same `GmailClient` instance. An `AtomicInteger` tracks consumers, and the IMAP connection is closed only when the last one releases:
+The GmailClient.shared() factory returns a reference-counted instance cached by catchall email + app password. Multiple extractors using the same catchall account all receive the same GmailClient and share a single IMAP connection. An atomic counter tracks how many consumers are active, and the connection is only closed when the last one releases:
 
 ```java
-public static GmailClient shared(String catchallEmail, String appPassword)
-        throws GmailClientException {
+String key = catchallEmail.toLowerCase() + ":" + appPassword;
 
-    String key = catchallEmail.toLowerCase() + ":" + appPassword;
-
-    GmailClient client;
-    synchronized (SHARED_LOCK) {
-        client = sharedInstances.computeIfAbsent(key,
-                k -> new GmailClient(null, catchallEmail, appPassword, true, k));
-        client.refCount.incrementAndGet();
-    }
-
-    // connect() is idempotent and thread-safe, safe to call outside SHARED_LOCK
-    client.connect();
-    return client;
+synchronized (SHARED_LOCK) {
+    client = sharedInstances.computeIfAbsent(key,
+            k -> new GmailClient(null, catchallEmail, appPassword, true, k));
+    client.refCount.incrementAndGet();
 }
 
-public void release() {
-    boolean shouldDisconnect = false;
+// connect() is called outside the lock to avoid blocking the pool during network I/O
+client.connect();
+```
 
-    synchronized (SHARED_LOCK) {
-        int remaining = refCount.decrementAndGet();
-        if (remaining <= 0) {
-            sharedInstances.remove(cacheKey);
-            shouldDisconnect = true;
-        }
-    }
+Instead of each extractor hitting IMAP on its own schedule, shared instances use a single background thread that fetches from INBOX every 2 seconds. Each extractor registers the time it started monitoring, and the poller uses the earliest registered time to make sure its fetch window covers everyone:
 
-    // Disconnect outside SHARED_LOCK to avoid blocking the pool during I/O
-    if (shouldDisconnect) {
-        disconnect();
-    }
+```java
+private void pollInbox() {
+    Instant broadSince = registeredSinceTimes.values().stream()
+            .min(Instant::compareTo)
+            .orElse(null);
+
+    EmailSearchCriteria broadCriteria = EmailSearchCriteria.builder()
+            .since(broadSince)
+            .build();
+
+    List<EmailMessage> messages = executeFetch("INBOX", broadCriteria);
+    this.polledMessages = List.copyOf(messages);
 }
 ```
 
-Note that `connect()` and `disconnect()` are deliberately called **outside** the pool lock --- network I/O under a global lock would serialize all pool operations across all accounts.
-
-The batch caching layer is where the real throughput gain comes from. Instead of each extractor running its own IMAP folder-open/search/close cycle, one thread performs a broad fetch against `[Gmail]/All Mail` (no subject or sender filter --- just a `since` timestamp) and caches the results with a 3-second TTL. Every other extractor that polls within that window filters the cached results in-memory using its own criteria:
+The results are published to a volatile field. When any extractor calls fetchMessages(), it just reads that snapshot and filters it in memory --- no IMAP call, which speeds up the process significantly:
 
 ```java
-private List<EmailMessage> fetchFromCacheOrRefresh(EmailSearchCriteria criteria)
-        throws GmailClientException {
+if (isShared) {
+    List<EmailMessage> snapshot = this.polledMessages;
+    return filterMessages(snapshot, criteria);
+}
+```
+The poller starts when the first extractor registers and shuts down when the last one unregisters, so there's no background IMAP traffic when nothing is actively waiting for an email.
 
-    Instant callerSince = (criteria != null) ? criteria.since : null;
+IMAP's date filtering only works at day granularity, searching for "emails since 2:35 PM" actually returns everything from today. For a catchall account receiving dozens of emails a day, downloading every message body every 2 seconds would be wasteful.
+The fetch uses a two-phase approach to avoid this. Phase 1 batch-fetches only the lightweight envelope data (subject, sender, recipient, date) for all matches, then filters on that metadata to narrow down candidates. Phase 2 downloads the full body only for the messages that actually passed the filter:
 
-    // Fast path: volatile read, no locking
-    CachedFetch cached = this.cachedFetch;
-    if (cached != null && cached.isFresh() && cached.covers(callerSince)) {
-        return filterCached(cached.messages, criteria);
+```java
+// Phase 1: batch-fetch envelopes (one IMAP round-trip)
+FetchProfile fp = new FetchProfile();
+fp.add(FetchProfile.Item.ENVELOPE);
+folder.fetch(messages, fp);
+
+// Filter on headers only — no body download
+List<Message> candidates = new ArrayList<>();
+for (Message message : messages) {
+    EmailMessage headerOnly = convertHeaders(message);
+    if (matchesSubjectCriteria(headerOnly, criteria)
+            && matchesSenderCriteria(headerOnly, criteria)
+            && matchesRecipientCriteria(headerOnly, criteria)
+            && matchesTimestampCriteria(headerOnly, criteria)) {
+        candidates.add(message);
     }
+}
 
-    // Slow path: serialize cache refreshes
-    cacheRefreshLock.lock();
-    try {
-        // Double-check after acquiring lock
-        cached = this.cachedFetch;
-        if (cached != null && cached.isFresh() && cached.covers(callerSince)) {
-            return filterCached(cached.messages, criteria);
-        }
-
-        // Preserve the broadest 'since' timestamp for maximum cache coverage
-        Instant broadSince = callerSince;
-        if (cached != null && cached.since != null
-                && broadSince != null && cached.since.isBefore(broadSince)) {
-            broadSince = cached.since;
-        }
-
-        // One broad IMAP fetch --- all other threads will read from this cache
-        fetchSemaphore.acquire();
-        try {
-            EmailSearchCriteria broadCriteria = broadSince != null
-                    ? EmailSearchCriteria.builder().since(broadSince).build()
-                    : null;
-
-            List<EmailMessage> allMessages = executeFetch(ALL_MAIL_FOLDER, broadCriteria);
-            this.cachedFetch = new CachedFetch(
-                    List.copyOf(allMessages), broadSince, Instant.now());
-        } finally {
-            fetchSemaphore.release();
-        }
-
-        return filterCached(this.cachedFetch.messages, criteria);
-
-    } finally {
-        cacheRefreshLock.unlock();
-    }
+// Phase 2: download bodies for candidates only
+for (Message message : candidates) {
+    results.add(convertMessage(message));
 }
 ```
 
-The cache coverage check ensures correctness: a cache fetched with `since=T1` can serve a request for `since=T2` only if `T1 ≤ T2` (the cache looked at least as far back). When refreshing, the system preserves the **broadest** (earliest) `since` from the stale cache so that extractors with older time windows still get cache hits:
+If 40 emails matched the broad date filter but only 2 were received in the last minute, only those 2 bodies get downloaded.
+
+On the consumer side, EmailPollingBase<T> is an abstract class that handles the polling loop so individual extractors only need to define three things: what to search for (buildCriteria), how to extract a result from a matching email (extractFromEmail), and a name for logging (extractorName). The base class takes care of timeout enforcement, cooperative cancellation (checking Thread.interrupted() so tasks can be stopped cleanly), and managing the shared connection lifecycle through registerSinceTime / unregisterSinceTime:
 
 ```java
-private record CachedFetch(List<EmailMessage> messages, Instant since, Instant fetchedAt) {
-
-    boolean isFresh() {
-        return Duration.between(fetchedAt, Instant.now()).compareTo(CACHE_TTL) < 0;
-    }
-
-    boolean covers(Instant callerSince) {
-        if (callerSince == null) return since == null;
-        if (since == null) return true;
-        return !since.isAfter(callerSince);
-    }
+try (MyOtpExtractor extractor = new MyOtpExtractor("user@gmail.com", "catchall@gmail.com", "app-pass")) {
+    String otp = extractor.poll(); // blocks until found or timeout
 }
 ```
-
-The full system layers **four synchronization primitives**, each solving a distinct problem:
-
-| Primitive | Purpose |
-|---|---|
-| `ReentrantReadWriteLock` | Connection lifecycle (write lock) vs concurrent fetches (read lock) --- multiple threads can fetch simultaneously, but `connect()`/`disconnect()` get exclusive access |
-| `Semaphore(7)` | Caps concurrent IMAP folder operations below Gmail's 15-connection limit, preventing undocumented command-rate throttling |
-| `ReentrantLock` | Serializes cache refreshes --- only one thread performs the broad IMAP fetch while others wait, then all read from the fresh cache |
-| `volatile` field | Enables lock-free fast-path cache reads via double-checked locking --- the common case (cache hit) requires zero synchronization overhead |
-
-The in-memory filter applies the caller's full criteria (subject substring, recipient exact match, sender domain/exact/contains, timestamp) against the cached message list, mirroring the same logic used for direct IMAP search term construction:
-
-```java
-private List<EmailMessage> filterCached(List<EmailMessage> messages,
-                                        EmailSearchCriteria criteria) {
-    List<EmailMessage> results = new ArrayList<>();
-
-    for (EmailMessage message : messages) {
-        if (!matchesSubjectCriteria(message, criteria))  continue;
-        if (!matchesSenderCriteria(message, criteria))   continue;
-        if (!matchesRecipientCriteria(message, criteria)) continue;
-        if (!matchesTimestampCriteria(message, criteria)) continue;
-        results.add(message);
-    }
-
-    results.sort((a, b) -> b.receivedDate().compareTo(a.receivedDate()));
-    return results;
-}
-```
-
-The result: dozens of extractors polling every 5 seconds against the same catchall account produce at most one IMAP operation every 3 seconds, regardless of how many extractors are active. The shared connection, reference counting, and cache coverage tracking ensure this works correctly across varying extractor lifecycles without leaking connections or serving stale data.
+This system has worked pretty well in testing and emails are never outright missed.
 
 ---
 
