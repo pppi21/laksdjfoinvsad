@@ -10,52 +10,34 @@ Note (3/5/26): This implementation is based on my fundemental misunderstanding o
 
 Note (3/16/26): I fixed this a couple weeks ago. Now it applies similar deterministic noise to canvas methods like arc(), which is effective at changing the hashed output in a natural way, but doesn't change the hashed output of all getImageData() calls.
 
-Modern fingerprinting services (BrowserScan, CreepJS, FingerprintJS) hash the pixel output of canvas draw operations to identify browsers. The typical approach, adding random noise to every pixel, is trivially detected because it disrupts the visual coherence of the image.
+Modern fingerprinting services (BrowserScan, CreepJS, FingerprintJS) hash the pixel output of canvas draw operations to identify browsers. This section covers both the original approach (since removed) and the current implementation.
 
-This implementation takes a fundamentally different approach: it identifies anti-aliased transition pixels (where neighboring pixels differ by a small amount) and applies ±1 sub-channel noise only to those edge regions. This makes the modifications visually imperceptible and statistically indistinguishable from natural rendering variance across GPUs:
+Previous Approach: Post-Render Pixel Noise (Removed)
+The original implementation scanned rendered pixel data for anti-aliased transition zones, pixels where neighboring color values differed by a small amount, then applied ±1 sub-channel noise to a seed-deterministic subset of those edge pixels. This was hooked into all four canvas pixel extraction surfaces that I'm aware of: toDataURL(), toBlob(), getImageData(), and WebGL readPixels().
 
-```cpp
-// Pass 1: Identify anti-aliased edge pixels (small neighbor difference)
-for (int y = 0; y < h; y++) {
-    for (int x = 0; x < w; x++) {
-        auto* current = (uint32_t*)((const char*)addr + y * fRowBytes + x * sizeof(uint32_t));
-        // ...extract r, g, b channels...
+The upside was complete coverage: regardless of what was drawn or how pixels were read back, the fingerprint hash changed. The flaw was that it modified pixels after rendering, which was detectable. I'm not sure of the specific methods used to detect the modified pixels (if I knew I'd be able to circumvent detection), but it's likely done by statistically analyzing noise patterns and comparing them to realistic patterns. This approach was becoming a waste of time so I decided to try something else.
 
-        // Check right neighbor
-        if (x < w - 1) {
-            auto* right = (uint32_t*)((const char*)addr + y * fRowBytes + (x + 1) * sizeof(uint32_t));
-            if (*current != *right) {
-                int diff = std::abs(cr - rr) + std::abs(cg - rg) + std::abs(cb - rb);
-                // Small difference = anti-aliasing zone (1-80 total across RGB)
-                // Large difference = hard edge boundary --- skip
-                if (diff >= 1 && diff <= 80) {
-                    is_transition = true;
-                }
-            }
-        }
-        if (is_transition) {
-            edge_indices.push_back(y * w + x);
-        }
-    }
-}
-```
+Current Approach: Pre-Render Geometry Shifts
+Rather than modifying pixel output, the current implementation shifts input geometry before the browser's own rasterizer runs. A pair of deterministic sub-pixel offsets (ranging from 0.01 to 0.09 pixels) are derived from the --canvas-fingerprint seed and cached at startup:
 
-A seed-deterministic subset of these edge pixels is then selected via a Fisher-Yates partial shuffle, and each pixel gets per-channel ±1 adjustments based on a per-pixel hash:
 
 ```cpp
-// Per-pixel hash determines which channels to modify and direction
-size_t pixel_hash = std::hash<std::string>{}(seed_str + "_p" + std::to_string(idx));
-
-bool mod_r = (pixel_hash & 0x7) >= 3;        // ~60% chance per channel
-bool mod_g = ((pixel_hash >> 3) & 0x7) >= 3;
-bool mod_b = ((pixel_hash >> 6) & 0x7) >= 3;
-
-int dr = ((pixel_hash >> 9) & 1) ? 1 : -1;   // ±1 only
-int dg = ((pixel_hash >> 10) & 1) ? 1 : -1;
-int db = ((pixel_hash >> 11) & 1) ? 1 : -1;
+size_t hash_x = std::hash<std::string>{}(seed_str + "_cx");
+size_t hash_y = std::hash<std::string>{}(seed_str + "_cy");
+float dx = 0.01f + static_cast<float>(hash_x % 80) * 0.001f;
+float dy = 0.01f + static_cast<float>(hash_y % 80) * 0.001f;
 ```
 
-This covers all four canvas pixel extraction surfaces: `toDataURL()`, `toBlob()`, `getImageData()`, and WebGL `readPixels()` --- the same seed produces the same fingerprint every time, but different seeds produce different fingerprints, enabling consistent profiles between browser sessions.
+These offsets are applied to three CanvasPath methods in Blink's rendering engine:
+
+- arc() - center point shifted by (dx, dy)
+- quadraticCurveTo() - control point and endpoint shifted
+- bezierCurveTo() - both control points and endpoint shifted
+
+When an arc center moves by 0.04 pixels, the rasterizer produces naturally different anti-aliasing gradients at every curved edge. I'm not entirely happy with this implementation because it doesn't touch nearly as many outputs as the previous methods, so any fingerprinting script that doesn't include one of these three functions in their test would be unnaffected. In order to introduce a bit more coverage, font-based canvas fingerprints are handled separately by ApplyFontSpacingNoise() in harfbuzz_shaper.cc, which adjusts glyph spacing during text shaping to vary fillText()/strokeText() output.
+
+### Summary
+The tradeoff is that this approach only affects drawing operations that pass through the three modified path methods. If a fingerprinting test draws only straight lines (lineTo), fills rectangles, or uses any canvas operation that doesn't involve arc(), quadraticCurveTo(), or bezierCurveTo(), the geometry shifts have no effect and the fingerprint hash will be unchanged. The old pixel-noise approach covered all extraction surfaces regardless of what was drawn; the new approach trades that breadth for undetectability on the surfaces it does cover.
 
 ---
 
