@@ -1,7 +1,7 @@
 From b0d7d6f38fc4f1e571216d92562b68a35caca65a Mon Sep 17 00:00:00 2001
 From: Leo Rodarte <leorodarte07@gmail.com>
 Date: Mon, 16 Mar 2026 16:30:09 -0700
-Subject: [PATCH 2/2] roll this back
+Subject: [PATCH 2/3] roll this back
 
 ---
  third_party/wasm-api/example/callback.wasm  | Bin 102 -> 0 bytes

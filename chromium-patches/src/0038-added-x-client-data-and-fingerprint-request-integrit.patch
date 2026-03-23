@@ -1,7 +1,7 @@
 From 5da4cd038dfaf83130dc437f4e87b4f29af4b31a Mon Sep 17 00:00:00 2001
 From: Leo Rodarte <leorodarte07@gmail.com>
 Date: Fri, 20 Mar 2026 21:54:46 -0700
-Subject: [PATCH 38/39] added x-client-data and fingerprint-request-integrity
+Subject: [PATCH 38/46] added x-client-data and fingerprint-request-integrity
  switches for better stealth on google pages. Not sure if this actually helps
  with anything.
 

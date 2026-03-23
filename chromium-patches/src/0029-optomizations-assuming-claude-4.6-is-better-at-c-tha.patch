@@ -1,7 +1,7 @@
 From a24d4b3f7ac1eda015c5fe53219546c530c3dc35 Mon Sep 17 00:00:00 2001
 From: Leo Rodarte <leorodarte07@gmail.com>
 Date: Thu, 5 Mar 2026 19:41:00 -0800
-Subject: [PATCH 29/39] optomizations (assuming claude 4.6 is better at c++
+Subject: [PATCH 29/46] optomizations (assuming claude 4.6 is better at c++
  than me)
 
 ---

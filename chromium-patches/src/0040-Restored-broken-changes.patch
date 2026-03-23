@@ -1,0 +1,315 @@
+From 3c3631260c42f6e972f0a5f1fbb2cb68fa12abd8 Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Sat, 21 Mar 2026 18:12:38 -0700
+Subject: [PATCH 40/46] Restored broken changes
+
+---
+ .../incident_report_uploader_impl.cc          |  2 +-
+ .../incident_reporting_service.cc             |  3 +
+ .../safe_browsing/safe_browsing_service.cc    |  2 +-
+ ...st_header_integrity_url_loader_throttle.cc |  8 +-
+ components/nodriver4j/BUILD.gn                |  3 +-
+ components/nodriver4j/google_domain_util.h    | 82 +++++++++++++++++++
+ .../browser/client_side_detection_service.cc  |  5 ++
+ .../core/safe_browsing_loud_error_ui.cc       |  4 +-
+ .../variations/net/variations_http_headers.cc | 26 +++++-
+ 9 files changed, 125 insertions(+), 10 deletions(-)
+ create mode 100644 components/nodriver4j/google_domain_util.h
+
+diff --git a/chrome/browser/safe_browsing/incident_reporting/incident_report_uploader_impl.cc b/chrome/browser/safe_browsing/incident_reporting/incident_report_uploader_impl.cc
+index aae06d4b0e..82d4e9cb74 100644
+--- a/chrome/browser/safe_browsing/incident_reporting/incident_report_uploader_impl.cc
++++ b/chrome/browser/safe_browsing/incident_reporting/incident_report_uploader_impl.cc
+@@ -29,7 +29,7 @@ namespace safe_browsing {
+ namespace {
+ 
+ const char kSbIncidentReportUrl[] =
+-    "https://sb-ssl.google.com/safebrowsing/clientreport/incident";
++    "trk:268:https://sb-ssl.google.com/safebrowsing/clientreport/incident";
+ 
+ constexpr net::NetworkTrafficAnnotationTag
+     kSafeBrowsingIncidentTrafficAnnotation =
+diff --git a/chrome/browser/safe_browsing/incident_reporting/incident_reporting_service.cc b/chrome/browser/safe_browsing/incident_reporting/incident_reporting_service.cc
+index c9a4227d8a..d3577ff5a8 100644
+--- a/chrome/browser/safe_browsing/incident_reporting/incident_reporting_service.cc
++++ b/chrome/browser/safe_browsing/incident_reporting/incident_reporting_service.cc
+@@ -301,11 +301,14 @@ IncidentReportingService::UploadContext::~UploadContext() = default;
+ 
+ // static
+ bool IncidentReportingService::IsEnabledForProfile(Profile* profile) {
++  return false;
++#if 0
+   if (profile->IsOffTheRecord())
+     return false;
+   if (!IsSafeBrowsingEnabled(*profile->GetPrefs()))
+     return false;
+   return IsExtendedReportingEnabled(*profile->GetPrefs());
++#endif
+ }
+ 
+ IncidentReportingService::IncidentReportingService(
+diff --git a/chrome/browser/safe_browsing/safe_browsing_service.cc b/chrome/browser/safe_browsing/safe_browsing_service.cc
+index c529e9d5bb..66e1a07192 100644
+--- a/chrome/browser/safe_browsing/safe_browsing_service.cc
++++ b/chrome/browser/safe_browsing/safe_browsing_service.cc
+@@ -493,7 +493,7 @@ SafeBrowsingUIManager* SafeBrowsingServiceImpl::CreateUIManager() {
+ }
+ 
+ void SafeBrowsingServiceImpl::RegisterAllDelayedAnalysis() {
+-#if BUILDFLAG(FULL_SAFE_BROWSING)
++#if 0
+   RegisterBinaryIntegrityAnalysis();
+ #endif
+ }
+diff --git a/chrome/common/request_header_integrity/request_header_integrity_url_loader_throttle.cc b/chrome/common/request_header_integrity/request_header_integrity_url_loader_throttle.cc
+index 50944b7aa6..bede7a1f3e 100644
+--- a/chrome/common/request_header_integrity/request_header_integrity_url_loader_throttle.cc
++++ b/chrome/common/request_header_integrity/request_header_integrity_url_loader_throttle.cc
+@@ -11,7 +11,7 @@
+ #include "base/feature_list.h"
+ #include "base/strings/string_util.h"
+ #include "build/branding_buildflags.h"
+-#include "components/google/core/common/google_util.h"
++#include "components/nodriver4j/google_domain_util.h"
+ #include "net/url_request/redirect_info.h"
+ #include "services/network/public/cpp/resource_request.h"
+ #include "services/network/public/mojom/network_context.mojom.h"
+@@ -101,7 +101,7 @@ void RequestHeaderIntegrityURLLoaderThrottle::DetachFromCurrentSequence() {}
+ void RequestHeaderIntegrityURLLoaderThrottle::WillStartRequest(
+     network::ResourceRequest* request,
+     bool* defer) {
+-  if (!google_util::IsGoogleAssociatedDomainUrl(request->url)) {
++  if (!nodriver4j::IsGoogleAssociatedDomain(request->url)) {
+     return;
+   }
+ 
+@@ -115,7 +115,7 @@ void RequestHeaderIntegrityURLLoaderThrottle::WillRedirectRequest(
+     std::vector<std::string>* to_be_removed_request_headers,
+     net::HttpRequestHeaders* modified_request_headers,
+     net::HttpRequestHeaders* modified_cors_exempt_request_headers) {
+-  if (google_util::IsGoogleAssociatedDomainUrl(redirect_info->new_url)) {
++  if (nodriver4j::IsGoogleAssociatedDomain(redirect_info->new_url)) {
+     AddRequestIntegrityHeaders(modified_cors_exempt_request_headers);
+   } else {
+     AddRequestIntegrityHeaderNamesToVector(to_be_removed_request_headers);
+@@ -140,7 +140,7 @@ void RequestHeaderIntegrityURLLoaderThrottle::
+         std::vector<std::string>& removed_headers,
+         net::HttpRequestHeaders& cors_exempt_headers) {
+   CHECK(IsFeatureEnabled());
+-  if (google_util::IsGoogleAssociatedDomainUrl(url)) {
++  if (nodriver4j::IsGoogleAssociatedDomain(url)) {
+     AddRequestIntegrityHeaders(&cors_exempt_headers);
+   } else {
+     AddRequestIntegrityHeaderNamesToVector(&removed_headers);
+diff --git a/components/nodriver4j/BUILD.gn b/components/nodriver4j/BUILD.gn
+index 81c4ff998e..338c9ab8e9 100644
+--- a/components/nodriver4j/BUILD.gn
++++ b/components/nodriver4j/BUILD.gn
+@@ -7,7 +7,8 @@ component("nodriver4j_switches") {
+     "default_voices.cc",
+     "font_whitelist.h",
+     "font_whitelist.cc",
+-    "webrtc_ip_spoofer.h"
++    "webrtc_ip_spoofer.h",
++    "google_domain_util.h"
+   ]
+ 
+   defines = [ "IS_NODRIVER4J_IMPL" ]
+diff --git a/components/nodriver4j/google_domain_util.h b/components/nodriver4j/google_domain_util.h
+new file mode 100644
+index 0000000000..835fb099ad
+--- /dev/null
++++ b/components/nodriver4j/google_domain_util.h
+@@ -0,0 +1,82 @@
++#ifndef COMPONENTS_NODRIVER4J_GOOGLE_DOMAIN_UTIL_H_
++#define COMPONENTS_NODRIVER4J_GOOGLE_DOMAIN_UTIL_H_
++
++#include <string_view>
++
++#include "url/gurl.h"
++
++namespace nodriver4j {
++
++// Lightweight Google-associated domain check used exclusively by our
++// spoofing infrastructure (X-Client-Data, Request Header Integrity).
++// Chrome's own google_util::IsGoogleAssociatedDomainUrl() is intentionally
++// gutted to prevent Chrome from treating Google domains specially.
++// This function exists so our fingerprint-spoofing headers still reach
++// the correct destinations.
++inline bool IsGoogleAssociatedDomain(const GURL& url) {
++  if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS()) {
++    return false;
++  }
++
++    const std::string_view host = url.host();
++
++  // Google TLD variants (google.com, google.co.uk, google.de, etc.)
++  // We match any host ending in "google." followed by a TLD component.
++  // This intentionally uses suffix matching rather than a full TLD list
++  // to keep maintenance burden near zero.
++  static constexpr std::string_view kGoogleSuffixes[] = {
++      ".google.com",        ".google.co.uk",     ".google.ca",
++      ".google.com.au",     ".google.de",        ".google.fr",
++      ".google.co.jp",      ".google.it",        ".google.es",
++      ".google.com.br",     ".google.co.in",     ".google.ru",
++      ".google.nl",         ".google.pl",        ".google.co.kr",
++  };
++
++  static constexpr std::string_view kAssociatedSuffixes[] = {
++      ".youtube.com",
++      ".ytimg.com",
++      ".doubleclick.com",
++      ".doubleclick.net",
++      ".ggpht.com",
++      ".googleadservices.com",
++      ".googleapis.com",
++      ".googlesyndication.com",
++      ".googleusercontent.com",
++      ".googlevideo.com",
++      ".gstatic.com",
++      ".youtubekids.com",
++      ".google-analytics.com",
++      ".gmail.com",
++  };
++
++  // Exact match for bare google.com / youtube.com etc.
++  if (host == "google.com" || host == "youtube.com" || host == "gmail.com" ||
++      host == "googleapis.com" || host == "gstatic.com") {
++    return true;
++  }
++
++  for (const auto& suffix : kGoogleSuffixes) {
++    if (host.size() > suffix.size() && host.ends_with(suffix)) {
++      return true;
++    }
++    // Also match the bare domain (e.g. "google.com" without subdomain).
++    if (host == suffix.substr(1)) {
++      return true;
++    }
++  }
++
++  for (const auto& suffix : kAssociatedSuffixes) {
++    if (host.size() > suffix.size() && host.ends_with(suffix)) {
++      return true;
++    }
++    if (host == suffix.substr(1)) {
++      return true;
++    }
++  }
++
++  return false;
++}
++
++}  // namespace nodriver4j
++
++#endif  // COMPONENTS_NODRIVER4J_GOOGLE_DOMAIN_UTIL_H_
+\ No newline at end of file
+diff --git a/components/safe_browsing/content/browser/client_side_detection_service.cc b/components/safe_browsing/content/browser/client_side_detection_service.cc
+index d127272766..038dd20c97 100644
+--- a/components/safe_browsing/content/browser/client_side_detection_service.cc
++++ b/components/safe_browsing/content/browser/client_side_detection_service.cc
+@@ -281,6 +281,10 @@ void ClientSideDetectionService::StartClientReportPhishingRequest(
+     return;
+   }
+ 
++#if 1
++  if (!callback.is_null())
++    std::move(callback).Run(GURL(request->url()), false, std::nullopt, std::nullopt);
++#else
+   std::string request_data;
+   request->SerializeToString(&request_data);
+ 
+@@ -360,6 +364,7 @@ void ClientSideDetectionService::StartClientReportPhishingRequest(
+           &WebUIContentInfoSingleton::AddToClientPhishingRequestsSent,
+           base::Unretained(WebUIContentInfoSingleton::GetInstance()),
+           std::move(request), access_token));
++#endif
+ }
+ 
+ void ClientSideDetectionService::HandlePhishingVerdict(
+diff --git a/components/security_interstitials/core/safe_browsing_loud_error_ui.cc b/components/security_interstitials/core/safe_browsing_loud_error_ui.cc
+index e12e7599d8..bc37f8e0dd 100644
+--- a/components/security_interstitials/core/safe_browsing_loud_error_ui.cc
++++ b/components/security_interstitials/core/safe_browsing_loud_error_ui.cc
+@@ -27,11 +27,11 @@ namespace {
+ // For malware interstitial pages, we link the problematic URL to Google's
+ // diagnostic page.
+ const char kSbDiagnosticUrl[] =
+-    "https://transparencyreport.google.com/safe-browsing/search?url=%s";
++    "trk:227:https://transparencyreport.google.com/safe-browsing/search?url=%s";
+ 
+ // Constants for the V4 phishing string upgrades.
+ const char kReportPhishingErrorUrl[] =
+-    "https://safebrowsing.google.com/safebrowsing/report_error/?url=%s";
++    "trk:228:https://safebrowsing.google.com/safebrowsing/report_error/?url=%s";
+ 
+ void RecordExtendedReportingPrefChanged(bool report) {
+   UMA_HISTOGRAM_BOOLEAN("SafeBrowsing.Pref.Extended.SecurityInterstitial",
+diff --git a/components/variations/net/variations_http_headers.cc b/components/variations/net/variations_http_headers.cc
+index 74c6f0daf6..ba704a3f21 100644
+--- a/components/variations/net/variations_http_headers.cc
++++ b/components/variations/net/variations_http_headers.cc
+@@ -12,6 +12,7 @@
+ #include "base/strings/string_util.h"
+ #include "build/build_config.h"
+ #include "components/google/core/common/google_util.h"
++#include "components/nodriver4j/google_domain_util.h"
+ #include "components/variations/variations_features.h"
+ #include "components/variations/variations_ids_provider.h"
+ #include "net/base/isolation_info.h"
+@@ -33,6 +34,8 @@
+ 
+ namespace variations {
+ 
++const char kClientDataHeader[] = "X-Client-Data";
++
+ namespace {
+ 
+ // The result of checking whether a request to a URL should have variations
+@@ -240,7 +243,24 @@ class VariationsHeaderHelper {
+   VariationsHeaderHelper& operator=(const VariationsHeaderHelper&) = delete;
+ 
+   bool AppendHeaderIfNeeded(const GURL& url, InIncognito incognito) {
+-    return false;
++    const base::CommandLine* command_line =
++        base::CommandLine::ForCurrentProcess();
++    if (command_line->HasSwitch(switches::kXClientData)) {
++      variations_header_ =
++          command_line->GetSwitchValueASCII(switches::kXClientData);
++    } else {
++      return false;
++    }
++    if ((incognito == InIncognito::kYes) ||
++        !nodriver4j::IsGoogleAssociatedDomain(url)) {
++      return false;
++    }
++    if (variations_header_.empty()) {
++      return false;
++    }
++    resource_request_->cors_exempt_headers.SetHeaderIfMissing(
++        kClientDataHeader, variations_header_);
++    return true;
+   }
+ 
+  private:
+@@ -306,6 +326,9 @@ void RemoveVariationsHeaderIfNeeded(
+     const net::RedirectInfo& redirect_info,
+     const network::mojom::URLResponseHead& response_head,
+     std::vector<std::string>* to_be_removed_headers) {
++  if (!nodriver4j::IsGoogleAssociatedDomain(redirect_info.new_url)) {
++    to_be_removed_headers->push_back(kClientDataHeader);
++  }
+ }
+ 
+ std::unique_ptr<network::SimpleURLLoader>
+@@ -357,6 +380,7 @@ bool ShouldAppendVariationsHeaderForTesting(
+ 
+ void UpdateCorsExemptHeaderForVariations(
+     network::mojom::NetworkContextParams* params) {
++  params->cors_exempt_header_list.push_back(kClientDataHeader);
+ }
+ 
+ }  // namespace variations
+-- 
+2.45.1.windows.1
+

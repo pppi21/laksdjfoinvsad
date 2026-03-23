@@ -43,3 +43,6 @@ build/
 /.env
 /chromium-patches/src/0036-gonna-roll-this-back.patch
 /chromium-patches/src/0039-Stage-4C-done.-core-Google-service-disablement.patch
+/chromium-patches/src/0046-Stage-4H-complete-all-domain-subs-applied.patch
+/chromium-patches/src/0045-pruning-old-files.patch
+/chromium-patches/v8/0003-Stage-4H-complete-all-domain-subs-applied.patch

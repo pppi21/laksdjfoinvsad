@@ -1,7 +1,7 @@
 From 32535b8bda59bda084b2a73be33caad32b0c5cd8 Mon Sep 17 00:00:00 2001
 From: Leo Rodarte <leorodarte07@gmail.com>
 Date: Thu, 5 Mar 2026 15:12:00 -0800
-Subject: [PATCH 28/39] canvas passes browserscan detection. Applies changes to
+Subject: [PATCH 28/46] canvas passes browserscan detection. Applies changes to
  arc(), quadraticCurveTo(), bezierCurveTo().
 
 ---

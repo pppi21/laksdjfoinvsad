@@ -1,0 +1,191 @@
+From 3af6982f0c286405f9a9af68b5f24f04edcb0d24 Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Sun, 22 Mar 2026 21:47:59 -0700
+Subject: [PATCH 44/46] 4G complete - beforeunload disabled, intranet redirect
+ disabled, auto-import disabled
+
+---
+ chrome/browser/chrome_browser_main.cc         | 25 --------
+ chrome/browser/intranet_redirect_detector.cc  | 60 +------------------
+ .../app_modal_dialog_manager.cc               | 51 ++--------------
+ 3 files changed, 5 insertions(+), 131 deletions(-)
+
+diff --git a/chrome/browser/chrome_browser_main.cc b/chrome/browser/chrome_browser_main.cc
+index 49e256f359..cd9a975fdd 100644
+--- a/chrome/browser/chrome_browser_main.cc
++++ b/chrome/browser/chrome_browser_main.cc
+@@ -1859,31 +1859,6 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
+   // and preferences have been registered since some of the import code depends
+   // on preferences.
+   if (first_run::IsChromeFirstRun()) {
+-    // `profile` may be nullptr even on first run, for example when the
+-    // "BrowserSignin" policy is set to "Force". If so, skip the auto import.
+-    if (profile) {
+-      first_run::AutoImport(profile, master_prefs_->import_bookmarks_path);
+-
+-      if (base::FeatureList::IsEnabled(features::kBookmarksImportOnFirstRun) &&
+-          !master_prefs_->import_bookmarks_dict.empty()) {
+-        first_run::StartBookmarkImportFromDict(
+-            profile, std::move(master_prefs_->import_bookmarks_dict));
+-      }
+-
+-#if BUILDFLAG(ENABLE_EXTENSIONS)
+-      if (base::FeatureList::IsEnabled(features::kInitialExternalExtensions)) {
+-        profile->GetPrefs()->SetString(
+-            extensions::pref_names::kInitialInstallProviderName,
+-            std::move(master_prefs_->initial_extensions_provider_name));
+-        // Store the initial extension IDs into the profile's prefs so that
+-        // InitialExternalExtensionLoader can later pick them up.
+-        profile->GetPrefs()->SetList(
+-            extensions::pref_names::kInitialInstallList,
+-            std::move(master_prefs_->initial_extensions));
+-      }
+-#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
+-    }
+-
+     // Note: This can pop-up the first run consent dialog on Linux & Mac.
+     first_run::DoPostImportTasks(master_prefs_->make_chrome_default_for_user);
+ 
+diff --git a/chrome/browser/intranet_redirect_detector.cc b/chrome/browser/intranet_redirect_detector.cc
+index cf107e0c04..fc33c1937e 100644
+--- a/chrome/browser/intranet_redirect_detector.cc
++++ b/chrome/browser/intranet_redirect_detector.cc
+@@ -10,7 +10,6 @@
+ #include <string>
+ #include <utility>
+ 
+-#include "base/command_line.h"
+ #include "base/feature_list.h"
+ #include "base/functional/bind.h"
+ #include "base/location.h"
+@@ -118,64 +117,7 @@ void IntranetRedirectDetector::FinishSleep() {
+   simple_loaders_.clear();
+   resulting_origins_.clear();
+ 
+-  const base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
+-  if (cmd_line->HasSwitch(switches::kDisableBackgroundNetworking))
+-    return;
+-
+-  DCHECK(simple_loaders_.empty() && resulting_origins_.empty());
+-
+-  // Create traffic annotation tag.
+-  net::NetworkTrafficAnnotationTag traffic_annotation =
+-      net::DefineNetworkTrafficAnnotation("intranet_redirect_detector", R"(
+-        semantics {
+-          sender: "Intranet Redirect Detector"
+-          description:
+-            "This component sends requests to three randomly generated, and "
+-            "thus likely nonexistent, hostnames.  If at least two redirect to "
+-            "the same hostname, this suggests the ISP is hijacking NXDOMAIN, "
+-            "and the omnibox should treat similar redirected navigations as "
+-            "'failed' when deciding whether to prompt the user with a 'did you "
+-            "mean to navigate' infobar for certain search inputs."
+-          trigger: "On startup and when IP address of the computer changes."
+-          data: "None, this is just an empty request."
+-          destination: OTHER
+-        }
+-        policy {
+-          cookies_allowed: NO
+-          setting: "This feature cannot be disabled by settings."
+-          policy_exception_justification:
+-              "Not implemented, considered not useful."
+-        })");
+-
+-  // Start three loaders on random hostnames.
+-  for (size_t i = 0; i < 3; ++i) {
+-    std::string url_string("http://");
+-    // We generate a random hostname with between 7 and 15 characters.
+-    const int num_chars = base::RandIntInclusive(7, 15);
+-    for (int j = 0; j < num_chars; ++j)
+-      url_string += ('a' + base::RandIntInclusive(0, 'z' - 'a'));
+-    GURL random_url(url_string + '/');
+-
+-    auto resource_request = std::make_unique<network::ResourceRequest>();
+-    resource_request->url = random_url;
+-    resource_request->method = "HEAD";
+-    // We don't want these fetches to affect existing state in the profile.
+-    resource_request->load_flags = net::LOAD_DISABLE_CACHE;
+-    resource_request->credentials_mode = network::mojom::CredentialsMode::kOmit;
+-    network::mojom::URLLoaderFactory* loader_factory =
+-        g_browser_process->system_network_context_manager()
+-            ->GetURLLoaderFactory();
+-    std::unique_ptr<network::SimpleURLLoader> simple_loader =
+-        network::SimpleURLLoader::Create(std::move(resource_request),
+-                                         traffic_annotation);
+-    network::SimpleURLLoader* simple_loader_ptr = simple_loader.get();
+-    simple_loader->DownloadToString(
+-        loader_factory,
+-        base::BindOnce(&IntranetRedirectDetector::OnSimpleLoaderComplete,
+-                       base::Unretained(this), simple_loader_ptr),
+-        /*max_body_size=*/1);
+-    simple_loaders_[simple_loader_ptr] = std::move(simple_loader);
+-  }
++  return;
+ }
+ 
+ void IntranetRedirectDetector::OnSimpleLoaderComplete(
+diff --git a/components/javascript_dialogs/app_modal_dialog_manager.cc b/components/javascript_dialogs/app_modal_dialog_manager.cc
+index f956412eea..fe5fcdb1f3 100644
+--- a/components/javascript_dialogs/app_modal_dialog_manager.cc
++++ b/components/javascript_dialogs/app_modal_dialog_manager.cc
+@@ -147,53 +147,10 @@ void AppModalDialogManager::RunBeforeUnloadDialogWithOptions(
+     bool is_reload,
+     bool is_app,
+     DialogClosedCallback callback) {
+-  ChromeJavaScriptDialogExtraData* extra_data =
+-      &javascript_dialog_extra_data_[web_contents];
+-
+-  if (extra_data->suppress_javascript_messages_) {
+-    // If a site harassed the user enough for them to put it on mute, then it
+-    // lost its privilege to deny unloading.
+-    std::move(callback).Run(true, std::u16string());
+-    return;
+-  }
+-
+-  // Build the dialog message. We explicitly do _not_ allow the webpage to
+-  // specify the contents of this dialog, as per the current spec
+-  //
+-  // https://html.spec.whatwg.org/#unloading-documents, step 8:
+-  //
+-  // "The message shown to the user is not customizable, but instead
+-  // determined by the user agent. In particular, the actual value of the
+-  // returnValue attribute is ignored."
+-  //
+-  // This message used to be customizable, but it was frequently abused by
+-  // scam websites so the specification was changed.
+-
+-  std::u16string title;
+-  if (is_app) {
+-    title = l10n_util::GetStringUTF16(
+-        is_reload ? IDS_BEFORERELOAD_APP_MESSAGEBOX_TITLE
+-                  : IDS_BEFOREUNLOAD_APP_MESSAGEBOX_TITLE);
+-  } else {
+-    title = l10n_util::GetStringUTF16(is_reload
+-                                          ? IDS_BEFORERELOAD_MESSAGEBOX_TITLE
+-                                          : IDS_BEFOREUNLOAD_MESSAGEBOX_TITLE);
+-  }
+-  const std::u16string message =
+-      l10n_util::GetStringUTF16(IDS_BEFOREUNLOAD_MESSAGEBOX_MESSAGE);
+-
+-  extensions_client_->OnDialogOpened(web_contents);
+-
+-  AppModalDialogQueue::GetInstance()->AddDialog(new AppModalDialogController(
+-      web_contents, &javascript_dialog_extra_data_, title,
+-      content::JAVASCRIPT_DIALOG_TYPE_CONFIRM, message,
+-      std::u16string(),  // default_prompt_text
+-      ShouldDisplaySuppressCheckbox(extra_data),
+-      true,  // is_before_unload_dialog
+-      is_reload,
+-      base::BindOnce(&AppModalDialogManager::OnDialogClosed,
+-                     base::Unretained(this), web_contents,
+-                     std::move(callback))));
++  // If a site harassed the user enough for them to put it on mute, then it
++  // lost its privilege to deny unloading.
++  std::move(callback).Run(true, std::u16string());
++  return;
+ }
+ 
+ bool AppModalDialogManager::HandleJavaScriptDialog(
+-- 
+2.45.1.windows.1
+
