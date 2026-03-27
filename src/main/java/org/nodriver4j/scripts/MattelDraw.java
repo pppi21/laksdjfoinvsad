@@ -85,11 +85,7 @@ public class MattelDraw {
                     System.out.println("[MattelDraw] Restarting flow (attempt " + (attempt + 1) + "/" + totalAttempts + ")...");
                     resetFlowState();
 
-                    try {
-                        page.navigate(PRODUCT_URL);
-                    } catch (TimeoutException te) {
-                        throw new RuntimeException("Failed to navigate back to draw page: " + te.getMessage(), te);
-                    }
+                    page.navigate(PRODUCT_URL);
                 } else {
                     throw new RuntimeException("Entry failed after " + totalAttempts + " attempts: " + e.getMessage(), e);
                 }
@@ -255,12 +251,9 @@ public class MattelDraw {
         long deadline = System.currentTimeMillis() + 4000;
 
         while (System.currentTimeMillis() < deadline) {
-            try {
-                if (page.exists(SUCCESS_MESSAGE) &&
-                        page.containsTextTrimmed(SUCCESS_MESSAGE, "YOUR ENTRY IS IN!")) {
-                    return true;
-                }
-            } catch (TimeoutException _) {
+            if (page.exists(SUCCESS_MESSAGE) &&
+                    page.containsTextTrimmed(SUCCESS_MESSAGE, "YOUR ENTRY IS IN!")) {
+                return true;
             }
             page.sleep(200);
         }

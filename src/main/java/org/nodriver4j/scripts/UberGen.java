@@ -14,7 +14,8 @@ import org.nodriver4j.services.response.sms.SmsActivation;
 import org.nodriver4j.services.sms.DaisySmsService;
 import org.nodriver4j.services.sms.SmsService;
 
-import java.util.concurrent.TimeoutException;
+import org.nodriver4j.core.exceptions.AutomationException;
+import org.nodriver4j.core.exceptions.ElementNotInteractableException;
 
 /**
  * Automation script for Uber Eats account generation.
@@ -166,8 +167,8 @@ public class UberGen implements AutomationScript {
             }
         } catch (UnexpectedNavigationException e) {
             logger.error("Unexpected navigation: " + e.url());
-        } catch (TimeoutException e) {
-            logger.error("Timeout: " + e.getMessage());
+        } catch (AutomationException e) {
+            logger.error("Automation error: " + e.getMessage());
         }
 
         throw new RuntimeException("Signup failed unexpectedly for: " + profile.emailAddress());
@@ -198,7 +199,7 @@ public class UberGen implements AutomationScript {
                 page.waitForSelector(EMAIL_TEXT, 20000);
                 return;
 
-            } catch (TimeoutException | InterruptedException e) {
+            } catch (AutomationException e) {
                 logger.log("Navigate attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
             }
         }
@@ -223,7 +224,7 @@ public class UberGen implements AutomationScript {
                 page.waitForSelector(EMAIL_OTP_TEXT, 15000);
                 return;
 
-            } catch (TimeoutException | InterruptedException e) {
+            } catch (AutomationException e) {
                 logger.log("Sign up attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
             }
         }
@@ -256,7 +257,7 @@ public class UberGen implements AutomationScript {
                     page.sleep(1500);
                     return;
 
-                } catch (EmailPollingBase.EmailExtractionException | InterruptedException | TimeoutException e) {
+                } catch (EmailPollingBase.EmailExtractionException | AutomationException e) {
                     logger.log("OTP attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
                 } catch (GmailClient.GmailClientException e) {
                     logger.log("OTP attempt " + attempt + "/" + ATTEMPTS
@@ -280,7 +281,7 @@ public class UberGen implements AutomationScript {
             try {
                 page.click(SKIP_PHONE_BUTTON);
                 return;
-            } catch (TimeoutException e) {
+            } catch (AutomationException e) {
                 logger.log("Phone skip attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
                 page.sleep(1000);
             }
@@ -296,7 +297,7 @@ public class UberGen implements AutomationScript {
                 fillFormField(LAST_NAME_TEXT, profile.lastName(), true);
                 page.click(CONTINUE_NAME_BUTTON);
                 return;
-            } catch (InterruptedException | TimeoutException e) {
+            } catch (AutomationException e) {
                 logger.log("Name attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
             }
         }
@@ -310,7 +311,7 @@ public class UberGen implements AutomationScript {
                 page.click(ACCEPT_TERMS_CHECKBOX);
                 page.click(CONTINUE_TERMS_BUTTON);
                 return;
-            } catch (TimeoutException e) {
+            } catch (AutomationException e) {
                 logger.log("Terms attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
             }
         }
@@ -324,7 +325,7 @@ public class UberGen implements AutomationScript {
                 page.waitForSelector(CONTINUE_SECURITY_BUTTON, 1000);
                 page.click(SKIP_SECURITY_BUTTON);
                 return;
-            } catch (TimeoutException e) {
+            } catch (AutomationException e) {
                 logger.log("Security attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
             }
         }
@@ -359,6 +360,8 @@ public class UberGen implements AutomationScript {
                     fillFormField("input", code, false);
 
                     sms.completeActivation(activation.activationId());
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
                 }
 
                 page.sleep(20000);
@@ -366,7 +369,7 @@ public class UberGen implements AutomationScript {
                     profile.shippingPhone(phoneNumber);
                     return;
                 }
-            } catch (TimeoutException | InterruptedException e) {
+            } catch (AutomationException e) {
                 logger.log("Security attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
             } catch (SmsProviderException e) {
                 logger.log("SMS attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
@@ -377,7 +380,7 @@ public class UberGen implements AutomationScript {
 
     // ==================== Helpers ====================
 
-    private void fillFormField(String selector, String value, boolean validate) throws InterruptedException, TimeoutException {
+    private void fillFormField(String selector, String value, boolean validate) {
         for (int attempt = 0; attempt <= ATTEMPTS; attempt++) {
             page.fillFormField(selector, value, randomDelay(), randomDelay(), randomSpeed());
             if (page.validateValue(selector, value) || !validate) {
@@ -386,7 +389,8 @@ public class UberGen implements AutomationScript {
             page.sleep(200);
             page.clear(selector);
         }
-        throw new TimeoutException("Failed to fill field after " + ATTEMPTS + " attempts: " + selector);
+        throw new ElementNotInteractableException(
+                "Failed to fill field after " + ATTEMPTS + " attempts: " + selector, selector);
     }
 
     private int randomDelay(){
@@ -398,7 +402,7 @@ public class UberGen implements AutomationScript {
     }
 
     private void waitForLoadEvent(int timeout) {
-        try{page.waitForLoadEvent(timeout);}catch(TimeoutException _){}
+        page.waitForLoadEvent(timeout);
     }
 
     // ==================== Inner Exception Classes ====================

@@ -6,7 +6,8 @@ import org.nodriver4j.services.response.captcha.ArkoseResponse;
 import org.nodriver4j.services.captcha.twocaptcha.TwoCaptchaService;
 import org.nodriver4j.services.captcha.twocaptcha.TwoCaptchaException;
 
-import java.util.concurrent.TimeoutException;
+import org.nodriver4j.core.exceptions.AutomationException;
+import org.nodriver4j.core.exceptions.ScriptExecutionException;
 
 /**
  * Static utility class for solving Arkose Labs (FunCaptcha) challenges.
@@ -192,7 +193,7 @@ public final class ArkoseSolver {
         String publicKey;
         try {
             publicKey = extractPublicKey(page);
-        } catch (TimeoutException e) {
+        } catch (AutomationException e) {
             return SolveResult.failure("Failed to extract public key: " + e.getMessage());
         }
 
@@ -299,7 +300,7 @@ public final class ArkoseSolver {
         try {
             page.evaluate(HOOK_ENFORCEMENT_SCRIPT);
             System.out.println("[ArkoseSolver] Enforcement hook installed");
-        } catch (TimeoutException e) {
+        } catch (AutomationException e) {
             System.err.println("[ArkoseSolver] Failed to install enforcement hook: " + e.getMessage());
         }
     }
@@ -325,7 +326,7 @@ public final class ArkoseSolver {
                     """;
             String result = page.evaluate(script);
             return "true".equals(result);
-        } catch (TimeoutException e) {
+        } catch (AutomationException e) {
             return false;
         }
     }
@@ -337,9 +338,8 @@ public final class ArkoseSolver {
      *
      * @param page the Page to extract from
      * @return the public key, or null if not found
-     * @throws TimeoutException if the script evaluation fails
      */
-    private static String extractPublicKey(Page page) throws TimeoutException {
+    private static String extractPublicKey(Page page) {
         String result = page.evaluate(EXTRACT_PUBLIC_KEY_SCRIPT);
         if (result == null || result.isBlank() || "null".equals(result)) {
             return null;
@@ -365,7 +365,7 @@ public final class ArkoseSolver {
                 return null;
             }
             return subdomain;
-        } catch (TimeoutException e) {
+        } catch (AutomationException e) {
             return null;
         }
     }
@@ -384,7 +384,7 @@ public final class ArkoseSolver {
             String script = String.format(INJECT_TOKEN_SCRIPT, safeToken);
             String result = page.evaluate(script);
             return "true".equals(result);
-        } catch (TimeoutException e) {
+        } catch (AutomationException e) {
             System.err.println("[ArkoseSolver] Token injection failed: " + e.getMessage());
             return false;
         }
@@ -433,7 +433,7 @@ public final class ArkoseSolver {
     private static String currentUrl(Page page) {
         try {
             return page.currentUrl();
-        } catch (TimeoutException e) {
+        } catch (AutomationException e) {
             System.err.println("[ArkoseSolver] Could not get current URL: " + e.getMessage());
             return null;
         }

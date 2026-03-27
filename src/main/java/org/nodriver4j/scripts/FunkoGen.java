@@ -8,8 +8,10 @@ import org.nodriver4j.services.imap.EmailPollingBase;
 import org.nodriver4j.services.imap.GmailClient;
 import org.nodriver4j.services.imap.impl.FunkoVerificationExtractor;
 
+import org.nodriver4j.core.exceptions.AutomationException;
+import org.nodriver4j.core.exceptions.ElementNotInteractableException;
+
 import java.security.SecureRandom;
-import java.util.concurrent.TimeoutException;
 
 /**
  * Automation script for Funko account generation.
@@ -139,7 +141,7 @@ public class FunkoGen implements AutomationScript {
                 page.waitForLoadEvent(40000);
                 return;
 
-            } catch (TimeoutException e) {
+            } catch (AutomationException e) {
                 logger.log("Navigate attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
             }
         }
@@ -167,8 +169,8 @@ public class FunkoGen implements AutomationScript {
                 }
                 page.reload(true, 40000);
                 page.sleep(10000);
-                throw new TimeoutException("Potentially bad proxy.");
-            } catch (TimeoutException | InterruptedException e) {
+                throw new ElementNotInteractableException("Potentially bad proxy.", "");
+            } catch (AutomationException e) {
                 logger.log("Sign up attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
             }
         }
@@ -190,7 +192,7 @@ public class FunkoGen implements AutomationScript {
 
                 } catch (EmailPollingBase.EmailExtractionException e) {
                     logger.log("Verification attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
-                } catch (TimeoutException e) {
+                } catch (AutomationException e) {
                     throw new RuntimeException(e);
                 }
             }
@@ -200,7 +202,7 @@ public class FunkoGen implements AutomationScript {
 
     // ==================== Form Helpers ====================
 
-    private void fillFormField(String selector, String value, boolean validate) throws InterruptedException, TimeoutException {
+    private void fillFormField(String selector, String value, boolean validate) {
         for (int attempt = 0; attempt <= ATTEMPTS; attempt++) {
             page.fillFormField(selector, value, 300, 600);
             if (page.validateValue(selector, value) || !validate) {
@@ -209,7 +211,8 @@ public class FunkoGen implements AutomationScript {
             page.sleep(200);
             page.clear(selector);
         }
-        throw new TimeoutException("Failed to fill field after " + ATTEMPTS + " attempts: " + selector);
+        throw new ElementNotInteractableException(
+                "Failed to fill field after " + ATTEMPTS + " attempts: " + selector, selector);
     }
 
     // ==================== Utilities ====================

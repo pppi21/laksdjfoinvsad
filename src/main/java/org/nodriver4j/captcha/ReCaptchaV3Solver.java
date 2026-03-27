@@ -6,7 +6,8 @@ import org.nodriver4j.services.captcha.capsolver.CapSolverService;
 import org.nodriver4j.services.response.captcha.ReCaptchaV3Response;
 import org.nodriver4j.services.captcha.capsolver.CapSolverException;
 
-import java.util.concurrent.TimeoutException;
+import org.nodriver4j.core.exceptions.AutomationException;
+import org.nodriver4j.core.exceptions.ScriptExecutionException;
 
 /**
  * Static utility class for solving reCAPTCHA v3 challenges.
@@ -175,7 +176,7 @@ public final class ReCaptchaV3Solver {
         String siteKey;
         try {
             siteKey = extractSiteKey(page);
-        } catch (TimeoutException e) {
+        } catch (AutomationException e) {
             return SolveResult.failure("Failed to extract site key: " + e.getMessage());
         }
 
@@ -273,7 +274,7 @@ public final class ReCaptchaV3Solver {
                     """;
             String result = page.evaluate(script);
             return "true".equals(result);
-        } catch (TimeoutException e) {
+        } catch (AutomationException e) {
             return false;
         }
     }
@@ -285,9 +286,9 @@ public final class ReCaptchaV3Solver {
      *
      * @param page the Page to extract from
      * @return the site key, or null if not found
-     * @throws TimeoutException if the script evaluation fails
+     * @throws AutomationException if the script evaluation fails
      */
-    private static String extractSiteKey(Page page) throws TimeoutException {
+    private static String extractSiteKey(Page page) {
         String result = page.evaluate(EXTRACT_SITEKEY_SCRIPT);
         if (result == null || result.isBlank() || "null".equals(result)) {
             return null;
@@ -309,7 +310,7 @@ public final class ReCaptchaV3Solver {
             String script = String.format(INJECT_TOKEN_SCRIPT, safeToken);
             String result = page.evaluate(script);
             return "true".equals(result);
-        } catch (TimeoutException e) {
+        } catch (AutomationException e) {
             System.err.println("[ReCaptchaV3Solver] Token injection failed: " + e.getMessage());
             return false;
         }
@@ -357,7 +358,7 @@ public final class ReCaptchaV3Solver {
     private static String currentUrl(Page page) {
         try {
             return page.currentUrl();
-        } catch (TimeoutException e) {
+        } catch (AutomationException e) {
             System.err.println("[ReCaptchaV3Solver] Could not get current URL: " + e.getMessage());
             return null;
         }

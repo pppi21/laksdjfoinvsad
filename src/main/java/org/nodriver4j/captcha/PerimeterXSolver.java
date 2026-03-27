@@ -6,6 +6,9 @@ import com.google.gson.JsonObject;
 import org.nodriver4j.cdp.CDPSession;
 import org.nodriver4j.core.InteractionOptions;
 import org.nodriver4j.core.Page;
+import org.nodriver4j.core.exceptions.AutomationException;
+import org.nodriver4j.core.exceptions.FrameException;
+import org.nodriver4j.core.exceptions.ScriptExecutionException;
 import org.nodriver4j.math.BoundingBox;
 import org.nodriver4j.math.HumanBehavior;
 import org.nodriver4j.math.Vector;
@@ -208,7 +211,6 @@ public final class PerimeterXSolver {
 
             // Step 9: Mouse down
             System.out.println("[PerimeterXSolver] Pressing button...");
-            page.triggerCursorClickAnimation();
             page.mouseDown(targetPoint);
 
             // Step 10: Wait for animation style to apply
@@ -230,7 +232,7 @@ public final class PerimeterXSolver {
             System.out.println("[PerimeterXSolver] Press-and-hold completed (held for " + animationDuration + "ms)");
             return SolveResult.attempted(animationDuration);
 
-        } catch (TimeoutException e) {
+        } catch (AutomationException e) {
             System.err.println("[PerimeterXSolver] Timeout: " + e.getMessage());
             return SolveResult.error("Timeout: " + e.getMessage());
         } catch (Exception e) {
@@ -250,11 +252,7 @@ public final class PerimeterXSolver {
         if (page == null) {
             return false;
         }
-        try {
-            return page.exists(PX_CAPTCHA_SELECTOR);
-        } catch (TimeoutException e) {
-            return false;
-        }
+        return page.exists(PX_CAPTCHA_SELECTOR);
     }
 
     // ==================== Internal Methods ====================

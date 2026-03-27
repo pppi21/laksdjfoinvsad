@@ -2,12 +2,14 @@ package org.nodriver4j.captcha;
 
 import org.nodriver4j.core.Page;
 import org.nodriver4j.core.Page.IframeInfo;
+import org.nodriver4j.core.exceptions.AutomationException;
+import org.nodriver4j.core.exceptions.FrameException;
+import org.nodriver4j.core.exceptions.ScriptExecutionException;
 import org.nodriver4j.services.response.captcha.AutoSolveAIResponse;
 import org.nodriver4j.services.aycd.AutoSolveAIService;
 import org.nodriver4j.services.aycd.AutoSolveAIException;
 
 import java.util.*;
-import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
 /**
@@ -223,8 +225,8 @@ public final class ReCaptchaSolver {
                     warnings.add("Hit max rounds (" + options.maxRounds() + ") in attempt " + fullAttempts);
                 }
 
-            } catch (TimeoutException e) {
-                String msg = "Timeout in attempt " + fullAttempts + ": " + e.getMessage();
+            } catch (AutomationException e) {
+                String msg = "Automation error in attempt " + fullAttempts + ": " + e.getMessage();
                 System.err.println("[ReCaptchaSolver] " + msg);
                 warnings.add(msg);
             } catch (Exception e) {
@@ -247,11 +249,7 @@ public final class ReCaptchaSolver {
      * @return true if a reCAPTCHA checkbox iframe is found
      */
     public static boolean isPresent(Page page) {
-        try {
-            return page.exists(CHECKBOX_IFRAME_SELECTOR);
-        } catch (TimeoutException e) {
-            return false;
-        }
+        return page.exists(CHECKBOX_IFRAME_SELECTOR);
     }
 
     /**
@@ -264,7 +262,7 @@ public final class ReCaptchaSolver {
         try {
             IframeInfo checkboxIframe = page.getIframeInfo(CHECKBOX_IFRAME_SELECTOR, 0);
             return page.hasClassInFrame(checkboxIframe, CHECKBOX_SELECTOR, SOLVED_CLASS);
-        } catch (TimeoutException e) {
+        } catch (AutomationException e) {
             return false;
         }
     }
@@ -280,10 +278,10 @@ public final class ReCaptchaSolver {
      * @param page           the Page containing the reCAPTCHA
      * @param challengeIframe the challenge iframe info
      * @return the detected GridSize
-     * @throws TimeoutException if the detection script fails
+     * @throws ScriptExecutionException if the detection script fails
      * @throws IllegalArgumentException if the tile count is not 9 or 16
      */
-    private static GridSize detectGridSize(Page page, IframeInfo challengeIframe) throws TimeoutException {
+    private static GridSize detectGridSize(Page page, IframeInfo challengeIframe) {
         String script = String.format(
                 "document.querySelectorAll(\"%s\").length",
                 TILE_COUNT_SELECTOR.replace("\"", "\\\"")
@@ -292,14 +290,14 @@ public final class ReCaptchaSolver {
         String result = page.evaluateInFrame(challengeIframe, script);
 
         if (result == null || result.isBlank()) {
-            throw new TimeoutException("Failed to detect grid size: no result from tile count query");
+            throw new ScriptExecutionException("Failed to detect grid size: no result from tile count query");
         }
 
         int tileCount;
         try {
             tileCount = Integer.parseInt(result.trim());
         } catch (NumberFormatException e) {
-            throw new TimeoutException("Failed to detect grid size: invalid tile count '" + result + "'");
+            throw new ScriptExecutionException("Failed to detect grid size: invalid tile count '" + result + "'");
         }
 
         GridSize gridSize = GridSize.fromTileCount(tileCount);
@@ -313,7 +311,7 @@ public final class ReCaptchaSolver {
     /**
      * Clicks the reCAPTCHA checkbox and determines the result.
      */
-    private static ClickCheckboxResult clickCheckbox(Page page) throws TimeoutException {
+    private static ClickCheckboxResult clickCheckbox(Page page) {
         // Check if already solved
         IframeInfo checkboxIframe = page.getIframeInfo(CHECKBOX_IFRAME_SELECTOR, 0);
 
@@ -345,7 +343,7 @@ public final class ReCaptchaSolver {
             // Wait a bit more for challenge
             page.sleep(1000);
             if (!page.exists(CHALLENGE_IFRAME_SELECTOR)) {
-                throw new TimeoutException("Challenge iframe did not appear after clicking checkbox");
+                throw new FrameException("Challenge iframe did not appear after clicking checkbox");
             }
         }
 
@@ -374,7 +372,7 @@ public final class ReCaptchaSolver {
             Page.ImageData imageData;
             try {
                 imageData = page.fetchImageInFrame(challengeIframe, CHALLENGE_IMAGE_ELEMENT_SELECTOR);
-            } catch (TimeoutException e) {
+            } catch (AutomationException e) {
                 return RoundResult.error("Failed to fetch challenge image: " + e.getMessage());
             }
 
@@ -435,8 +433,8 @@ public final class ReCaptchaSolver {
             // Check status (pass original URL for redirect detection)
             return checkSolveStatus(page, urlBeforeVerify);
 
-        } catch (TimeoutException e) {
-            return RoundResult.error("Timeout: " + e.getMessage());
+        } catch (AutomationException e) {
+            return RoundResult.error("Automation error: " + e.getMessage());
         } catch (Exception e) {
             return RoundResult.error("Exception: " + e.getMessage());
         }
@@ -448,7 +446,7 @@ public final class ReCaptchaSolver {
      * @return list of tile IDs that were clicked
      */
     private static List<Integer> clickTiles(Page page, IframeInfo challengeIframe, AutoSolveAIResponse response,
-                                            GridSize gridSize, SolveOptions options) throws TimeoutException {
+                                            GridSize gridSize, SolveOptions options) {
         List<Integer> clickedTileIds = new ArrayList<>();
         int totalTiles = gridSize.tileCount();
 
@@ -491,7 +489,7 @@ public final class ReCaptchaSolver {
      * @return true if at least one tile has a transition style
      */
     private static boolean isFadeAwayCaptcha(Page page, IframeInfo challengeIframe,
-                                             List<Integer> clickedTileIds) throws TimeoutException {
+                                             List<Integer> clickedTileIds) {
         for (int tileId : clickedTileIds) {
             String style = getTileStyle(page, challengeIframe, tileId);
             if (style != null && style.contains("transition")) {
@@ -509,7 +507,7 @@ public final class ReCaptchaSolver {
      * @param tileId          the tile ID
      * @return the style attribute value, or null if not present
      */
-    private static String getTileStyle(Page page, IframeInfo challengeIframe, int tileId) throws TimeoutException {
+    private static String getTileStyle(Page page, IframeInfo challengeIframe, int tileId) {
         String tileSelector = String.format(TILE_SELECTOR_PATTERN, escapeForCss(tileId));
         String escapedSelector = tileSelector.replace("\\", "\\\\").replace("\"", "\\\"");
         String script = String.format(
@@ -567,10 +565,9 @@ public final class ReCaptchaSolver {
      * @param challengeIframe the challenge iframe
      * @param tileId          the tile ID
      * @return ImageData for the 100x100 replacement tile
-     * @throws TimeoutException if the image cannot be fetched
      */
     private static Page.ImageData fetchReplacementTileImage(Page page, IframeInfo challengeIframe,
-                                                            int tileId) throws TimeoutException {
+                                                            int tileId) {
         String imgSelector = String.format(TILE_IMAGE_SELECTOR_PATTERN, escapeForCss(tileId));
         return page.fetchImageInFrame(challengeIframe, imgSelector);
     }
@@ -646,7 +643,7 @@ public final class ReCaptchaSolver {
                         fetchedTileIds.add(tileId);
                         System.out.println("[ReCaptchaSolver] Fetched replacement image for tile " + tileId);
 
-                    } catch (TimeoutException e) {
+                    } catch (AutomationException e) {
                         System.err.println("[ReCaptchaSolver] Failed to fetch image for tile " + tileId +
                                 ": " + e.getMessage());
                     }
@@ -680,7 +677,7 @@ public final class ReCaptchaSolver {
                         String style = getTileStyle(page, challengeIframe, tileId);
                         long duration = parseTransitionDuration(style);
                         tilesWithDurations.add(Map.entry(tileId, Math.max(0, duration)));
-                    } catch (TimeoutException e) {
+                    } catch (AutomationException e) {
                         // If we can't get style, use 0 duration (will be clicked first)
                         tilesWithDurations.add(Map.entry(tileId, 0L));
                     }
@@ -711,7 +708,7 @@ public final class ReCaptchaSolver {
                             System.out.println("[ReCaptchaSolver] Tile " + tileId + " fading again");
                         }
 
-                    } catch (TimeoutException e) {
+                    } catch (AutomationException e) {
                         System.err.println("[ReCaptchaSolver] Failed to click tile " + tileId + ": " + e.getMessage());
                     }
                 }
@@ -725,8 +722,8 @@ public final class ReCaptchaSolver {
             System.out.println("[ReCaptchaSolver] Fade-away processing complete after " + totalIterations + " round(s)");
             return true;
 
-        } catch (TimeoutException e) {
-            System.err.println("[ReCaptchaSolver] Timeout during fade-away processing: " + e.getMessage());
+        } catch (AutomationException e) {
+            System.err.println("[ReCaptchaSolver] Automation error during fade-away processing: " + e.getMessage());
             return false;
         }
     }
@@ -841,19 +838,19 @@ public final class ReCaptchaSolver {
             // Challenge gone but not solved - unusual state
             return RoundResult.error("Challenge disappeared but captcha not solved");
 
-        } catch (TimeoutException e) {
-            // If we get a timeout checking elements, the page may have redirected
+        } catch (AutomationException e) {
+            // If we get an error checking elements, the page may have redirected
             try {
                 String currentUrl = page.currentUrl();
                 if (urlBeforeVerify != null && !urlBeforeVerify.equals(currentUrl)) {
                     System.out.println("[ReCaptchaSolver] Page redirected (detected via exception recovery)");
                     return RoundResult.solved();
                 }
-            } catch (TimeoutException ignored) {
+            } catch (AutomationException ignored) {
                 // Can't even get URL - something is very wrong
             }
 
-            return RoundResult.error("Timeout checking solve status: " + e.getMessage());
+            return RoundResult.error("Error checking solve status: " + e.getMessage());
         }
     }
 

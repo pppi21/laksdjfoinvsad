@@ -7,10 +7,12 @@ import org.nodriver4j.persistence.repository.ProfileRepository;
 import org.nodriver4j.services.TaskContext;
 import org.nodriver4j.services.TaskLogger;
 
+import org.nodriver4j.core.exceptions.AutomationException;
+import org.nodriver4j.core.exceptions.ElementNotInteractableException;
+
 import java.security.SecureRandom;
 import java.time.LocalDate;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.TimeoutException;
 
 /**
  * Automation script for creating Ike's sandwich rewards accounts.
@@ -192,7 +194,7 @@ public class SandwichGen implements AutomationScript {
                 page.navigate(REFERRER_URL);
                 return;
 
-            } catch (TimeoutException e) {
+            } catch (AutomationException e) {
                 logger.log("Navigation attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
                 if (attempt == ATTEMPTS) {
                     throw new RuntimeException("Failed to navigate after " + ATTEMPTS + " attempts", e);
@@ -215,13 +217,9 @@ public class SandwichGen implements AutomationScript {
                     .waitTimeoutMs(4000)
                     .build());
 
-            try {
-                if (page.exists(FIRST_NAME_TEXT)) {
-                    logger.log("Initial captcha passed");
-                    return;
-                }
-            } catch (TimeoutException e) {
-                // Continue to retry
+            if (page.exists(FIRST_NAME_TEXT)) {
+                logger.log("Initial captcha passed");
+                return;
             }
 
             if (retry < CAPTCHA_MAX_RETRIES) {
@@ -253,7 +251,7 @@ public class SandwichGen implements AutomationScript {
                 logger.log("Personal information filled");
                 return;
 
-            } catch (TimeoutException | InterruptedException e) {
+            } catch (AutomationException e) {
                 logger.log("Fill personal info attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
                 if (attempt == ATTEMPTS) {
                     throw new RuntimeException("Failed to fill personal info after " + ATTEMPTS + " attempts", e);
@@ -282,7 +280,7 @@ public class SandwichGen implements AutomationScript {
                 logger.log("Account credentials filled");
                 return;
 
-            } catch (TimeoutException | InterruptedException e) {
+            } catch (AutomationException e) {
                 logger.log("Fill credentials attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
                 if (attempt == ATTEMPTS) {
                     throw new RuntimeException("Failed to fill credentials after " + ATTEMPTS + " attempts", e);
@@ -299,36 +297,28 @@ public class SandwichGen implements AutomationScript {
         logger.log("Selecting location preferences...");
 
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
-            try {
-                // Scroll to bottom for dropdowns
-                page.scrollToBottom();
-                page.sleep(1000);
+            // Scroll to bottom for dropdowns
+            page.scrollToBottom();
+            page.sleep(1000);
 
-                // State selection
-                page.click(STATE_DROPDOWN);
-                page.sleep(2500);
-                page.select(STATE_DROPDOWN, STATE_CALIFORNIA);
-                page.sleep(3000);
+            // State selection
+            page.click(STATE_DROPDOWN);
+            page.sleep(2500);
+            page.select(STATE_DROPDOWN, STATE_CALIFORNIA);
+            page.sleep(3000);
 
-                // Handle potential second captcha
-                solveSecondaryCaptcha();
+            // Handle potential second captcha
+            solveSecondaryCaptcha();
 
-                // Store selection
-                page.click(STORE_DROPDOWN);
-                page.sleep(2500);
-                page.select(STORE_DROPDOWN, STORE_DEL_MAR);
-                page.sleep(1500);
+            // Store selection
+            page.click(STORE_DROPDOWN);
+            page.sleep(2500);
+            page.select(STORE_DROPDOWN, STORE_DEL_MAR);
+            page.sleep(1500);
 
-                logger.log("Location preferences selected");
-                return;
+            logger.log("Location preferences selected");
+            return;
 
-            } catch (TimeoutException e) {
-                logger.log("Select location attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
-                if (attempt == ATTEMPTS) {
-                    throw new RuntimeException("Failed to select location after " + ATTEMPTS + " attempts", e);
-                }
-                page.sleep(1000);
-            }
         }
     }
 
@@ -355,12 +345,8 @@ public class SandwichGen implements AutomationScript {
                 logged = true;
             }
 
-            try {
-                if (page.exists(FIRST_NAME_TEXT)) {
-                    return;
-                }
-            } catch (TimeoutException e) {
-                // Continue to retry
+            if (page.exists(FIRST_NAME_TEXT)) {
+                return;
             }
 
             if (retry < CAPTCHA_MAX_RETRIES) {
@@ -377,21 +363,13 @@ public class SandwichGen implements AutomationScript {
         logger.log("Submitting form...");
 
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
-            try {
-                page.click(SUBMIT_BUTTON);
-                page.sleep(3000);
+            page.click(SUBMIT_BUTTON);
+            page.sleep(3000);
 
-                page.waitForSelector(SUCCESS_MESSAGE, 15000);
-                logger.log("Form submitted successfully");
-                return;
+            page.waitForSelector(SUCCESS_MESSAGE, 15000);
+            logger.log("Form submitted successfully");
+            return;
 
-            } catch (TimeoutException e) {
-                logger.log("Submit attempt " + attempt + "/" + ATTEMPTS + " failed: " + e.getMessage());
-                if (attempt == ATTEMPTS) {
-                    throw new RuntimeException("Failed to submit form after " + ATTEMPTS + " attempts", e);
-                }
-                page.sleep(2000);
-            }
         }
     }
 
@@ -403,10 +381,8 @@ public class SandwichGen implements AutomationScript {
      * @param selector the XPath or CSS selector
      * @param value    the value to type
      * @param validate whether to validate the value was entered correctly
-     * @throws TimeoutException     if the field cannot be filled after retries
-     * @throws InterruptedException if interrupted while filling
      */
-    private void fillFormField(String selector, String value, boolean validate) throws TimeoutException, InterruptedException {
+    private void fillFormField(String selector, String value, boolean validate) {
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
             page.fillFormField(selector, value, 900, 2000);
 
@@ -414,12 +390,12 @@ public class SandwichGen implements AutomationScript {
                 return;
             }
 
-            // Value mismatch — clear and retry
             page.sleep(200);
             page.clear(selector);
         }
 
-        throw new TimeoutException("Failed to fill field after " + ATTEMPTS + " attempts: " + selector);
+        throw new ElementNotInteractableException(
+                "Failed to fill field after " + ATTEMPTS + " attempts: " + selector, selector);
     }
 
     /**

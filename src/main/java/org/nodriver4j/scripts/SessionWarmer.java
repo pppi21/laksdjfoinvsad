@@ -216,13 +216,7 @@ public class SessionWarmer {
      * @param url the URL to navigate to
      */
     private void navigateAndWait(String url) {
-        try {
-            page.navigate(url, PAGE_LOAD_TIMEOUT_MS);
-        } catch (TimeoutException e) {
-            // Page.navigate() handles timeouts gracefully internally,
-            // but we catch here just in case the behavior changes
-            System.err.println("[SessionWarmer] Page load timeout for " + url + ", continuing...");
-        }
+        page.navigate(url, PAGE_LOAD_TIMEOUT_MS);
     }
 
     /**

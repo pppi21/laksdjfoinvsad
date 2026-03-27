@@ -125,6 +125,6 @@ public class BrowserScan implements AutomationScript {
     // ==================== Helpers ====================
 
     private void waitForLoadEvent(int timeout) {
-        try{page.waitForLoadEvent(timeout);}catch(TimeoutException _){}
+        page.waitForLoadEvent(timeout);
     }
 }
