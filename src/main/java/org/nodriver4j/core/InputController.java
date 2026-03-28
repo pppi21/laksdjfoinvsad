@@ -39,9 +39,39 @@ class InputController {
     // ==================== Mouse Interaction ====================
 
     void click(String selector) {
-        scrollIntoView(selector);
-        BoundingBox box = page.waitForSelector(selector);
-        clickAtBox(box);
+        click(selector, false);
+    }
+
+    void click(String selector, boolean force) {
+        if (force) {
+            scrollIntoView(selector);
+            BoundingBox box = page.waitForSelector(selector);
+            clickAtBox(box);
+            return;
+        }
+
+        Actionability act = page.actionability();
+
+        // Wait for element to be visible, stable, and enabled
+        BoundingBox box = act.waitForActionable(selector,
+                new String[]{"visible", "stable", "enabled"},
+                page.options().getDefaultTimeout());
+
+        // Scroll into view if needed
+        scrollIntoViewIfNeeded(box);
+
+        // Re-query position after potential scroll
+        box = page.waitForSelector(selector, 2000);
+
+        // Determine click point
+        Vector target = box.getRandomPoint(page.options().getPaddingPercentage());
+
+        // Verify hit target
+        act.verifyHitTarget(selector, target.getX(), target.getY());
+
+        // Perform the click
+        moveMouseTo(target);
+        performClick(target);
     }
 
     void clickAt(double x, double y) {
@@ -57,7 +87,12 @@ class InputController {
     }
 
     void hover(String selector) {
-        BoundingBox box = page.waitForSelector(selector);
+        Actionability act = page.actionability();
+        BoundingBox box = act.waitForActionable(selector,
+                new String[]{"visible", "stable"},
+                page.options().getDefaultTimeout());
+        scrollIntoViewIfNeeded(box);
+        box = page.waitForSelector(selector, 2000);
         Vector target = box.getRandomPoint(page.options().getPaddingPercentage());
         moveMouseTo(target);
     }
@@ -111,12 +146,6 @@ class InputController {
         int hesitation = HumanBehavior.hesitationDelay(
                 options.getPreClickDelayMin(), options.getPreClickDelayMax());
         page.sleep(hesitation);
-
-        try {
-            page.ensureRuntimeDisabled();
-        } catch (TimeoutException e) {
-            throw new ScriptExecutionException("Failed to disable Runtime domain", e);
-        }
 
         dispatchMouseButton(position, "mousePressed", "left", 1);
         int holdDuration = HumanBehavior.clickHoldDuration(
@@ -309,6 +338,11 @@ class InputController {
     }
 
     void select(String selector, String value) {
+        Actionability act = page.actionability();
+        act.waitForActionable(selector,
+                new String[]{"visible", "enabled"},
+                page.options().getDefaultTimeout());
+
         enableRuntime();
 
         String script;
@@ -608,6 +642,8 @@ class InputController {
             }
 
             scrollBy(deltaX, deltaY);
+            // Allow the browser to finish processing the final wheel event
+            page.sleep(150);
         }
     }
 
@@ -684,7 +720,14 @@ class InputController {
 
     void fillFormField(String selector, String value, long preTypeDelay, long postTypeDelay,
                        double speedMultiplier) {
-        click(selector);
+        // Verify element is editable before attempting to type
+        Actionability act = page.actionability();
+        act.waitForActionable(selector,
+                new String[]{"visible", "stable", "enabled", "editable"},
+                page.options().getDefaultTimeout());
+
+        click(selector, true); // force=true since actionability already verified
+        clear(selector);
         page.sleep(preTypeDelay);
         type(value, speedMultiplier);
         page.sleep(postTypeDelay);

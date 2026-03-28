@@ -1,6 +1,5 @@
 package org.nodriver4j.scripts;
 
-import org.nodriver4j.captcha.ArkoseSolver;
 import org.nodriver4j.captcha.ReCaptchaSolver;
 import org.nodriver4j.core.Page;
 import org.nodriver4j.persistence.Settings;
@@ -66,7 +65,6 @@ public class UberGen implements AutomationScript {
     private static final String PHONE_NUMBER_TEXT = "input[type='text']";
     private static final String UPDATE_PHONE_BUTTON = "button[aria-label='Update']";
     private static final String PHONE_INPUT_ERROR = "p[data-testid='phone-input-error']";
-    private static final String HOMEPAGE_SUCCESS_ID = "#main-content";
 
     // ==================== Instance Fields ====================
 

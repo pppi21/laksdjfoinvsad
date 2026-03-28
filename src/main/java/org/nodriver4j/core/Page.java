@@ -16,8 +16,12 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
+import java.util.regex.Pattern;
 
 /**
  * High-level automation API for a browser page/tab.
@@ -54,11 +58,21 @@ public class Page {
     private final InputController input;
     private final FrameManager frames;
     private final NavigationController navigation;
+    private final Actionability actionability;
+    private final SelectorEngine selectorEngine;
 
     // Enabled CDP domains tracking
     private boolean pageEnabled = false;
     private boolean runtimeEnabled = false;
     private boolean networkEnabled = false;
+    private volatile int executionContextId = -1;
+
+    // Resource blocking state
+    private final Set<String> blockedResourceTypes = ConcurrentHashMap.newKeySet();
+    private final Set<String> blockedUrlPatterns = ConcurrentHashMap.newKeySet();
+    private boolean fetchInterceptionActive = false;
+    private Consumer<JsonObject> fetchRequestPausedHandler;
+    private Consumer<JsonObject> fetchAuthHandler;
 
 
     /**
@@ -87,6 +101,8 @@ public class Page {
         this.input = new InputController(this);
         this.frames = new FrameManager(this);
         this.navigation = new NavigationController(this);
+        this.actionability = new Actionability(this);
+        this.selectorEngine = new SelectorEngine(this);
     }
 
     /**
@@ -132,13 +148,6 @@ public class Page {
         }
     }
 
-    public void ensureRuntimeDisabled() throws TimeoutException {
-        if (runtimeEnabled) {
-            cdp.send("Runtime.disable", null);
-            runtimeEnabled = false;
-        }
-    }
-
     void ensureNetworkEnabled() throws TimeoutException {
         if (!networkEnabled) {
             cdp.send("Network.enable", null);
@@ -160,6 +169,19 @@ public class Page {
             throw new IllegalArgumentException("CDPSession cannot be null");
         }
         this.cdp = session;
+
+        // Enable Runtime permanently — no more per-call toggling
+        try {
+            cdp.send("Runtime.enable", null);
+            runtimeEnabled = true;
+        } catch (TimeoutException e) {
+            System.err.println("[Page] Warning: Failed to enable Runtime domain: " + e.getMessage());
+        }
+
+        // Track execution contexts to detect navigation-caused invalidation
+        cdp.addEventListener("Runtime.executionContextCreated", this::onExecutionContextCreated);
+        cdp.addEventListener("Runtime.executionContextDestroyed", this::onExecutionContextDestroyed);
+        cdp.addEventListener("Runtime.executionContextsCleared", this::onExecutionContextsCleared);
     }
 
     /**
@@ -173,6 +195,37 @@ public class Page {
      */
     public boolean isAttached() {
         return cdp != null;
+    }
+
+    // ==================== Execution Context Tracking ====================
+
+    private void onExecutionContextCreated(JsonObject params) {
+        if (params.has("context")) {
+            JsonObject context = params.getAsJsonObject("context");
+            if (context.has("auxData")) {
+                JsonObject auxData = context.getAsJsonObject("auxData");
+                if (auxData.has("isDefault") && auxData.get("isDefault").getAsBoolean()) {
+                    executionContextId = context.get("id").getAsInt();
+                }
+            }
+        }
+    }
+
+    private void onExecutionContextDestroyed(JsonObject params) {
+        if (params.has("executionContextId")) {
+            int destroyedId = params.get("executionContextId").getAsInt();
+            if (destroyedId == executionContextId) {
+                executionContextId = -1;
+            }
+        }
+    }
+
+    private void onExecutionContextsCleared(JsonObject params) {
+        executionContextId = -1;
+    }
+
+    int executionContextId() {
+        return executionContextId;
     }
 
     // ==================== Iframe (delegated to FrameManager) ====================
@@ -232,6 +285,10 @@ public class Page {
         frames.clickInFrame(iframeSelector, iframeIndex, elementSelector);
     }
 
+    public void clickInNestedFrames(IframeInfo outerFrame, String nestedIframeSelector, String elementSelector) {
+        frames.clickInNestedFrames(toFrameManagerInfo(outerFrame), nestedIframeSelector, elementSelector);
+    }
+
     public byte[] screenshotElementInFrame(IframeInfo iframeInfo, String selector) {
         return frames.screenshotElementInFrame(toFrameManagerInfo(iframeInfo), selector);
     }
@@ -256,6 +313,10 @@ public class Page {
 
     public void navigate(String url, int timeoutMs) {
         navigation.navigate(url, timeoutMs);
+    }
+
+    public void navigate(String url, int timeoutMs, WaitUntil waitUntil) {
+        navigation.navigate(url, timeoutMs, waitUntil);
     }
 
     public void reload() {
@@ -289,34 +350,42 @@ public class Page {
     // ==================== Element Queries (delegated to ElementQuery) ====================
 
     public BoundingBox querySelector(String selector) {
+        if (SelectorEngine.isEngineSelector(selector)) return selectorEngine.resolve(selector);
         return elementQuery.querySelector(selector);
     }
 
     public BoundingBox querySelector(String selector, int timeoutMs) {
+        if (SelectorEngine.isEngineSelector(selector)) return selectorEngine.resolve(selector);
         return elementQuery.querySelector(selector, timeoutMs);
     }
 
     public List<BoundingBox> querySelectorAll(String selector) {
+        if (SelectorEngine.isEngineSelector(selector)) return selectorEngine.resolveAll(selector);
         return elementQuery.querySelectorAll(selector);
     }
 
     public boolean exists(String selector) {
+        if (SelectorEngine.isEngineSelector(selector)) return selectorEngine.resolveExists(selector);
         return elementQuery.exists(selector);
     }
 
     public boolean isVisible(String selector) {
+        if (SelectorEngine.isEngineSelector(selector)) return selectorEngine.resolveVisible(selector);
         return elementQuery.isVisible(selector);
     }
 
     public String getText(String selector) {
+        if (SelectorEngine.isEngineSelector(selector)) return selectorEngine.resolveText(selector);
         return elementQuery.getText(selector);
     }
 
     public String getAttribute(String selector, String attribute) {
+        if (SelectorEngine.isEngineSelector(selector)) return selectorEngine.resolveAttribute(selector, attribute);
         return elementQuery.getAttribute(selector, attribute);
     }
 
     public String getValue(String selector) {
+        if (SelectorEngine.isEngineSelector(selector)) return selectorEngine.resolveValue(selector);
         return elementQuery.getValue(selector);
     }
 
@@ -348,10 +417,12 @@ public class Page {
     }
 
     public BoundingBox waitForSelector(String selector) {
+        if (SelectorEngine.isEngineSelector(selector)) return selectorEngine.waitFor(selector, options().getDefaultTimeout());
         return elementQuery.waitForSelector(selector);
     }
 
     public BoundingBox waitForSelector(String selector, int timeoutMs) {
+        if (SelectorEngine.isEngineSelector(selector)) return selectorEngine.waitFor(selector, timeoutMs);
         return elementQuery.waitForSelector(selector, timeoutMs);
     }
 
@@ -409,6 +480,10 @@ public class Page {
 
     public void click(String selector) {
         input.click(selector);
+    }
+
+    public void click(String selector, boolean force) {
+        input.click(selector, force);
     }
 
     public void clickAt(double x, double y) {
@@ -503,8 +578,6 @@ public class Page {
      */
     public String evaluate(String script) {
         try {
-            ensureRuntimeEnabled();
-
             JsonObject params = new JsonObject();
             params.addProperty("expression", script);
             params.addProperty("returnByValue", true);
@@ -540,6 +613,72 @@ public class Page {
     public int evaluateInt(String script) {
         String result = evaluate(script);
         return result != null ? Integer.parseInt(result) : 0;
+    }
+
+    /**
+     * Polls a JavaScript predicate via {@code requestAnimationFrame} until it
+     * returns a truthy value or the timeout expires.
+     *
+     * <p>The predicate is re-evaluated every animation frame (~16 ms at 60 fps)
+     * inside the browser, eliminating Java-side {@code Thread.sleep} round-trips.
+     * A single CDP {@code Runtime.evaluate} call with {@code awaitPromise:true}
+     * blocks until the injected Promise resolves.</p>
+     *
+     * @param jsPredicateExpression JS expression evaluated each frame; should
+     *                              return a truthy value on success, falsy to
+     *                              keep polling
+     * @param timeoutMs             maximum time to poll before giving up
+     * @return the stringified result on success, or {@code null} on timeout
+     */
+    public String pollRaf(String jsPredicateExpression, int timeoutMs) {
+        String script =
+                "new Promise((resolve) => {" +
+                "  const deadline = Date.now() + " + timeoutMs + ";" +
+                "  function poll() {" +
+                "    try {" +
+                "      const result = (" + jsPredicateExpression + ");" +
+                "      if (result) {" +
+                "        resolve(typeof result === 'string' ? result : JSON.stringify(result));" +
+                "        return;" +
+                "      }" +
+                "    } catch (e) {}" +
+                "    if (Date.now() >= deadline) {" +
+                "      resolve(null);" +
+                "      return;" +
+                "    }" +
+                "    requestAnimationFrame(poll);" +
+                "  }" +
+                "  requestAnimationFrame(poll);" +
+                "})";
+
+        try {
+            JsonObject params = new JsonObject();
+            params.addProperty("expression", script);
+            params.addProperty("returnByValue", true);
+            params.addProperty("awaitPromise", true);
+
+            // CDP timeout must exceed the JS-side timeout to avoid premature abort
+            JsonObject result = cdp.send("Runtime.evaluate", params,
+                    timeoutMs + 5000, TimeUnit.MILLISECONDS);
+
+            if (result.has("result")) {
+                JsonObject resultObj = result.getAsJsonObject("result");
+                if (resultObj.has("value")) {
+                    JsonElement value = resultObj.get("value");
+                    if (value.isJsonNull()) {
+                        return null;
+                    }
+                    if (value.isJsonPrimitive()) {
+                        return value.getAsString();
+                    }
+                    return value.toString();
+                }
+            }
+
+            return null;
+        } catch (TimeoutException e) {
+            return null;
+        }
     }
 
     public String frameTree() {
@@ -892,12 +1031,239 @@ public class Page {
         }
     }
 
+    // ==================== Resource Blocking ====================
+
+    /**
+     * Blocks requests matching the given resource types.
+     *
+     * <p>Resource types are case-insensitive and correspond to CDP resource types:
+     * Document, Stylesheet, Image, Media, Font, Script, TextTrack, XHR, Fetch,
+     * EventSource, WebSocket, Manifest, Ping, Other.</p>
+     *
+     * @param resourceTypes the resource types to block (e.g., "image", "font", "media")
+     */
+    public void blockResources(String... resourceTypes) {
+        for (String type : resourceTypes) {
+            blockedResourceTypes.add(type.toLowerCase());
+        }
+        ensureFetchInterception();
+    }
+
+    /**
+     * Blocks requests whose URL matches any of the given glob patterns.
+     *
+     * <p>Patterns use {@code *} as a wildcard (e.g., {@code "*google-analytics*"}).
+     * Matching is case-insensitive.</p>
+     *
+     * @param urlPatterns the URL patterns to block
+     */
+    public void blockUrls(String... urlPatterns) {
+        for (String pattern : urlPatterns) {
+            blockedUrlPatterns.add(pattern);
+        }
+        ensureFetchInterception();
+    }
+
+    /**
+     * Removes all resource and URL blocking and disables Fetch interception.
+     */
+    public void unblockAll() {
+        blockedResourceTypes.clear();
+        blockedUrlPatterns.clear();
+        if (fetchInterceptionActive) {
+            disableFetchInterception();
+        }
+    }
+
+    private void ensureFetchInterception() {
+        if (fetchInterceptionActive) {
+            return;
+        }
+
+        try {
+            JsonObject wildcard = new JsonObject();
+            wildcard.addProperty("urlPattern", "*");
+
+            JsonArray patterns = new JsonArray();
+            patterns.add(wildcard);
+
+            JsonObject enableParams = new JsonObject();
+            enableParams.add("patterns", patterns);
+
+            // If proxy requires auth, handle auth challenges at the session level
+            // since session-level Fetch takes priority over browser-level
+            Proxy proxy = browser.proxyConfig();
+            if (proxy != null && proxy.requiresAuth()) {
+                enableParams.addProperty("handleAuthRequests", true);
+                fetchAuthHandler = this::handleFetchProxyAuth;
+                cdp.addEventListener("Fetch.authRequired", fetchAuthHandler);
+            }
+
+            cdp.send("Fetch.enable", enableParams);
+
+            fetchRequestPausedHandler = this::handleFetchRequestPaused;
+            cdp.addEventListener("Fetch.requestPaused", fetchRequestPausedHandler);
+            fetchInterceptionActive = true;
+        } catch (TimeoutException e) {
+            throw new org.nodriver4j.core.exceptions.ScriptExecutionException(
+                    "Failed to enable Fetch interception", e);
+        }
+    }
+
+    private void disableFetchInterception() {
+        try {
+            cdp.send("Fetch.disable", null);
+        } catch (TimeoutException e) {
+            // Best-effort cleanup
+        }
+
+        if (fetchRequestPausedHandler != null) {
+            cdp.removeEventListener("Fetch.requestPaused", fetchRequestPausedHandler);
+            fetchRequestPausedHandler = null;
+        }
+        if (fetchAuthHandler != null) {
+            cdp.removeEventListener("Fetch.authRequired", fetchAuthHandler);
+            fetchAuthHandler = null;
+        }
+        fetchInterceptionActive = false;
+    }
+
+    private void handleFetchRequestPaused(JsonObject event) {
+        String requestId = event.get("requestId").getAsString();
+        String resourceType = event.has("resourceType")
+                ? event.get("resourceType").getAsString() : "";
+
+        String url = "";
+        if (event.has("request")) {
+            JsonObject request = event.getAsJsonObject("request");
+            if (request.has("url")) {
+                url = request.get("url").getAsString();
+            }
+        }
+
+        if (shouldBlockRequest(resourceType, url)) {
+            JsonObject failParams = new JsonObject();
+            failParams.addProperty("requestId", requestId);
+            failParams.addProperty("errorReason", "BlockedByClient");
+            cdp.sendAsync("Fetch.failRequest", failParams);
+            return;
+        }
+
+        JsonObject continueParams = new JsonObject();
+        continueParams.addProperty("requestId", requestId);
+        cdp.sendAsync("Fetch.continueRequest", continueParams);
+    }
+
+    private void handleFetchProxyAuth(JsonObject event) {
+        Proxy proxy = browser.proxyConfig();
+        if (proxy == null) {
+            return;
+        }
+
+        String requestId = event.get("requestId").getAsString();
+
+        JsonObject authResponse = new JsonObject();
+        authResponse.addProperty("requestId", requestId);
+
+        JsonObject authChallengeResponse = new JsonObject();
+        authChallengeResponse.addProperty("response", "ProvideCredentials");
+        authChallengeResponse.addProperty("username", proxy.username());
+        authChallengeResponse.addProperty("password", proxy.password());
+        authResponse.add("authChallengeResponse", authChallengeResponse);
+
+        cdp.sendAsync("Fetch.continueWithAuth", authResponse);
+    }
+
+    private boolean shouldBlockRequest(String resourceType, String url) {
+        if (!blockedResourceTypes.isEmpty()
+                && blockedResourceTypes.contains(resourceType.toLowerCase())) {
+            return true;
+        }
+
+        if (!blockedUrlPatterns.isEmpty()) {
+            for (String pattern : blockedUrlPatterns) {
+                if (matchesGlob(url, pattern)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static boolean matchesGlob(String text, String glob) {
+        String[] parts = glob.split("\\*", -1);
+        StringBuilder regex = new StringBuilder("(?i)");
+        for (int i = 0; i < parts.length; i++) {
+            if (i > 0) {
+                regex.append(".*");
+            }
+            regex.append(Pattern.quote(parts[i]));
+        }
+        return text.matches(regex.toString());
+    }
+
     public Browser browser(){
         return browser;
     }
 
+    Actionability actionability() {
+        return actionability;
+    }
+
+    SelectorEngine selectorEngine() {
+        return selectorEngine;
+    }
+
     ElementQuery elementQuery() {
         return elementQuery;
+    }
+
+    // ==================== Actionability (delegated to Actionability) ====================
+
+    /**
+     * Checks if an element currently satisfies the given state.
+     *
+     * @param selector CSS or XPath selector
+     * @param state    one of: visible, hidden, enabled, disabled, editable, stable, checked, unchecked
+     * @return true if the element satisfies the state
+     */
+    public boolean checkState(String selector, String state) {
+        return actionability.checkState(selector, state);
+    }
+
+    // ==================== Selector Engine (delegated to SelectorEngine) ====================
+
+    public BoundingBox findByText(String text) {
+        return selectorEngine.findByText(text, true);
+    }
+
+    public BoundingBox findByText(String text, boolean exact) {
+        return selectorEngine.findByText(text, exact);
+    }
+
+    public BoundingBox findByRole(String role) {
+        return selectorEngine.findByRole(role, null);
+    }
+
+    public BoundingBox findByRole(String role, String name) {
+        return selectorEngine.findByRole(role, name);
+    }
+
+    public BoundingBox querySelectorPiercing(String cssSelector) {
+        return selectorEngine.querySelectorPiercing(cssSelector);
+    }
+
+    public List<BoundingBox> querySelectorAllPiercing(String cssSelector) {
+        return selectorEngine.querySelectorAllPiercing(cssSelector);
+    }
+
+    public BoundingBox find(String chainedSelector) {
+        return selectorEngine.find(chainedSelector);
+    }
+
+    public List<BoundingBox> findAll(String chainedSelector) {
+        return selectorEngine.findAll(chainedSelector);
     }
 
     // ==================== Utility Methods ====================

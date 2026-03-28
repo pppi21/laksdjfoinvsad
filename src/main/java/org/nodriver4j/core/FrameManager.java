@@ -149,8 +149,7 @@ class FrameManager {
                 return evaluateInSession(sessionId, script);
             }
 
-            int contextId = createIframeContext(frameId);
-            return evaluateWithContext(contextId, script);
+            return evaluateViaContentWindow(iframeInfo.backendNodeId(), script);
         } catch (FrameException e) {
             throw e;
         } catch (TimeoutException e) {
@@ -160,8 +159,13 @@ class FrameManager {
 
     String evaluateInFrame(String frameId, String script) {
         try {
-            int contextId = createIframeContext(frameId);
-            return evaluateWithContext(contextId, script);
+            // Get the iframe's owner node from its frameId
+            JsonObject ownerParams = new JsonObject();
+            ownerParams.addProperty("frameId", frameId);
+            JsonObject ownerResult = page.cdpSession().send("DOM.getFrameOwner", ownerParams);
+            int backendNodeId = ownerResult.get("backendNodeId").getAsInt();
+
+            return evaluateViaContentWindow(backendNodeId, script);
         } catch (FrameException e) {
             throw e;
         } catch (TimeoutException e) {
@@ -205,6 +209,70 @@ class FrameManager {
 
         if (result.has("exceptionDetails")) {
             System.err.println("[Page] Script exception: " + result.getAsJsonObject("exceptionDetails"));
+            return null;
+        }
+
+        if (result.has("result")) {
+            JsonObject resultObj = result.getAsJsonObject("result");
+            if (resultObj.has("value")) {
+                JsonElement value = resultObj.get("value");
+                if (value.isJsonNull()) return null;
+                if (value.isJsonPrimitive()) return value.getAsString();
+                return value.toString();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Evaluates a script in the iframe's main-world execution context.
+     *
+     * <p>Unlike {@link #createIframeContext} which creates an isolated world (no access to
+     * page-defined JS globals), this method resolves the iframe's contentDocument via
+     * {@code DOM.describeNode} / {@code DOM.resolveNode}, obtaining a RemoteObject reference
+     * that lives in the iframe's own execution context. {@code Runtime.callFunctionOn} then
+     * runs the script in that context with full access to the iframe's globals.</p>
+     */
+    private String evaluateViaContentWindow(int backendNodeId, String script) throws TimeoutException {
+        // Step 1: Describe the iframe node to obtain its contentDocument
+        JsonObject describeParams = new JsonObject();
+        describeParams.addProperty("backendNodeId", backendNodeId);
+        describeParams.addProperty("depth", 0);
+        JsonObject describeResult = page.cdpSession().send("DOM.describeNode", describeParams);
+        JsonObject node = describeResult.getAsJsonObject("node");
+
+        if (!node.has("contentDocument")) {
+            throw new FrameException("Iframe has no contentDocument (backendNodeId=" + backendNodeId
+                    + "). The iframe may not have loaded yet.");
+        }
+
+        JsonObject contentDoc = node.getAsJsonObject("contentDocument");
+        int docBackendNodeId = contentDoc.get("backendNodeId").getAsInt();
+
+        // Step 2: Resolve the contentDocument to a RemoteObject.
+        // DOM.resolveNode resolves a node in its OWNING execution context — for a document
+        // that belongs to the iframe, this is the iframe's main-world context.
+        JsonObject resolveParams = new JsonObject();
+        resolveParams.addProperty("backendNodeId", docBackendNodeId);
+        JsonObject resolveResult = page.cdpSession().send("DOM.resolveNode", resolveParams);
+
+        if (!resolveResult.has("object") || !resolveResult.getAsJsonObject("object").has("objectId")) {
+            throw new FrameException("Could not resolve iframe contentDocument (backendNodeId=" + backendNodeId + ")");
+        }
+        String docObjectId = resolveResult.getAsJsonObject("object").get("objectId").getAsString();
+
+        // Step 3: Evaluate the script via callFunctionOn the document object.
+        // Because docObjectId belongs to the iframe's context, the function executes there —
+        // `document`, `window`, and all page-defined globals refer to the iframe's scope.
+        JsonObject evalParams = new JsonObject();
+        evalParams.addProperty("objectId", docObjectId);
+        evalParams.addProperty("functionDeclaration", "function() {\n  return (" + script + ");\n}");
+        evalParams.addProperty("returnByValue", true);
+        evalParams.addProperty("awaitPromise", true);
+        JsonObject result = page.cdpSession().send("Runtime.callFunctionOn", evalParams);
+
+        if (result.has("exceptionDetails")) {
+            System.err.println("[Page] Script exception in frame: " + result.getAsJsonObject("exceptionDetails"));
             return null;
         }
 
@@ -285,13 +353,31 @@ class FrameManager {
     // ==================== In-Frame Click ====================
 
     void clickInFrame(IframeInfo iframeInfo, String selector) {
+        // Compute the absolute position of the target element
+        BoundingBox iframeBox = iframeInfo.boundingBox();
         BoundingBox elementBox = querySelectorInFrame(iframeInfo, selector);
         if (elementBox == null) {
             throw new ElementNotFoundException("Element not found in iframe: " + selector, selector);
         }
 
-        BoundingBox iframeBox = iframeInfo.boundingBox();
         BoundingBox absoluteBox = new BoundingBox(
+                iframeBox.getX() + elementBox.getX(),
+                iframeBox.getY() + elementBox.getY(),
+                elementBox.getWidth(),
+                elementBox.getHeight()
+        );
+
+        // Scroll the target element (not just the iframe) into view
+        page.scrollIntoViewIfNeeded(absoluteBox);
+
+        // Re-query after scroll — both iframe and element positions may have changed
+        iframeBox = refreshIframeBox(iframeInfo);
+        elementBox = querySelectorInFrame(iframeInfo, selector);
+        if (elementBox == null) {
+            throw new ElementNotFoundException("Element not found in iframe: " + selector, selector);
+        }
+
+        absoluteBox = new BoundingBox(
                 iframeBox.getX() + elementBox.getX(),
                 iframeBox.getY() + elementBox.getY(),
                 elementBox.getWidth(),
@@ -311,15 +397,194 @@ class FrameManager {
         clickInFrame(iframeInfo, elementSelector);
     }
 
+    // ==================== Nested Iframe Click ====================
+
+    /**
+     * Clicks an element inside a nested iframe (iframe within an iframe).
+     *
+     * <p>Accumulates viewport offsets through the frame chain. The outer frame's
+     * bounding box is in page-viewport coordinates; the nested iframe's bounding
+     * box is relative to the outer frame's content area.</p>
+     *
+     * @param outerFrame            the parent iframe (resolved from the main page)
+     * @param nestedIframeSelector  CSS selector for the iframe element <em>inside</em> the outer frame
+     * @param elementSelector       CSS selector for the target element inside the nested frame
+     */
+    void clickInNestedFrames(IframeInfo outerFrame, String nestedIframeSelector, String elementSelector) {
+        // Get the nested iframe's content area relative to the outer frame
+        BoundingBox nestedContentArea = getIframeContentAreaInFrame(outerFrame, nestedIframeSelector);
+        if (nestedContentArea == null) {
+            throw new FrameException("Nested iframe not found in parent frame: " + nestedIframeSelector);
+        }
+
+        // Build an IframeInfo for the nested frame so we can evaluate inside it
+        IframeInfo nestedFrame = getNestedIframeInfo(outerFrame, nestedIframeSelector);
+
+        BoundingBox elementBox = querySelectorInFrame(nestedFrame, elementSelector);
+        if (elementBox == null) {
+            throw new ElementNotFoundException("Element not found in nested iframe: " + elementSelector, elementSelector);
+        }
+
+        // Absolute position = outer content origin + nested content origin (local) + element (local)
+        BoundingBox outerBox = outerFrame.boundingBox();
+        BoundingBox absoluteBox = new BoundingBox(
+                outerBox.getX() + nestedContentArea.getX() + elementBox.getX(),
+                outerBox.getY() + nestedContentArea.getY() + elementBox.getY(),
+                elementBox.getWidth(),
+                elementBox.getHeight()
+        );
+
+        System.out.println("[Page] Clicking in nested iframe at absolute position: " + absoluteBox);
+        page.clickAtBox(absoluteBox);
+    }
+
+    /**
+     * Gets the content-area bounding box of an iframe element within a parent frame.
+     * Accounts for the nested iframe's border and padding.
+     *
+     * @return bounding box relative to the parent frame's content area, or null
+     */
+    private BoundingBox getIframeContentAreaInFrame(IframeInfo parentFrame, String nestedIframeSelector) {
+        String script = String.format(
+                "(function() {" +
+                        "  var iframe = document.querySelector(\"%s\");" +
+                        "  if (!iframe) return null;" +
+                        "  var rect = iframe.getBoundingClientRect();" +
+                        "  var s = window.getComputedStyle(iframe);" +
+                        "  var bL = parseFloat(s.borderLeftWidth)||0;" +
+                        "  var bT = parseFloat(s.borderTopWidth)||0;" +
+                        "  var bR = parseFloat(s.borderRightWidth)||0;" +
+                        "  var bB = parseFloat(s.borderBottomWidth)||0;" +
+                        "  var pL = parseFloat(s.paddingLeft)||0;" +
+                        "  var pT = parseFloat(s.paddingTop)||0;" +
+                        "  var pR = parseFloat(s.paddingRight)||0;" +
+                        "  var pB = parseFloat(s.paddingBottom)||0;" +
+                        "  return JSON.stringify({" +
+                        "    x: rect.x + bL + pL," +
+                        "    y: rect.y + bT + pT," +
+                        "    width: rect.width - bL - pL - bR - pR," +
+                        "    height: rect.height - bT - pT - bB - pB" +
+                        "  });" +
+                        "})()",
+                ElementQuery.escapeCss(nestedIframeSelector)
+        );
+
+        String result = evaluateInFrame(parentFrame, script);
+        if (result == null || result.equals("null")) {
+            return null;
+        }
+
+        JsonObject obj = JsonParser.parseString(result).getAsJsonObject();
+        return new BoundingBox(
+                obj.get("x").getAsDouble(),
+                obj.get("y").getAsDouble(),
+                obj.get("width").getAsDouble(),
+                obj.get("height").getAsDouble()
+        );
+    }
+
+    /**
+     * Discovers a nested iframe's metadata from within a parent frame.
+     * Uses the parent frame's execution context to describe the nested iframe node.
+     */
+    private IframeInfo getNestedIframeInfo(IframeInfo parentFrame, String nestedIframeSelector) {
+        // Get the nested iframe's frameId by evaluating DOM commands in the parent frame context
+        String script = String.format(
+                "(function() {" +
+                        "  var iframe = document.querySelector(\"%s\");" +
+                        "  if (!iframe) return null;" +
+                        "  var rect = iframe.getBoundingClientRect();" +
+                        "  return JSON.stringify({x: rect.x, y: rect.y, width: rect.width, height: rect.height});" +
+                        "})()",
+                ElementQuery.escapeCss(nestedIframeSelector)
+        );
+
+        String result = evaluateInFrame(parentFrame, script);
+        if (result == null || result.equals("null")) {
+            throw new FrameException("Nested iframe not found: " + nestedIframeSelector);
+        }
+
+        // We can't easily get the frameId from within a frame's JS context.
+        // Use the parent frame's session to describe the node via CDP.
+        // For now, construct an IframeInfo that supports evaluation via the
+        // parent frame's contentDocument chain. Use the parent's frameId
+        // as a marker — evaluateInFrame will resolve through contentDocument.
+        try {
+            JsonObject obj = JsonParser.parseString(result).getAsJsonObject();
+            BoundingBox box = new BoundingBox(
+                    obj.get("x").getAsDouble(),
+                    obj.get("y").getAsDouble(),
+                    obj.get("width").getAsDouble(),
+                    obj.get("height").getAsDouble()
+            );
+
+            // Resolve the nested iframe's frameId via DOM operations in the main page
+            // Walk the parent frame's DOM to find the nested iframe
+            String frameIdScript = String.format(
+                    "(function() {" +
+                            "  var iframe = document.querySelector(\"%s\");" +
+                            "  return iframe ? iframe.src : null;" +
+                            "})()",
+                    ElementQuery.escapeCss(nestedIframeSelector)
+            );
+            String nestedUrl = evaluateInFrame(parentFrame, frameIdScript);
+
+            // Use the frame tree to find the nested frame's ID
+            page.ensurePageEnabled();
+            JsonObject frameTree = page.cdpSession().send("Page.getFrameTree", null);
+            String nestedFrameId = findNestedFrameId(
+                    frameTree.getAsJsonObject("frameTree"), parentFrame.frameId(), nestedUrl);
+
+            if (nestedFrameId == null) {
+                throw new FrameException("Could not resolve nested iframe frameId for: " + nestedIframeSelector);
+            }
+
+            return new IframeInfo(nestedFrameId, -1, box, nestedUrl);
+        } catch (TimeoutException e) {
+            throw new FrameException("Failed to resolve nested iframe: " + nestedIframeSelector, e);
+        }
+    }
+
+    /**
+     * Searches the frame tree for a child frame of the given parent whose URL matches.
+     */
+    private String findNestedFrameId(JsonObject frameTree, String parentFrameId, String targetUrl) {
+        JsonObject frame = frameTree.getAsJsonObject("frame");
+        String currentId = frame.get("id").getAsString();
+
+        if (frameTree.has("childFrames")) {
+            for (JsonElement child : frameTree.getAsJsonArray("childFrames")) {
+                JsonObject childTree = child.getAsJsonObject();
+                JsonObject childFrame = childTree.getAsJsonObject("frame");
+                String childParentId = childFrame.has("parentId")
+                        ? childFrame.get("parentId").getAsString() : "";
+
+                // If this child's parent is our target parent frame
+                if (parentFrameId != null && parentFrameId.equals(childParentId)) {
+                    String childUrl = childFrame.has("url") ? childFrame.get("url").getAsString() : "";
+                    if (targetUrl != null && childUrl.contains(targetUrl)) {
+                        return childFrame.get("id").getAsString();
+                    }
+                }
+
+                // Recurse
+                String found = findNestedFrameId(childTree, parentFrameId, targetUrl);
+                if (found != null) return found;
+            }
+        }
+
+        return null;
+    }
+
     // ==================== In-Frame Screenshot ====================
 
     byte[] screenshotElementInFrame(IframeInfo iframeInfo, String selector) {
+        BoundingBox iframeBox = iframeInfo.boundingBox();
         BoundingBox elementBox = querySelectorInFrame(iframeInfo, selector);
         if (elementBox == null) {
             throw new ElementNotFoundException("Element not found in iframe: " + selector, selector);
         }
 
-        BoundingBox iframeBox = iframeInfo.boundingBox();
         BoundingBox absoluteBox = new BoundingBox(
                 iframeBox.getX() + elementBox.getX(),
                 iframeBox.getY() + elementBox.getY(),
@@ -327,7 +592,35 @@ class FrameManager {
                 elementBox.getHeight()
         );
 
+        // Scroll the target element into view, then re-query
+        page.scrollIntoViewIfNeeded(absoluteBox);
+
+        iframeBox = refreshIframeBox(iframeInfo);
+        elementBox = querySelectorInFrame(iframeInfo, selector);
+        if (elementBox == null) {
+            throw new ElementNotFoundException("Element not found in iframe: " + selector, selector);
+        }
+
+        absoluteBox = new BoundingBox(
+                iframeBox.getX() + elementBox.getX(),
+                iframeBox.getY() + elementBox.getY(),
+                elementBox.getWidth(),
+                elementBox.getHeight()
+        );
+
         return page.screenshotRegionBytes(absoluteBox);
+    }
+
+    /**
+     * Re-queries the iframe's content-area bounding box after a scroll.
+     * Falls back to the original box if the re-query fails.
+     */
+    private BoundingBox refreshIframeBox(IframeInfo iframeInfo) {
+        if (iframeInfo.backendNodeId() > 0) {
+            BoundingBox fresh = getNodeBoundingBox(iframeInfo.backendNodeId());
+            if (fresh != null) return fresh;
+        }
+        return iframeInfo.boundingBox();
     }
 
     // ==================== Node Bounding Box ====================
@@ -507,6 +800,15 @@ class FrameManager {
         return null;
     }
 
+    /**
+     * Gets the iframe's <em>content area</em> bounding box via JS.
+     *
+     * <p>Subtracts border and padding from the border box returned by
+     * {@code getBoundingClientRect} so that element coordinates within the
+     * iframe (which are relative to the content area) map correctly to
+     * viewport coordinates. CSS transforms are handled implicitly because
+     * {@code getBoundingClientRect} returns the visual (post-transform) rect.</p>
+     */
     private BoundingBox getIframeBoundingBoxViaJs(String iframeSelector, int index) {
         try {
             page.ensureRuntimeEnabled();
@@ -517,7 +819,21 @@ class FrameManager {
                             "  if (!iframes || iframes.length <= %d) return null;" +
                             "  var iframe = iframes[%d];" +
                             "  var rect = iframe.getBoundingClientRect();" +
-                            "  return JSON.stringify({x: rect.x, y: rect.y, width: rect.width, height: rect.height});" +
+                            "  var s = window.getComputedStyle(iframe);" +
+                            "  var bL = parseFloat(s.borderLeftWidth)||0;" +
+                            "  var bT = parseFloat(s.borderTopWidth)||0;" +
+                            "  var bR = parseFloat(s.borderRightWidth)||0;" +
+                            "  var bB = parseFloat(s.borderBottomWidth)||0;" +
+                            "  var pL = parseFloat(s.paddingLeft)||0;" +
+                            "  var pT = parseFloat(s.paddingTop)||0;" +
+                            "  var pR = parseFloat(s.paddingRight)||0;" +
+                            "  var pB = parseFloat(s.paddingBottom)||0;" +
+                            "  return JSON.stringify({" +
+                            "    x: rect.x + bL + pL," +
+                            "    y: rect.y + bT + pT," +
+                            "    width: rect.width - bL - pL - bR - pR," +
+                            "    height: rect.height - bT - pT - bB - pB" +
+                            "  });" +
                             "})()",
                     ElementQuery.escapeCss(iframeSelector), index, index
             );

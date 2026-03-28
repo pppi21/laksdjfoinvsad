@@ -376,17 +376,38 @@ class ElementQuery {
      * @throws ElementNotFoundException if element doesn't appear within timeout
      */
     BoundingBox waitForSelector(String selector, int timeoutMs) {
-        long deadline = System.currentTimeMillis() + timeoutMs;
+        enableRuntime();
 
-        while (System.currentTimeMillis() < deadline) {
-            BoundingBox box = querySelector(selector, 0);
-            if (box != null && box.isValid()) {
-                return box;
-            }
-            page.sleep(page.options().getRetryInterval());
+        String predicate;
+        if (isXPath(selector)) {
+            predicate = String.format(
+                    "(function() {" +
+                    "  var el = document.evaluate(\"%s\", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;" +
+                    "  if (!el) return null;" +
+                    "  var rect = el.getBoundingClientRect();" +
+                    "  if (rect.width <= 0 || rect.height <= 0) return null;" +
+                    "  return {x: rect.x, y: rect.y, width: rect.width, height: rect.height};" +
+                    "})()",
+                    escapeXPath(selector)
+            );
+        } else {
+            predicate = String.format(
+                    "(function() {" +
+                    "  var el = document.querySelector(\"%s\");" +
+                    "  if (!el) return null;" +
+                    "  var rect = el.getBoundingClientRect();" +
+                    "  if (rect.width <= 0 || rect.height <= 0) return null;" +
+                    "  return {x: rect.x, y: rect.y, width: rect.width, height: rect.height};" +
+                    "})()",
+                    escapeCss(selector)
+            );
         }
 
-        throw new ElementNotFoundException(selector);
+        String result = page.pollRaf(predicate, timeoutMs);
+        if (result == null) {
+            throw new ElementNotFoundException(selector);
+        }
+        return parseBoundingBox(result);
     }
 
     /**
@@ -435,14 +456,40 @@ class ElementQuery {
      * @param timeoutMs timeout in milliseconds
      */
     void waitForVisible(String selector, int timeoutMs) {
-        long deadline = System.currentTimeMillis() + timeoutMs;
+        enableRuntime();
 
-        while (System.currentTimeMillis() < deadline) {
-            if (exists(selector) && isVisible(selector)) {
-                return;
-            }
-            page.sleep(page.options().getRetryInterval());
+        String predicate;
+        if (isXPath(selector)) {
+            predicate = String.format(
+                    "(function() {" +
+                    "  var el = document.evaluate(\"%s\", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;" +
+                    "  if (!el) return false;" +
+                    "  var style = window.getComputedStyle(el);" +
+                    "  var rect = el.getBoundingClientRect();" +
+                    "  return style.display !== 'none' && " +
+                    "         style.visibility !== 'hidden' && " +
+                    "         style.opacity !== '0' && " +
+                    "         rect.width > 0 && rect.height > 0;" +
+                    "})()",
+                    escapeXPath(selector)
+            );
+        } else {
+            predicate = String.format(
+                    "(function() {" +
+                    "  var el = document.querySelector(\"%s\");" +
+                    "  if (!el) return false;" +
+                    "  var style = window.getComputedStyle(el);" +
+                    "  var rect = el.getBoundingClientRect();" +
+                    "  return style.display !== 'none' && " +
+                    "         style.visibility !== 'hidden' && " +
+                    "         style.opacity !== '0' && " +
+                    "         rect.width > 0 && rect.height > 0;" +
+                    "})()",
+                    escapeCss(selector)
+            );
         }
+
+        page.pollRaf(predicate, timeoutMs);
     }
 
     // ==================== Script Builders ====================
