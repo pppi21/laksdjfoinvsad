@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Nested Iframe Outer</title>
+    <style>
+        body { font-family: sans-serif; margin: 10px; background: #fff8e1; }
+        #nested-result { margin-top: 8px; padding: 6px; border: 1px solid #ccc; background: #fff; }
+    </style>
+</head>
+<body>
+    <h2>Nested Iframe — Outer Level</h2>
+
+    <div id="outer-content">
+        <p id="outer-text">This is the outer nested iframe</p>
+        <button id="outer-button" onclick="recordOuterClick()">Outer Button</button>
+        <div id="nested-result">No click yet.</div>
+    </div>
+
+    <!-- Inner iframe (level 2) -->
+    <iframe id="inner-iframe" src="iframe-content.html" width="450" height="280"
+            style="margin-top: 10px; border: 2px solid #ff9800;"></iframe>
+
+    <script>
+        var outerClicked = false;
+
+        function recordOuterClick() {
+            outerClicked = true;
+            document.getElementById('nested-result').textContent = 'Outer button clicked!';
+        }
+
+        window.isOuterClicked = function() { return outerClicked; };
+    </script>
+</body>
+</html>

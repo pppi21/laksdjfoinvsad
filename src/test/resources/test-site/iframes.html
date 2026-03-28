@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Iframes Test Page</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        .section { margin-bottom: 20px; padding: 10px; border: 1px solid #ddd; }
+        .section h2 { margin-top: 0; }
+        iframe { border: 2px solid #4a90d9; }
+    </style>
+</head>
+<body>
+    <h1>Iframes Test Page</h1>
+
+    <!-- Parent page element with the same selector as an element inside the iframe -->
+    <div id="shared-id" data-context="parent">I am in the parent page</div>
+    <button id="parent-button" onclick="document.getElementById('parent-result').textContent='parent clicked'">Parent Button</button>
+    <div id="parent-result"></div>
+
+    <!-- 1. Same-origin iframe with a form -->
+    <div class="section">
+        <h2>Same-Origin Iframe</h2>
+        <iframe id="form-iframe" src="iframe-content.html" width="500" height="350" data-testid="form-iframe"></iframe>
+    </div>
+
+    <!-- 2. Nested iframe (iframe inside an iframe) -->
+    <div class="section">
+        <h2>Nested Iframe (2 levels)</h2>
+        <iframe id="nested-iframe" src="iframe-nested.html" width="550" height="400" data-testid="nested-iframe"></iframe>
+    </div>
+
+    <!-- 3. Iframe with known dimensions for coordinate testing -->
+    <div class="section">
+        <h2>Positioned Iframe</h2>
+        <iframe id="positioned-iframe" src="iframe-content.html" width="300" height="200"
+                style="margin-left: 50px; margin-top: 10px;"
+                data-offset-x="50" data-offset-y="10"
+                data-testid="positioned-iframe"></iframe>
+    </div>
+
+    <!-- 5. Iframe with border+padding for offset testing -->
+    <div class="section">
+        <h2>Bordered &amp; Padded Iframe</h2>
+        <iframe id="bordered-iframe" src="iframe-content.html" width="400" height="450"
+                style="border: 10px solid black; padding: 5px; box-sizing: border-box;"
+                data-testid="bordered-iframe"></iframe>
+    </div>
+
+    <!-- 4. Cross-origin iframe (OOPIF) — URL set dynamically by test via JS -->
+    <div class="section">
+        <h2>Cross-Origin Iframe (OOPIF)</h2>
+        <iframe id="oopif-iframe" width="500" height="300" data-testid="oopif-iframe"></iframe>
+        <p><em>Source set dynamically by test code to the second HTTP server's origin.</em></p>
+    </div>
+
+    <script>
+        // Expose helper for tests to set the OOPIF iframe src
+        window.setOopifSrc = function(url) {
+            document.getElementById('oopif-iframe').src = url;
+        };
+    </script>
+</body>
+</html>

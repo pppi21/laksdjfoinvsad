@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Visibility Test Page</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        .section { margin-bottom: 20px; padding: 10px; border: 1px solid #ddd; }
+        .section h2 { margin-top: 0; }
+        #display-none { display: none; }
+        #visibility-hidden { visibility: hidden; }
+        #opacity-zero { opacity: 0; }
+        #zero-size { width: 0; height: 0; overflow: hidden; }
+        #delayed-visible { display: none; }
+        #delayed-disappear { padding: 8px; background: #e0ffe0; }
+    </style>
+</head>
+<body>
+    <h1>Visibility Test Page</h1>
+
+    <!-- Hidden via display:none -->
+    <div class="section">
+        <h2>display: none</h2>
+        <div id="display-none" data-testid="hidden-display">I am hidden with display:none</div>
+    </div>
+
+    <!-- Hidden via visibility:hidden -->
+    <div class="section">
+        <h2>visibility: hidden</h2>
+        <div id="visibility-hidden" data-testid="hidden-visibility">I am hidden with visibility:hidden</div>
+    </div>
+
+    <!-- Hidden via opacity:0 -->
+    <div class="section">
+        <h2>opacity: 0</h2>
+        <div id="opacity-zero" data-testid="hidden-opacity">I am hidden with opacity:0</div>
+    </div>
+
+    <!-- Hidden via zero dimensions -->
+    <div class="section">
+        <h2>zero dimensions</h2>
+        <div id="zero-size" data-testid="hidden-zero-size">I am hidden with zero dimensions</div>
+    </div>
+
+    <!-- Normally visible -->
+    <div class="section">
+        <h2>Visible Element</h2>
+        <div id="visible-element" data-testid="visible">I am fully visible</div>
+    </div>
+
+    <!-- Disabled button -->
+    <div class="section">
+        <h2>Disabled Controls</h2>
+        <button id="disabled-button" disabled>Disabled Button</button>
+        <button id="enabled-button">Enabled Button</button>
+    </div>
+
+    <!-- Disabled input -->
+    <div class="section">
+        <h2>Disabled Input</h2>
+        <input type="text" id="disabled-input" disabled value="cannot edit">
+        <input type="text" id="enabled-input" value="can edit">
+    </div>
+
+    <!-- Readonly input -->
+    <div class="section">
+        <h2>Readonly Input</h2>
+        <input type="text" id="readonly-input" readonly value="readonly value">
+    </div>
+
+    <!-- Inside a disabled fieldset -->
+    <div class="section">
+        <h2>Disabled Fieldset</h2>
+        <fieldset disabled>
+            <legend>Disabled Group</legend>
+            <input type="text" id="fieldset-disabled-input" value="inside disabled fieldset">
+            <button id="fieldset-disabled-button">Fieldset Button</button>
+        </fieldset>
+    </div>
+
+    <!-- aria-disabled -->
+    <div class="section">
+        <h2>ARIA Disabled</h2>
+        <button id="aria-disabled-button" aria-disabled="true">ARIA Disabled</button>
+    </div>
+
+    <!-- Element that appears after a delay (for waitForVisible) -->
+    <div class="section">
+        <h2>Delayed Visibility</h2>
+        <div id="delayed-visible" data-testid="delayed-show">I appear after 1 second</div>
+    </div>
+
+    <!-- Element that disappears after a delay (for waitForSelectorHidden) -->
+    <div class="section">
+        <h2>Delayed Disappearance</h2>
+        <div id="delayed-disappear" data-testid="delayed-hide">I disappear after 1 second</div>
+    </div>
+
+    <script>
+        // Show the delayed element after 1 second
+        setTimeout(function() {
+            document.getElementById('delayed-visible').style.display = 'block';
+        }, 1000);
+
+        // Hide the disappearing element after 1 second
+        setTimeout(function() {
+            var el = document.getElementById('delayed-disappear');
+            el.parentNode.removeChild(el);
+        }, 1000);
+    </script>
+</body>
+</html>

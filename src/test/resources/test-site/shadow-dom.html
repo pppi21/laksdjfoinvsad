@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Shadow DOM Test Page</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        .section { margin-bottom: 20px; padding: 10px; border: 1px solid #ddd; }
+        .section h2 { margin-top: 0; }
+        #shadow-result { margin-top: 20px; padding: 12px; border: 1px solid #ccc; background: #f9f9f9; }
+    </style>
+</head>
+<body>
+    <h1>Shadow DOM Test Page</h1>
+    <div id="shadow-result">No interaction yet.</div>
+
+    <!-- Light DOM element (sibling to shadow hosts, for mixed querying) -->
+    <div class="section">
+        <h2>Light DOM Content</h2>
+        <div id="light-element" data-testid="light">This is a light DOM element</div>
+        <button id="light-button" onclick="recordShadowClick('light-button')">Light DOM Button</button>
+    </div>
+
+    <!-- 1. Open Shadow Root with button and input -->
+    <div class="section">
+        <h2>Open Shadow Root</h2>
+        <div id="open-shadow-host"></div>
+    </div>
+
+    <!-- 2. Nested Shadow DOMs (2 levels deep) -->
+    <div class="section">
+        <h2>Nested Shadow DOMs</h2>
+        <div id="nested-shadow-host"></div>
+    </div>
+
+    <!-- 3. Shadow root with styled text content -->
+    <div class="section">
+        <h2>Styled Shadow Content</h2>
+        <div id="styled-shadow-host"></div>
+    </div>
+
+    <!-- 4. Closed Shadow Root (relies on custom Chromium patch to pierce) -->
+    <div class="section">
+        <h2>Closed Shadow Root</h2>
+        <div id="closed-shadow-host"></div>
+        <p><em>Accessing elements inside this requires our custom Chromium patch (DOM.getShadowRoot).</em></p>
+    </div>
+
+    <script>
+        window.shadowClickLog = [];
+
+        function recordShadowClick(id) {
+            window.shadowClickLog.push(id);
+            document.getElementById('shadow-result').textContent = 'Last clicked: ' + id;
+        }
+
+        // --- 1. Open Shadow Root ---
+        (function() {
+            var host = document.getElementById('open-shadow-host');
+            var shadow = host.attachShadow({ mode: 'open' });
+
+            shadow.innerHTML =
+                '<style>' +
+                '  .shadow-content { padding: 10px; background: #e8f0fe; border-radius: 4px; }' +
+                '  button { padding: 8px 16px; cursor: pointer; }' +
+                '  input { padding: 6px; margin-top: 8px; display: block; width: 200px; }' +
+                '</style>' +
+                '<div class="shadow-content">' +
+                '  <p id="shadow-text">Text inside open shadow root</p>' +
+                '  <button id="shadow-button">Shadow Button</button>' +
+                '  <input type="text" id="shadow-input" placeholder="Shadow input">' +
+                '</div>';
+
+            shadow.getElementById('shadow-button').addEventListener('click', function() {
+                recordShadowClick('shadow-button');
+            });
+        })();
+
+        // --- 2. Nested Shadow DOMs (2 levels) ---
+        (function() {
+            var outerHost = document.getElementById('nested-shadow-host');
+            var outerShadow = outerHost.attachShadow({ mode: 'open' });
+
+            outerShadow.innerHTML =
+                '<style>.outer { padding: 10px; background: #fff3e0; border-radius: 4px; }</style>' +
+                '<div class="outer">' +
+                '  <p id="outer-text">Outer shadow level</p>' +
+                '  <div id="inner-shadow-host"></div>' +
+                '</div>';
+
+            var innerHost = outerShadow.getElementById('inner-shadow-host');
+            var innerShadow = innerHost.attachShadow({ mode: 'open' });
+
+            innerShadow.innerHTML =
+                '<style>.inner { padding: 8px; background: #fce4ec; border-radius: 4px; }</style>' +
+                '<div class="inner">' +
+                '  <p id="inner-text">Inner shadow level (nested 2 deep)</p>' +
+                '  <button id="inner-button">Nested Button</button>' +
+                '  <input type="text" id="inner-input" placeholder="Nested input">' +
+                '</div>';
+
+            innerShadow.getElementById('inner-button').addEventListener('click', function() {
+                recordShadowClick('inner-button');
+            });
+        })();
+
+        // --- 3. Styled Shadow Content ---
+        (function() {
+            var host = document.getElementById('styled-shadow-host');
+            var shadow = host.attachShadow({ mode: 'open' });
+
+            shadow.innerHTML =
+                '<style>' +
+                '  .styled { color: #d32f2f; font-weight: bold; font-size: 18px; padding: 10px; background: #ffebee; border-left: 4px solid #d32f2f; }' +
+                '</style>' +
+                '<div class="styled" id="styled-element" data-info="styled-shadow">Styled content inside shadow DOM</div>';
+        })();
+
+        // --- 4. Closed Shadow Root ---
+        (function() {
+            var host = document.getElementById('closed-shadow-host');
+            var shadow = host.attachShadow({ mode: 'closed' });
+
+            shadow.innerHTML =
+                '<style>' +
+                '  .closed-content { padding: 10px; background: #f3e5f5; border-radius: 4px; }' +
+                '  button { padding: 8px 16px; cursor: pointer; }' +
+                '  input { padding: 6px; margin-top: 8px; display: block; width: 200px; }' +
+                '</style>' +
+                '<div class="closed-content">' +
+                '  <p id="closed-text">Text inside closed shadow root</p>' +
+                '  <button id="closed-button">Closed Shadow Button</button>' +
+                '  <input type="text" id="closed-input" placeholder="Closed shadow input">' +
+                '</div>';
+
+            // We can't access the internals from outside without the Chromium patch,
+            // but the elements ARE there in the actual shadow tree.
+            shadow.querySelector('#closed-button').addEventListener('click', function() {
+                recordShadowClick('closed-button');
+            });
+        })();
+    </script>
+</body>
+</html>

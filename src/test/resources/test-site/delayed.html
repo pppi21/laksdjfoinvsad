@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Delayed Content Test Page</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        .section { margin-bottom: 20px; padding: 10px; border: 1px solid #ddd; }
+        .section h2 { margin-top: 0; }
+        #ajax-container { min-height: 40px; border: 1px dashed #aaa; padding: 10px; margin-top: 8px; }
+        #initially-hidden { display: none; }
+        #counter { font-size: 24px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Delayed Content Test Page</h1>
+
+    <!-- 1. Element injected after 2 seconds -->
+    <div class="section">
+        <h2>Delayed DOM Injection</h2>
+        <div id="injection-container">
+            <!-- #delayed-element will be injected here after 2s -->
+        </div>
+    </div>
+
+    <!-- 2. Text content that changes after 1.5 seconds -->
+    <div class="section">
+        <h2>Changing Text</h2>
+        <div id="changing-text" data-testid="changing">Original text content</div>
+    </div>
+
+    <!-- 3. Button that loads AJAX-like content after 1 second -->
+    <div class="section">
+        <h2>Simulated AJAX Load</h2>
+        <button id="load-btn" onclick="loadContent()">Load Content</button>
+        <div id="ajax-container"></div>
+    </div>
+
+    <!-- 4. Element initially hidden, becomes visible after 1 second -->
+    <div class="section">
+        <h2>Delayed Visibility</h2>
+        <div id="initially-hidden" data-testid="delayed-show">Now I am visible!</div>
+    </div>
+
+    <!-- 5. Counter that increments every 500ms -->
+    <div class="section">
+        <h2>Incrementing Counter</h2>
+        <div id="counter" data-testid="counter">0</div>
+    </div>
+
+    <!-- 6. Element that gets removed from DOM after 2 seconds -->
+    <div class="section">
+        <h2>Disappearing Element</h2>
+        <div id="disappearing" data-testid="disappearing">I will be removed from the DOM</div>
+    </div>
+
+    <!-- 7. Element whose attribute changes -->
+    <div class="section">
+        <h2>Attribute Change</h2>
+        <div id="attr-change" data-status="pending">Waiting for update...</div>
+    </div>
+
+    <script>
+        // 1. Inject element after 2 seconds
+        setTimeout(function() {
+            var el = document.createElement('div');
+            el.id = 'delayed-element';
+            el.textContent = 'I was injected after 2 seconds';
+            el.setAttribute('data-testid', 'injected');
+            document.getElementById('injection-container').appendChild(el);
+        }, 2000);
+
+        // 2. Change text after 1.5 seconds
+        setTimeout(function() {
+            document.getElementById('changing-text').textContent = 'Updated text content';
+        }, 1500);
+
+        // 3. Simulated AJAX content load
+        function loadContent() {
+            setTimeout(function() {
+                document.getElementById('ajax-container').innerHTML =
+                    '<p id="ajax-result" data-testid="ajax-loaded">Content loaded successfully!</p>' +
+                    '<ul>' +
+                    '  <li>Item 1</li>' +
+                    '  <li>Item 2</li>' +
+                    '  <li>Item 3</li>' +
+                    '</ul>';
+            }, 1000);
+        }
+
+        // 4. Show hidden element after 1 second
+        setTimeout(function() {
+            document.getElementById('initially-hidden').style.display = 'block';
+        }, 1000);
+
+        // 5. Increment counter every 500ms
+        var count = 0;
+        var counterInterval = setInterval(function() {
+            count++;
+            var el = document.getElementById('counter');
+            if (el) {
+                el.textContent = String(count);
+            } else {
+                clearInterval(counterInterval);
+            }
+        }, 500);
+
+        // 6. Remove element after 2 seconds
+        setTimeout(function() {
+            var el = document.getElementById('disappearing');
+            if (el && el.parentNode) {
+                el.parentNode.removeChild(el);
+            }
+        }, 2000);
+
+        // 7. Update attribute after 1.5 seconds
+        setTimeout(function() {
+            document.getElementById('attr-change').setAttribute('data-status', 'complete');
+            document.getElementById('attr-change').textContent = 'Update complete!';
+        }, 1500);
+    </script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Slow Loading Page</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Slow Loading Page</h1>
+    <p id="slow-content">This page delays its ready state.</p>
+
+    <script>
+        // Simulate a slow-loading resource by blocking the main thread briefly
+        var start = Date.now();
+        while (Date.now() - start < 1500) {
+            // Busy-wait for 1.5 seconds to simulate a blocking script
+        }
+        document.getElementById('slow-content').textContent = 'Page fully loaded after delay.';
+        window.slowPageReady = true;
+    </script>
+</body>
+</html>

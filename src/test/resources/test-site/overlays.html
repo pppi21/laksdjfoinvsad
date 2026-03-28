@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Overlays Test Page</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; padding-bottom: 80px; }
+        .test-area { position: relative; margin-bottom: 30px; padding: 20px; border: 1px solid #ddd; min-height: 80px; }
+        .test-area h2 { margin-top: 0; }
+        button.target-btn { padding: 10px 20px; cursor: pointer; }
+        #result { margin-top: 20px; padding: 12px; border: 1px solid #ccc; background: #f9f9f9; font-weight: bold; }
+
+        /* Semi-transparent overlay covering the button */
+        #partial-overlay {
+            position: absolute;
+            top: 40px;
+            left: 0;
+            width: 200px;
+            height: 60px;
+            background: rgba(255, 0, 0, 0.3);
+            z-index: 10;
+            pointer-events: auto;
+        }
+
+        /* Modal backdrop covering the entire area */
+        #modal-backdrop {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 20;
+        }
+
+        /* Tooltip that appears on hover */
+        .tooltip-container { position: relative; display: inline-block; }
+        #hover-tooltip {
+            display: none;
+            position: absolute;
+            top: -40px;
+            left: 0;
+            background: #333;
+            color: #fff;
+            padding: 6px 12px;
+            border-radius: 4px;
+            white-space: nowrap;
+            z-index: 15;
+            pointer-events: none;
+        }
+        .tooltip-container:hover #hover-tooltip { display: block; }
+
+        /* Correct z-index stacking — this button is above nearby overlays */
+        #stacked-button { position: relative; z-index: 25; }
+
+        /* Cookie banner fixed at bottom */
+        #cookie-banner {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 60px;
+            background: #333;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+        }
+        #cookie-banner button { margin-left: 15px; padding: 6px 16px; cursor: pointer; }
+
+        /* Button behind the cookie banner */
+        #behind-banner-area { margin-bottom: 0; }
+        #behind-banner-btn { position: fixed; bottom: 20px; right: 20px; z-index: 50; }
+    </style>
+</head>
+<body>
+    <h1>Overlays Test Page</h1>
+    <div id="result">No click recorded.</div>
+
+    <!-- 1. Button partially covered by a semi-transparent overlay -->
+    <div class="test-area" id="partial-overlay-area">
+        <h2>Partially Covered Button</h2>
+        <button class="target-btn" id="partial-btn" onclick="recordClick('partial-btn')">Partially Covered</button>
+        <div id="partial-overlay"></div>
+    </div>
+
+    <!-- 2. Button fully covered by a modal backdrop -->
+    <div class="test-area" id="modal-area">
+        <h2>Modal Backdrop</h2>
+        <button class="target-btn" id="modal-btn" onclick="recordClick('modal-btn')">Behind Modal</button>
+        <div id="modal-backdrop"></div>
+    </div>
+
+    <!-- 3. Button with hover tooltip covering nearby elements -->
+    <div class="test-area">
+        <h2>Tooltip on Hover</h2>
+        <div class="tooltip-container">
+            <button class="target-btn" id="tooltip-btn" onclick="recordClick('tooltip-btn')">Hover Me</button>
+            <div id="hover-tooltip">This is a tooltip</div>
+        </div>
+        <button class="target-btn" id="nearby-btn" onclick="recordClick('nearby-btn')" style="margin-left: 10px;">Nearby Button</button>
+    </div>
+
+    <!-- 4. Button with correct z-index stacking (clickable) -->
+    <div class="test-area" style="position: relative;">
+        <h2>Z-Index Stacking</h2>
+        <div style="position: absolute; top: 40px; left: 0; width: 100%; height: 50px; background: rgba(0,0,255,0.2); z-index: 5;"></div>
+        <button class="target-btn" id="stacked-button" onclick="recordClick('stacked-button')">Above Overlay</button>
+    </div>
+
+    <!-- 5. Button behind a cookie banner -->
+    <div class="test-area" id="behind-banner-area">
+        <h2>Cookie Banner</h2>
+        <p>The button below is partially obscured by the fixed cookie banner at the bottom of the viewport.</p>
+        <button class="target-btn" id="behind-banner-btn" onclick="recordClick('behind-banner-btn')">Behind Banner</button>
+    </div>
+
+    <!-- Cookie banner -->
+    <div id="cookie-banner">
+        <span>This site uses cookies.</span>
+        <button id="accept-cookies" onclick="dismissBanner()">Accept</button>
+    </div>
+
+    <!-- Retarget test: text inside a button -->
+    <div class="test-area">
+        <h2>Retarget Test</h2>
+        <button class="target-btn" id="retarget-btn" onclick="recordClick('retarget-btn')">
+            <span id="retarget-text">Click This Text</span>
+        </button>
+    </div>
+
+    <!-- Unobstructed button for baseline testing -->
+    <div class="test-area">
+        <h2>Unobstructed</h2>
+        <button class="target-btn" id="clear-btn" onclick="recordClick('clear-btn')">Click Me</button>
+    </div>
+
+    <script>
+        var lastClicked = 'none';
+
+        function recordClick(id) {
+            lastClicked = id;
+            document.getElementById('result').textContent = 'Clicked: ' + id;
+        }
+
+        function dismissBanner() {
+            document.getElementById('cookie-banner').style.display = 'none';
+            recordClick('accept-cookies');
+        }
+
+        // Expose for JS evaluation in tests
+        window.getLastClicked = function() { return lastClicked; };
+    </script>
+</body>
+</html>

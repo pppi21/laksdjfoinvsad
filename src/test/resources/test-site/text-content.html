@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Text Content Test Page</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        .section { margin-bottom: 20px; padding: 10px; border: 1px solid #ddd; }
+        .section h2 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <h1>Text Content Test Page</h1>
+
+    <!-- Simple text -->
+    <div class="section">
+        <h2>Simple Text</h2>
+        <p id="simple-text">Hello, World!</p>
+    </div>
+
+    <!-- Text with extra whitespace -->
+    <div class="section">
+        <h2>Whitespace Text</h2>
+        <p id="whitespace-text">
+            Lots    of    whitespace    here
+        </p>
+        <pre id="pre-whitespace">  Leading and trailing spaces  </pre>
+    </div>
+
+    <!-- Nested spans / split text -->
+    <div class="section">
+        <h2>Nested/Split Text</h2>
+        <p id="nested-text">Hello <span id="inner-span">World</span></p>
+        <p id="deep-nested">
+            <span>Part <strong>One</strong></span>
+            <span> and <em>Part <u>Two</u></em></span>
+        </p>
+    </div>
+
+    <!-- HTML entities -->
+    <div class="section">
+        <h2>HTML Entities</h2>
+        <p id="entity-text">Price: &lt;$50&gt; &amp; tax &copy; 2024</p>
+        <p id="nbsp-text">Word&nbsp;with&nbsp;non&#8209;breaking&nbsp;spaces</p>
+    </div>
+
+    <!-- Data attributes -->
+    <div class="section">
+        <h2>Data Attributes</h2>
+        <div id="data-element"
+             data-name="test-item"
+             data-value="42"
+             data-category="automation"
+             data-empty=""
+             data-json='{"key":"value","num":123}'>
+            Element with data attributes
+        </div>
+    </div>
+
+    <!-- Standard attributes -->
+    <div class="section">
+        <h2>Standard Attributes</h2>
+        <a id="attr-link" href="https://example.com" title="Example Link" class="link primary" rel="noopener">
+            Example Link
+        </a>
+        <img id="attr-image" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+             alt="Tiny transparent pixel" width="1" height="1">
+    </div>
+
+    <!-- Input values -->
+    <div class="section">
+        <h2>Input Values</h2>
+        <input type="text" id="value-text" value="prefilled text">
+        <input type="hidden" id="value-hidden" value="secret-value">
+        <input type="number" id="value-number" value="42">
+        <input type="text" id="value-empty" value="">
+        <textarea id="value-textarea">Textarea content here</textarea>
+        <select id="value-select">
+            <option value="opt-a">Option A</option>
+            <option value="opt-b" selected>Option B</option>
+            <option value="opt-c">Option C</option>
+        </select>
+    </div>
+
+    <!-- Empty elements -->
+    <div class="section">
+        <h2>Empty Elements</h2>
+        <div id="empty-div"></div>
+        <span id="empty-span"></span>
+        <p id="whitespace-only">   </p>
+        <p id="newline-only">
+</p>
+    </div>
+
+    <!-- Multiple elements with same class -->
+    <div class="section">
+        <h2>Multiple Elements</h2>
+        <ul id="item-list">
+            <li class="list-item" data-index="0">First item</li>
+            <li class="list-item" data-index="1">Second item</li>
+            <li class="list-item" data-index="2">Third item</li>
+            <li class="list-item" data-index="3">Fourth item</li>
+            <li class="list-item" data-index="4">Fifth item</li>
+        </ul>
+    </div>
+
+    <!-- Special characters in text -->
+    <div class="section">
+        <h2>Special Characters</h2>
+        <p id="special-chars">Symbols: @#$%^&*()_+-=[]{}|;':",./<>?</p>
+        <p id="unicode-text">Unicode: \u00e9\u00e8\u00ea \u00fc\u00f6\u00e4 \u4e16\u754c \ud83c\udf0d</p>
+        <p id="multiline-text">Line one
+Line two
+Line three</p>
+    </div>
+</body>
+</html>

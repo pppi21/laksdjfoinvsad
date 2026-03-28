@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Navigation Test Page</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        .section { margin-bottom: 20px; padding: 10px; border: 1px solid #ddd; }
+        .section h2 { margin-top: 0; }
+        a { display: block; margin: 4px 0; }
+        #load-counter { font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Navigation Test Page</h1>
+
+    <!-- Load counter — resets on every page load, useful for verifying reload() -->
+    <div class="section">
+        <h2>Load Counter</h2>
+        <div id="load-counter" data-testid="counter">Page loaded at: <span id="load-time"></span></div>
+    </div>
+
+    <!-- Standard navigation links -->
+    <div class="section">
+        <h2>Standard Links</h2>
+        <a href="navigation-target.html" id="link-standard">Go to Navigation Target</a>
+        <a href="forms.html" id="link-forms">Go to Forms Page</a>
+        <a href="text-content.html" id="link-text">Go to Text Content Page</a>
+    </div>
+
+    <!-- JS-based navigation -->
+    <div class="section">
+        <h2>JS Navigation</h2>
+        <button id="js-nav-btn" onclick="window.location.href='navigation-target.html'">
+            Navigate via JS
+        </button>
+    </div>
+
+    <!-- target="_blank" link (new tab) -->
+    <div class="section">
+        <h2>New Tab Link</h2>
+        <a href="navigation-target.html" target="_blank" id="link-new-tab">Open in New Tab</a>
+    </div>
+
+    <!-- Hash navigation (same page) -->
+    <div class="section">
+        <h2>Hash Navigation</h2>
+        <a href="#section-anchor" id="link-hash">Jump to Anchor</a>
+    </div>
+
+    <div style="height: 400px;"></div>
+    <div id="section-anchor" style="padding: 20px; background: #e8f5e9;">
+        <h2>Anchor Target</h2>
+        <p>You scrolled to the anchor.</p>
+    </div>
+
+    <script>
+        // Record load time for reload verification
+        document.getElementById('load-time').textContent = Date.now();
+        window.pageLoadTimestamp = Date.now();
+    </script>
+</body>
+</html>

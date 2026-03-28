@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>OOPIF Content</title>
+    <style>
+        body { font-family: sans-serif; margin: 10px; background: #e8f5e9; }
+        #oopif-result { margin-top: 12px; padding: 8px; border: 1px solid #ccc; background: #fff; min-height: 30px; }
+    </style>
+</head>
+<body>
+    <h2>Cross-Origin Iframe Content</h2>
+    <p id="oopif-text" data-testid="oopif-content">This content is served from a different origin.</p>
+
+    <form id="oopif-form">
+        <div>
+            <label for="oopif-input">Input:</label>
+            <input type="text" id="oopif-input" name="oopif-input" placeholder="Type here">
+        </div>
+        <button type="button" id="oopif-button" onclick="handleOopifClick()">OOPIF Button</button>
+    </form>
+
+    <div id="oopif-result">No interaction yet.</div>
+
+    <script>
+        var clickCount = 0;
+
+        function handleOopifClick() {
+            clickCount++;
+            document.getElementById('oopif-result').textContent = 'Button clicked ' + clickCount + ' time(s)';
+        }
+
+        window.getOopifClickCount = function() { return clickCount; };
+    </script>
+</body>
+</html>

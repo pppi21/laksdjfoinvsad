@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Scroll Test Page</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: sans-serif; margin: 0; padding: 0; }
+
+        /* Fixed header to test scroll-into-view offset */
+        #sticky-header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 60px;
+            background: #333;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            z-index: 100;
+            font-size: 18px;
+        }
+
+        #content { padding: 80px 20px 20px; }
+
+        .marker {
+            padding: 20px;
+            margin: 10px 0;
+            border: 2px solid #4a90d9;
+            background: #e8f0fe;
+            font-weight: bold;
+        }
+
+        /* Spacer blocks to create a tall page */
+        .spacer { height: 500px; background: #fafafa; border-bottom: 1px solid #eee; position: relative; }
+        .spacer-label {
+            position: absolute;
+            top: 10px;
+            left: 20px;
+            color: #999;
+            font-size: 14px;
+        }
+
+        /* Scrollable container */
+        #scroll-container {
+            width: 400px;
+            height: 200px;
+            overflow: auto;
+            border: 2px solid #666;
+            margin: 20px 0;
+            padding: 10px;
+        }
+        #scroll-container .inner-content { height: 800px; position: relative; }
+        #scroll-container .inner-item {
+            padding: 10px;
+            margin: 5px 0;
+            background: #ffe0e0;
+            border: 1px solid #cc9999;
+        }
+
+        /* Bottom element */
+        #bottom-element {
+            padding: 20px;
+            background: #d4edda;
+            border: 2px solid #28a745;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div id="sticky-header">Fixed Header — Scroll Test Page</div>
+
+    <div id="content">
+        <!-- Top marker -->
+        <div class="marker" id="top-marker" data-expected-y="80">Top of Page (below header)</div>
+
+        <!-- First spacer -->
+        <div class="spacer">
+            <span class="spacer-label">Spacer 1 (0 - 500px)</span>
+        </div>
+
+        <!-- Mid-page marker 1 -->
+        <div class="marker" id="marker-500" data-expected-y="620">Marker at ~620px from top</div>
+
+        <!-- Scrollable container (tests container scrolling vs page scrolling) -->
+        <div id="scroll-container">
+            <div class="inner-content">
+                <div class="inner-item" id="container-item-top">Container Item - Top</div>
+                <div style="height: 200px;"></div>
+                <div class="inner-item" id="container-item-middle" data-container-offset="260">Container Item - Middle</div>
+                <div style="height: 200px;"></div>
+                <div class="inner-item" id="container-item-bottom" data-container-offset="510">Container Item - Bottom</div>
+                <div style="height: 100px;"></div>
+            </div>
+        </div>
+
+        <!-- Second spacer -->
+        <div class="spacer">
+            <span class="spacer-label">Spacer 2</span>
+        </div>
+
+        <!-- Mid-page marker 2 -->
+        <div class="marker" id="marker-1500" data-expected-y="1550">Marker at ~1550px from top</div>
+
+        <!-- Third spacer -->
+        <div class="spacer">
+            <span class="spacer-label">Spacer 3</span>
+        </div>
+
+        <!-- Fourth spacer -->
+        <div class="spacer">
+            <span class="spacer-label">Spacer 4</span>
+        </div>
+
+        <!-- Near-bottom marker -->
+        <div class="marker" id="marker-near-bottom">Near Bottom Marker</div>
+
+        <!-- Fifth spacer -->
+        <div class="spacer">
+            <span class="spacer-label">Spacer 5</span>
+        </div>
+
+        <!-- Absolute bottom element -->
+        <div id="bottom-element" data-testid="bottom">This is the very bottom of the page</div>
+    </div>
+
+    <script>
+        // Expose scroll position getters for test assertions
+        window.getPageScrollY = function() { return window.scrollY || window.pageYOffset; };
+        window.getPageScrollX = function() { return window.scrollX || window.pageXOffset; };
+        window.getContainerScrollTop = function() {
+            return document.getElementById('scroll-container').scrollTop;
+        };
+        window.isElementInViewport = function(id) {
+            var el = document.getElementById(id);
+            if (!el) return false;
+            var rect = el.getBoundingClientRect();
+            return (
+                rect.top >= 0 &&
+                rect.left >= 0 &&
+                rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
+                rect.right <= (window.innerWidth || document.documentElement.clientWidth)
+            );
+        };
+        window.getElementTop = function(id) {
+            var el = document.getElementById(id);
+            return el ? el.getBoundingClientRect().top : -1;
+        };
+    </script>
+</body>
+</html>

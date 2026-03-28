@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Iframe Content</title>
+    <style>
+        body { font-family: sans-serif; margin: 10px; background: #f0f8ff; }
+        .field { margin-bottom: 8px; }
+        label { display: block; font-weight: bold; margin-bottom: 2px; }
+        #iframe-result { margin-top: 12px; padding: 8px; border: 1px solid #ccc; background: #fff; min-height: 30px; }
+    </style>
+</head>
+<body>
+    <h2>Iframe Content Page</h2>
+
+    <!-- Element with same ID as parent page, for frame isolation testing -->
+    <div id="shared-id" data-context="iframe">I am inside the iframe</div>
+
+    <form id="iframe-form">
+        <div class="field">
+            <label for="iframe-name">Name</label>
+            <input type="text" id="iframe-name" name="name" placeholder="Enter name">
+        </div>
+
+        <div class="field">
+            <label for="iframe-email">Email</label>
+            <input type="email" id="iframe-email" name="email" placeholder="Enter email">
+        </div>
+
+        <div class="field">
+            <label for="iframe-message">Message</label>
+            <textarea id="iframe-message" name="message" rows="2" cols="30" placeholder="Your message"></textarea>
+        </div>
+
+        <button type="submit" id="iframe-submit">Submit</button>
+    </form>
+
+    <div id="iframe-result">No submission yet.</div>
+
+    <script>
+        var formSubmitted = false;
+
+        document.getElementById('iframe-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            formSubmitted = true;
+            var fd = new FormData(this);
+            var result = {};
+            fd.forEach(function(v, k) { result[k] = v; });
+            document.getElementById('iframe-result').textContent = JSON.stringify(result);
+        });
+
+        window.isFormSubmitted = function() { return formSubmitted; };
+        window.getIframeTitle = function() { return document.title; };
+    </script>
+</body>
+</html>
