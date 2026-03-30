@@ -1,0 +1,64 @@
+From 86c5eec2bb7fe8103c8b54852184acf15308252e Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Mon, 30 Mar 2026 01:16:07 -0700
+Subject: [PATCH 13/24] timezone
+
+---
+ base/i18n/icu_util.cc | 20 +++++++++++---------
+ 1 file changed, 11 insertions(+), 9 deletions(-)
+
+diff --git a/base/i18n/icu_util.cc b/base/i18n/icu_util.cc
+index 6e6e12089d..c202a1d80f 100644
+--- a/base/i18n/icu_util.cc
++++ b/base/i18n/icu_util.cc
+@@ -23,6 +23,7 @@
+ #include "base/files/file_util.h"
+ #include "base/files/memory_mapped_file.h"
+ #include "base/logging.h"
++#include "base/command_line.h"
+ #include "base/metrics/histogram_functions.h"
+ #include "base/metrics/metrics_hashes.h"
+ #include "base/path_service.h"
+@@ -33,6 +34,8 @@
+ #include "third_party/icu/source/common/unicode/uclean.h"
+ #include "third_party/icu/source/common/unicode/udata.h"
+ #include "third_party/icu/source/common/unicode/utrace.h"
++#include "third_party/icu/source/common/unicode/unistr.h"
++#include "third_party/icu/source/i18n/unicode/timezone.h"
+ 
+ #if BUILDFLAG(IS_ANDROID)
+ #include "base/android/apk_assets.h"
+@@ -50,15 +53,6 @@
+ #include "base/fuchsia/intl_profile_watcher.h"
+ #endif
+ 
+-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA)
+-#include "third_party/icu/source/common/unicode/unistr.h"
+-#endif
+-
+-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA) || \
+-    BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_CASTOS))
+-#include "third_party/icu/source/i18n/unicode/timezone.h"
+-#endif
+-
+ namespace base::i18n {
+ 
+ namespace {
+@@ -314,6 +308,14 @@ bool InitializeICUFromDataFile() {
+ // On some platforms, the time zone must be explicitly initialized zone rather
+ // than relying on ICU's internal initialization.
+ void InitializeIcuTimeZone() {
++  const std::string tz =
++      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
++          "fingerprint-timezone");
++  if (!tz.empty()) {
++    icu::TimeZone::adoptDefault(
++        icu::TimeZone::createTimeZone(icu::UnicodeString::fromUTF8(tz)));
++    return;
++  }
+ #if BUILDFLAG(IS_FUCHSIA)
+   // The platform-specific mechanisms used by ICU's detectHostTimeZone() to
+   // determine the default time zone will not work on Fuchsia. Therefore,
+-- 
+2.45.1.windows.1
+

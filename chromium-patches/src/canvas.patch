@@ -1,0 +1,101 @@
+From 12568f91bd0f66b8495506b08c484f361c1ed91d Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Mon, 30 Mar 2026 01:05:43 -0700
+Subject: [PATCH 07/24] canvas
+
+---
+ .../modules/canvas/canvas2d/canvas_path.cc    | 50 +++++++++++++++++++
+ 1 file changed, 50 insertions(+)
+
+diff --git a/third_party/blink/renderer/modules/canvas/canvas2d/canvas_path.cc b/third_party/blink/renderer/modules/canvas/canvas2d/canvas_path.cc
+index 8c8b5f5cb0..6f23ae5cd9 100644
+--- a/third_party/blink/renderer/modules/canvas/canvas2d/canvas_path.cc
++++ b/third_party/blink/renderer/modules/canvas/canvas2d/canvas_path.cc
+@@ -63,6 +63,8 @@
+ #include "third_party/blink/renderer/platform/wtf/vector.h"
+ #include "ui/gfx/geometry/rect_f.h"
+ #include "ui/gfx/geometry/size_f.h"
++#include "base/command_line.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
+ 
+ namespace blink {
+ 
+@@ -104,6 +106,25 @@ void CanvasPath::closePath() {
+   }
+ }
+ 
++// Returns cached seed-based sub-pixel offsets.
++// Slight center shifts produce naturally different pixel
++// coverage indistinguishable from GPU/driver variation.
++static std::pair<float, float> GetCanvasNoiseOffset() {
++  static const auto cached = []() -> std::pair<float, float> {
++    const auto* cmd = base::CommandLine::ForCurrentProcess();
++    if (!cmd->HasSwitch(switches::kCanvasFingerprint))
++      return {0.0f, 0.0f};
++    std::string seed_str =
++        cmd->GetSwitchValueASCII(switches::kCanvasFingerprint);
++    size_t hash_x = std::hash<std::string>{}(seed_str + "_cx");
++    size_t hash_y = std::hash<std::string>{}(seed_str + "_cy");
++    float dx = 0.01f + static_cast<float>(hash_x % 80) * 0.001f;
++    float dy = 0.01f + static_cast<float>(hash_y % 80) * 0.001f;
++    return {dx, dy};
++  }();
++  return cached;
++}
++
+ void CanvasPath::moveTo(double double_x, double double_y) {
+   float x = base::saturated_cast<float>(double_x);
+   float y = base::saturated_cast<float>(double_y);
+@@ -159,6 +180,15 @@ void CanvasPath::quadraticCurveTo(double double_cpx,
+   float x = base::saturated_cast<float>(double_x);
+   float y = base::saturated_cast<float>(double_y);
+ 
++  // Sub-pixel curve offset for canvas fingerprint noise
++  auto [noise_dx, noise_dy] = GetCanvasNoiseOffset();
++  if (noise_dx != 0.0f) {
++    cpx += noise_dx;
++    cpy += noise_dy;
++    x += noise_dx;
++    y += noise_dy;
++  }
++
+   if (!std::isfinite(cpx) || !std::isfinite(cpy) || !std::isfinite(x) ||
+       !std::isfinite(y)) [[unlikely]] {
+     return;
+@@ -191,6 +221,18 @@ void CanvasPath::bezierCurveTo(double double_cp1x,
+   float cp2y = base::saturated_cast<float>(double_cp2y);
+   float x = base::saturated_cast<float>(double_x);
+   float y = base::saturated_cast<float>(double_y);
++
++  // Sub-pixel curve offset for canvas fingerprint noise
++  auto [noise_dx, noise_dy] = GetCanvasNoiseOffset();
++  if (noise_dx != 0.0f) {
++    cp1x += noise_dx;
++    cp1y += noise_dy;
++    cp2x += noise_dx;
++    cp2y += noise_dy;
++    x += noise_dx;
++    y += noise_dy;
++  }
++  
+   if (!std::isfinite(cp1x) || !std::isfinite(cp1y) || !std::isfinite(cp2x) ||
+       !std::isfinite(cp2y) || !std::isfinite(x) || !std::isfinite(y))
+       [[unlikely]] {
+@@ -433,6 +475,14 @@ void CanvasPath::arc(double double_x,
+                      ExceptionState& exception_state) {
+   float x = base::saturated_cast<float>(double_x);
+   float y = base::saturated_cast<float>(double_y);
++  // Sub-pixel arc center offset for canvas fingerprint noise
++  auto [noise_dx, noise_dy] = GetCanvasNoiseOffset();
++  if (noise_dx != 0.0f) {
++    x += noise_dx;
++    y += noise_dy;
++  }
++
++
+   float radius = base::saturated_cast<float>(double_radius);
+   float start_angle = base::saturated_cast<float>(double_start_angle);
+   float end_angle = base::saturated_cast<float>(double_end_angle);
+-- 
+2.45.1.windows.1
+

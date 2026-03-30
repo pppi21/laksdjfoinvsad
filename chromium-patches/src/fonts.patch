@@ -1,0 +1,1053 @@
+From 3bc89235be14c0efc2c04fcec9988d091a7fd7a2 Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Mon, 30 Mar 2026 01:11:13 -0700
+Subject: [PATCH 08/24] fonts
+
+---
+ components/nodriver4j/font_whitelist.cc       | 900 ++++++++++++++++++
+ components/nodriver4j/font_whitelist.h        |  19 +
+ .../renderer/platform/fonts/font_cache.cc     |   6 +
+ .../platform/fonts/shaping/harfbuzz_shaper.cc |  54 ++
+ 4 files changed, 979 insertions(+)
+ create mode 100644 components/nodriver4j/font_whitelist.cc
+ create mode 100644 components/nodriver4j/font_whitelist.h
+
+diff --git a/components/nodriver4j/font_whitelist.cc b/components/nodriver4j/font_whitelist.cc
+new file mode 100644
+index 0000000000..ec9422e546
+--- /dev/null
++++ b/components/nodriver4j/font_whitelist.cc
+@@ -0,0 +1,900 @@
++// components/nodriver4j/font_whitelist.cc
++#include "components/nodriver4j/font_whitelist.h"
++
++#include <string>
++#include <string_view>
++#include <unordered_set>
++
++#include "base/command_line.h"
++#include "base/containers/span.h"
++#include "base/strings/string_util.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
++
++namespace switches {
++
++namespace {
++
++// Generic CSS families — always allowed, never blocked.
++constexpr std::string_view kGenericFamilies[] = {
++    "sans-serif", "serif", "monospace", "system-ui", "cursive",
++    "fantasy", "emoji", "ui-sans-serif", "ui-serif", "ui-monospace",
++    "ui-rounded", "math", "fangsong",
++};
++
++// PASTE FONT LISTS BELOW — one string literal per font name.
++
++constexpr std::string_view kWindowsFonts[] = {
++    "Arial",
++    "Arial Black",
++    "Bahnschrift",
++    "Calibri",
++    "Calibri Light",
++    "Cambria",
++    "Cambria Math",
++    "Candara",
++    "Candara Light",
++    "Comic Sans MS",
++    "Consolas",
++    "Constantia",
++    "Corbel",
++    "Corbel Light",
++    "Courier New",
++    "Ebrima",
++    "Franklin Gothic Medium",
++    "Gabriola",
++    "Gadugi",
++    "Georgia",
++    "HoloLens MDL2 Assets",
++    "Impact",
++    "Ink Free",
++    "Javanese Text",
++    "Leelawadee UI",
++    "Leelawadee UI Semilight",
++    "Lucida Console",
++    "Lucida Sans Unicode",
++    "MS Gothic",
++    "MS PGothic",
++    "MS UI Gothic",
++    "MV Boli",
++    "Malgun Gothic",
++    "Malgun Gothic Semilight",
++    "Marlett",
++    "Microsoft Himalaya",
++    "Microsoft JhengHei",
++    "Microsoft JhengHei Light",
++    "Microsoft JhengHei UI",
++    "Microsoft JhengHei UI Light",
++    "Microsoft New Tai Lue",
++    "Microsoft PhagsPa",
++    "Microsoft Sans Serif",
++    "Microsoft Tai Le",
++    "Microsoft YaHei",
++    "Microsoft YaHei Light",
++    "Microsoft YaHei UI",
++    "Microsoft YaHei UI Light",
++    "Microsoft Yi Baiti",
++    "MingLiU-ExtB",
++    "MingLiU_HKSCS-ExtB",
++    "Mongolian Baiti",
++    "Myanmar Text",
++    "NSimSun",
++    "Nirmala UI",
++    "Nirmala UI Semilight",
++    "PMingLiU-ExtB",
++    "Palatino Linotype",
++    "Segoe Fluent Icons",
++    "Segoe MDL2 Assets",
++    "Segoe Print",
++    "Segoe Script",
++    "Segoe UI",
++    "Segoe UI Black",
++    "Segoe UI Emoji",
++    "Segoe UI Historic",
++    "Segoe UI Light",
++    "Segoe UI Semibold",
++    "Segoe UI Semilight",
++    "Segoe UI Symbol",
++    "Segoe UI Variable",
++    "SimSun",
++    "SimSun-ExtB",
++    "Sitka",
++    "Sitka Text",
++    "Sylfaen",
++    "Symbol",
++    "Tahoma",
++    "Times New Roman",
++    "Trebuchet MS",
++    "Twemoji Mozilla",
++    "Verdana",
++    "Webdings",
++    "Wingdings",
++    "Yu Gothic",
++    "Yu Gothic Light",
++    "Yu Gothic Medium",
++    "Yu Gothic UI",
++    "Yu Gothic UI Light",
++    "Yu Gothic UI Semibold",
++    "Yu Gothic UI Semilight",
++    "\xe5\xae\x8b\xe4\xbd\x93",
++    "\xe5\xbe\xae\xe8\xbb\x9f\xe6\xad\xa3\xe9\xbb\x91\xe9\xab\x94",
++    "\xe5\xbe\xae\xe8\xbb\x9f\xe6\xad\xa3\xe9\xbb\x91\xe9\xab\x94 Light",
++    "\xe5\xbe\xae\xe8\xbd\xaf\xe9\x9b\x85\xe9\xbb\x91",
++    "\xe5\xbe\xae\xe8\xbd\xaf\xe9\x9b\x85\xe9\xbb\x91 Light",
++    "\xe6\x96\xb0\xe5\xae\x8b\xe4\xbd\x93",
++    "\xe6\x96\xb0\xe7\xb4\xb0\xe6\x98\x8e\xe9\xab\x94-ExtB",
++    "\xe6\xb8\xb8\xe3\x82\xb4\xe3\x82\xb7\xe3\x83\x83\xe3\x82\xaf",
++    "\xe6\xb8\xb8\xe3\x82\xb4\xe3\x82\xb7\xe3\x83\x83\xe3\x82\xaf Light",
++    "\xe6\xb8\xb8\xe3\x82\xb4\xe3\x82\xb7\xe3\x83\x83\xe3\x82\xaf Medium",
++    "\xe7\xb4\xb0\xe6\x98\x8e\xe9\xab\x94-ExtB",
++    "\xe7\xb4\xb0\xe6\x98\x8e\xe9\xab\x94_HKSCS-ExtB",
++    "\xeb\xa7\x91\xec\x9d\x80 \xea\xb3\xa0\xeb\x94\x95",
++    "\xeb\xa7\x91\xec\x9d\x80 \xea\xb3\xa0\xeb\x94\x95 Semilight",
++    "\xef\xbc\xad\xef\xbc\xb3 \xe3\x82\xb4\xe3\x82\xb7\xe3\x83\x83\xe3\x82\xaf",
++    "\xef\xbc\xad\xef\xbc\xb3 \xef\xbc\xb0\xe3\x82\xb4\xe3\x82\xb7\xe3\x83\x83\xe3\x82\xaf"
++};
++
++constexpr std::string_view kMacFonts[] = {
++    ".Al Bayan PUA",
++    ".Al Nile PUA",
++    ".Al Tarikh PUA",
++    ".Apple Color Emoji UI",
++    ".Apple SD Gothic NeoI",
++    ".Aqua Kana",
++    ".Aqua Kana Bold",
++    ".Aqua \xe3\x81\x8b\xe3\x81\xaa",
++    ".Aqua \xe3\x81\x8b\xe3\x81\xaa \xe3\x83\x9c\xe3\x83\xbc\xe3\x83\xab\xe3\x83\x89",
++    ".Arial Hebrew Desk Interface",
++    ".Baghdad PUA",
++    ".Beirut PUA",
++    ".Damascus PUA",
++    ".DecoType Naskh PUA",
++    ".Diwan Kufi PUA",
++    ".Farah PUA",
++    ".Geeza Pro Interface",
++    ".Geeza Pro PUA",
++    ".Helvetica LT MM",
++    ".Hiragino Kaku Gothic Interface",
++    ".Hiragino Sans GB Interface",
++    ".Keyboard",
++    ".KufiStandardGK PUA",
++    ".LastResort",
++    ".Lucida Grande UI",
++    ".Muna PUA",
++    ".Nadeem PUA",
++    ".New York",
++    ".Noto Nastaliq Urdu UI",
++    ".PingFang HK",
++    ".PingFang SC",
++    ".PingFang TC",
++    ".SF Arabic",
++    ".SF Arabic Rounded",
++    ".SF Compact",
++    ".SF Compact Rounded",
++    ".SF NS",
++    ".SF NS Mono",
++    ".SF NS Rounded",
++    ".Sana PUA",
++    ".Savoye LET CC.",
++    ".ThonburiUI",
++    ".ThonburiUIWatch",
++    ".\xe8\x8b\xb9\xe6\x96\xb9-\xe6\xb8\xaf",
++    ".\xe8\x8b\xb9\xe6\x96\xb9-\xe7\xae\x80",
++    ".\xe8\x8b\xb9\xe6\x96\xb9-\xe7\xb9\x81",
++    ".\xe8\x98\x8b\xe6\x96\xb9-\xe6\xb8\xaf",
++    ".\xe8\x98\x8b\xe6\x96\xb9-\xe7\xb0\xa1",
++    ".\xe8\x98\x8b\xe6\x96\xb9-\xe7\xb9\x81",
++    "Academy Engraved LET",
++    "Al Bayan",
++    "Al Nile",
++    "Al Tarikh",
++    "American Typewriter",
++    "Andale Mono",
++    "Apple Braille",
++    "Apple Chancery",
++    "Apple Color Emoji",
++    "Apple SD Gothic Neo",
++    "Apple SD \xec\x82\xb0\xeb\x8f\x8c\xea\xb3\xa0\xeb\x94\x95 Neo",
++    "Apple Symbols",
++    "AppleGothic",
++    "AppleMyungjo",
++    "Arial",
++    "Arial Black",
++    "Arial Hebrew",
++    "Arial Hebrew Scholar",
++    "Arial Narrow",
++    "Arial Rounded MT Bold",
++    "Arial Unicode MS",
++    "Athelas",
++    "Avenir",
++    "Avenir Black",
++    "Avenir Black Oblique",
++    "Avenir Book",
++    "Avenir Heavy",
++    "Avenir Light",
++    "Avenir Medium",
++    "Avenir Next",
++    "Avenir Next Condensed",
++    "Avenir Next Condensed Demi Bold",
++    "Avenir Next Condensed Heavy",
++    "Avenir Next Condensed Medium",
++    "Avenir Next Condensed Ultra Light",
++    "Avenir Next Demi Bold",
++    "Avenir Next Heavy",
++    "Avenir Next Medium",
++    "Avenir Next Ultra Light",
++    "Ayuthaya",
++    "Baghdad",
++    "Bangla MN",
++    "Bangla Sangam MN",
++    "Baskerville",
++    "Beirut",
++    "Big Caslon",
++    "Bodoni 72",
++    "Bodoni 72 Oldstyle",
++    "Bodoni 72 Smallcaps",
++    "Bodoni Ornaments",
++    "Bradley Hand",
++    "Brush Script MT",
++    "Chalkboard",
++    "Chalkboard SE",
++    "Chalkduster",
++    "Charter",
++    "Charter Black",
++    "Cochin",
++    "Comic Sans MS",
++    "Copperplate",
++    "Corsiva Hebrew",
++    "Courier",
++    "Courier New",
++    "Czcionka systemowa",
++    "DIN Alternate",
++    "DIN Condensed",
++    "Damascus",
++    "DecoType Naskh",
++    "Devanagari MT",
++    "Devanagari Sangam MN",
++    "Didot",
++    "Diwan Kufi",
++    "Diwan Thuluth",
++    "Euphemia UCAS",
++    "Farah",
++    "Farisi",
++    "Font Sistem",
++    "Font de sistem",
++    "Font di sistema",
++    "Font sustava",
++    "Fonte do Sistema",
++    "Futura",
++    "GB18030 Bitmap",
++    "Galvji",
++    "Geeza Pro",
++    "Geneva",
++    "Georgia",
++    "Gill Sans",
++    "Grantha Sangam MN",
++    "Gujarati MT",
++    "Gujarati Sangam MN",
++    "Gurmukhi MN",
++    "Gurmukhi MT",
++    "Gurmukhi Sangam MN",
++    "Heiti SC",
++    "Heiti TC",
++    "Heiti-\xea\xb0\x84\xec\xb2\xb4",
++    "Heiti-\xeb\xb2\x88\xec\xb2\xb4",
++    "Helvetica",
++    "Helvetica Neue",
++    "Herculanum",
++    "Hiragino Kaku Gothic Pro",
++    "Hiragino Kaku Gothic Pro W3",
++    "Hiragino Kaku Gothic Pro W6",
++    "Hiragino Kaku Gothic ProN",
++    "Hiragino Kaku Gothic ProN W3",
++    "Hiragino Kaku Gothic ProN W6",
++    "Hiragino Kaku Gothic Std",
++    "Hiragino Kaku Gothic Std W8",
++    "Hiragino Kaku Gothic StdN",
++    "Hiragino Kaku Gothic StdN W8",
++    "Hiragino Maru Gothic Pro",
++    "Hiragino Maru Gothic Pro W4",
++    "Hiragino Maru Gothic ProN",
++    "Hiragino Maru Gothic ProN W4",
++    "Hiragino Mincho Pro",
++    "Hiragino Mincho Pro W3",
++    "Hiragino Mincho Pro W6",
++    "Hiragino Mincho ProN",
++    "Hiragino Mincho ProN W3",
++    "Hiragino Mincho ProN W6",
++    "Hiragino Sans",
++    "Hiragino Sans GB",
++    "Hiragino Sans GB W3",
++    "Hiragino Sans GB W6",
++    "Hiragino Sans W0",
++    "Hiragino Sans W1",
++    "Hiragino Sans W2",
++    "Hiragino Sans W3",
++    "Hiragino Sans W4",
++    "Hiragino Sans W5",
++    "Hiragino Sans W6",
++    "Hiragino Sans W7",
++    "Hiragino Sans W8",
++    "Hiragino Sans W9",
++    "Hoefler Text",
++    "Hoefler Text Ornaments",
++    "ITF Devanagari",
++    "ITF Devanagari Marathi",
++    "Impact",
++    "InaiMathi",
++    "Iowan Old Style",
++    "Iowan Old Style Black",
++    ("J\xc3\xa4rjestelm\xc3\xa4" "fontti"),
++    "Kailasa",
++    "Kannada MN",
++    "Kannada Sangam MN",
++    "Kefa",
++    "Khmer MN",
++    "Khmer Sangam MN",
++    "Kohinoor Bangla",
++    "Kohinoor Devanagari",
++    "Kohinoor Gujarati",
++    "Kohinoor Telugu",
++    "Kokonor",
++    "Krungthep",
++    "KufiStandardGK",
++    "Lao MN",
++    "Lao Sangam MN",
++    "Lucida Grande",
++    "Luminari",
++    "Malayalam MN",
++    "Malayalam Sangam MN",
++    "Marion",
++    "Marker Felt",
++    "Menlo",
++    "Microsoft Sans Serif",
++    "Mishafi",
++    "Mishafi Gold",
++    "Monaco",
++    "Mshtakan",
++    "Mukta Mahee",
++    "MuktaMahee Bold",
++    "MuktaMahee ExtraBold",
++    "MuktaMahee ExtraLight",
++    "MuktaMahee Light",
++    "MuktaMahee Medium",
++    "MuktaMahee Regular",
++    "MuktaMahee SemiBold",
++    "Muna",
++    "Myanmar MN",
++    "Myanmar Sangam MN",
++    "Nadeem",
++    "New Peninim MT",
++    "Noteworthy",
++    "Noto Nastaliq Urdu",
++    "Noto Sans Adlam",
++    "Noto Sans Armenian",
++    "Noto Sans Armenian Blk",
++    "Noto Sans Armenian ExtBd",
++    "Noto Sans Armenian ExtLt",
++    "Noto Sans Armenian Light",
++    "Noto Sans Armenian Med",
++    "Noto Sans Armenian SemBd",
++    "Noto Sans Armenian Thin",
++    "Noto Sans Avestan",
++    "Noto Sans Bamum",
++    "Noto Sans Bassa Vah",
++    "Noto Sans Batak",
++    "Noto Sans Bhaiksuki",
++    "Noto Sans Brahmi",
++    "Noto Sans Buginese",
++    "Noto Sans Buhid",
++    "Noto Sans CanAborig",
++    "Noto Sans Canadian Aboriginal",
++    "Noto Sans Carian",
++    "Noto Sans CaucAlban",
++    "Noto Sans Caucasian Albanian",
++    "Noto Sans Chakma",
++    "Noto Sans Cham",
++    "Noto Sans Coptic",
++    "Noto Sans Cuneiform",
++    "Noto Sans Cypriot",
++    "Noto Sans Duployan",
++    "Noto Sans EgyptHiero",
++    "Noto Sans Egyptian Hieroglyphs",
++    "Noto Sans Elbasan",
++    "Noto Sans Glagolitic",
++    "Noto Sans Gothic",
++    "Noto Sans Gunjala Gondi",
++    "Noto Sans Hanifi Rohingya",
++    "Noto Sans HanifiRohg",
++    "Noto Sans Hanunoo",
++    "Noto Sans Hatran",
++    "Noto Sans ImpAramaic",
++    "Noto Sans Imperial Aramaic",
++    "Noto Sans InsPahlavi",
++    "Noto Sans InsParthi",
++    "Noto Sans Inscriptional Pahlavi",
++    "Noto Sans Inscriptional Parthian",
++    "Noto Sans Javanese",
++    "Noto Sans Kaithi",
++    "Noto Sans Kannada",
++    "Noto Sans Kannada Black",
++    "Noto Sans Kannada ExtraBold",
++    "Noto Sans Kannada ExtraLight",
++    "Noto Sans Kannada Light",
++    "Noto Sans Kannada Medium",
++    "Noto Sans Kannada SemiBold",
++    "Noto Sans Kannada Thin",
++    "Noto Sans Kayah Li",
++    "Noto Sans Kharoshthi",
++    "Noto Sans Khojki",
++    "Noto Sans Khudawadi",
++    "Noto Sans Lepcha",
++    "Noto Sans Limbu",
++    "Noto Sans Linear A",
++    "Noto Sans Linear B",
++    "Noto Sans Lisu",
++    "Noto Sans Lycian",
++    "Noto Sans Lydian",
++    "Noto Sans Mahajani",
++    "Noto Sans Mandaic",
++    "Noto Sans Manichaean",
++    "Noto Sans Marchen",
++    "Noto Sans Masaram Gondi",
++    "Noto Sans Meetei Mayek",
++    "Noto Sans Mende Kikakui",
++    "Noto Sans Meroitic",
++    "Noto Sans Miao",
++    "Noto Sans Modi",
++    "Noto Sans Mongolian",
++    "Noto Sans Mro",
++    "Noto Sans Multani",
++    "Noto Sans Myanmar",
++    "Noto Sans Myanmar Blk",
++    "Noto Sans Myanmar ExtBd",
++    "Noto Sans Myanmar ExtLt",
++    "Noto Sans Myanmar Light",
++    "Noto Sans Myanmar Med",
++    "Noto Sans Myanmar SemBd",
++    "Noto Sans Myanmar Thin",
++    "Noto Sans NKo",
++    "Noto Sans Nabataean",
++    "Noto Sans New Tai Lue",
++    "Noto Sans Newa",
++    "Noto Sans Ol Chiki",
++    "Noto Sans Old Hungarian",
++    "Noto Sans Old Italic",
++    "Noto Sans Old North Arabian",
++    "Noto Sans Old Permic",
++    "Noto Sans Old Persian",
++    "Noto Sans Old South Arabian",
++    "Noto Sans Old Turkic",
++    "Noto Sans OldHung",
++    "Noto Sans OldNorArab",
++    "Noto Sans OldSouArab",
++    "Noto Sans Oriya",
++    "Noto Sans Osage",
++    "Noto Sans Osmanya",
++    "Noto Sans Pahawh Hmong",
++    "Noto Sans Palmyrene",
++    "Noto Sans Pau Cin Hau",
++    "Noto Sans PhagsPa",
++    "Noto Sans Phoenician",
++    "Noto Sans PsaPahlavi",
++    "Noto Sans Psalter Pahlavi",
++    "Noto Sans Rejang",
++    "Noto Sans Samaritan",
++    "Noto Sans Saurashtra",
++    "Noto Sans Sharada",
++    "Noto Sans Siddham",
++    "Noto Sans Sora Sompeng",
++    "Noto Sans SoraSomp",
++    "Noto Sans Sundanese",
++    "Noto Sans Syloti Nagri",
++    "Noto Sans Syriac",
++    "Noto Sans Tagalog",
++    "Noto Sans Tagbanwa",
++    "Noto Sans Tai Le",
++    "Noto Sans Tai Tham",
++    "Noto Sans Tai Viet",
++    "Noto Sans Takri",
++    "Noto Sans Thaana",
++    "Noto Sans Tifinagh",
++    "Noto Sans Tirhuta",
++    "Noto Sans Ugaritic",
++    "Noto Sans Vai",
++    "Noto Sans Wancho",
++    "Noto Sans Warang Citi",
++    "Noto Sans Yi",
++    "Noto Sans Zawgyi",
++    "Noto Sans Zawgyi Blk",
++    "Noto Sans Zawgyi ExtBd",
++    "Noto Sans Zawgyi ExtLt",
++    "Noto Sans Zawgyi Light",
++    "Noto Sans Zawgyi Med",
++    "Noto Sans Zawgyi SemBd",
++    "Noto Sans Zawgyi Thin",
++    "Noto Serif Ahom",
++    "Noto Serif Balinese",
++    "Noto Serif Hmong Nyiakeng",
++    "Noto Serif Myanmar",
++    "Noto Serif Myanmar Blk",
++    "Noto Serif Myanmar ExtBd",
++    "Noto Serif Myanmar ExtLt",
++    "Noto Serif Myanmar Light",
++    "Noto Serif Myanmar Med",
++    "Noto Serif Myanmar SemBd",
++    "Noto Serif Myanmar Thin",
++    "Noto Serif Yezidi",
++    "Optima",
++    "Oriya MN",
++    "Oriya Sangam MN",
++    "PT Mono",
++    "PT Sans",
++    "PT Sans Caption",
++    "PT Sans Narrow",
++    "PT Serif",
++    "PT Serif Caption",
++    "Palatino",
++    "Papyrus",
++    "Party LET",
++    "Phosphate",
++    "Ph\xc3\xb4ng ch\xe1\xbb\xaf H\xe1\xbb\x87 th\xe1\xbb\x91ng",
++    "PingFang HK",
++    "PingFang SC",
++    "PingFang TC",
++    "Plantagenet Cherokee",
++    "Police syst\xc3\xa8me",
++    "Raanana",
++    "Rendszerbet\xc5\xb1t\xc3\xadpus",
++    "Rockwell",
++    "STIX Two Math",
++    "STIX Two Text",
++    "STIXGeneral",
++    "STIXIntegralsD",
++    "STIXIntegralsSm",
++    "STIXIntegralsUp",
++    "STIXIntegralsUpD",
++    "STIXIntegralsUpSm",
++    "STIXNonUnicode",
++    "STIXSizeFiveSym",
++    "STIXSizeFourSym",
++    "STIXSizeOneSym",
++    "STIXSizeThreeSym",
++    "STIXSizeTwoSym",
++    "STIXVariants",
++    "STSong",
++    "Sana",
++    "Sathu",
++    "Savoye LET",
++    "Seravek",
++    "Seravek ExtraLight",
++    "Seravek Light",
++    "Seravek Medium",
++    "Shree Devanagari 714",
++    "SignPainter",
++    "SignPainter-HouseScript",
++    "Silom",
++    "Sinhala MN",
++    "Sinhala Sangam MN",
++    "Sistem Fontu",
++    "Skia",
++    "Snell Roundhand",
++    "Songti SC",
++    "Songti TC",
++    "Sukhumvit Set",
++    "Superclarendon",
++    "Symbol",
++    "Systeemlettertype",
++    "System Font",
++    "Systemschrift",
++    "Systemskrift",
++    "Systemtypsnitt",
++    "Syst\xc3\xa9mov\xc3\xa9 p\xc3\xadsmo",
++    "Tahoma",
++    "Tamil MN",
++    "Tamil Sangam MN",
++    "Telugu MN",
++    "Telugu Sangam MN",
++    "Thonburi",
++    "Times",
++    "Times New Roman",
++    "Tipo de letra del sistema",
++    "Tipo de letra do sistema",
++    "Tipus de lletra del sistema",
++    "Trattatello",
++    "Trebuchet MS",
++    "Verdana",
++    "Waseem",
++    "Webdings",
++    "Wingdings",
++    "Wingdings 2",
++    "Wingdings 3",
++    "Zapf Dingbats",
++    "Zapfino",
++    "\xce\x93\xcf\x81\xce\xb1\xce\xbc\xce\xbc\xce\xb1\xcf\x84\xce\xbf\xcf\x83\xce\xb5\xce\xb9\xcf\x81\xce\xac \xcf\x83\xcf\x85\xcf\x83\xcf\x84\xce\xae\xce\xbc\xce\xb1\xcf\x84\xce\xbf\xcf\x82",
++    "\xd0\xa1\xd0\xb8\xd1\x81\xd1\x82\xd0\xb5\xd0\xbc\xd0\xbd\xd0\xb8\xd0\xb9 \xd1\x88\xd1\x80\xd0\xb8\xd1\x84\xd1\x82",
++    "\xd0\xa1\xd0\xb8\xd1\x81\xd1\x82\xd0\xb5\xd0\xbc\xd0\xbd\xd1\x8b\xd0\xb9 \xd1\x88\xd1\x80\xd0\xb8\xd1\x84\xd1\x82",
++    "\xd7\x92\xd7\x95\xd7\xa4\xd7\x9f \xd7\x9e\xd7\xa2\xd7\xa8\xd7\x9b\xd7\xaa",
++    "\xd8\xa7\xd9\x84\xd8\xa8\xd9\x8a\xd8\xa7\xd9\x86",
++    "\xd8\xa7\xd9\x84\xd8\xaa\xd8\xa7\xd8\xb1\xd9\x8a\xd8\xae",
++    "\xd8\xa7\xd9\x84\xd9\x86\xd9\x8a\xd9\x84",
++    "\xd8\xa8\xd8\xba\xd8\xaf\xd8\xa7\xd8\xaf",
++    "\xd8\xa8\xd9\x8a\xd8\xb1\xd9\x88\xd8\xaa",
++    "\xd8\xac\xd9\x8a\xd8\xb2\xd8\xa9",
++    "\xd8\xae\xd8\xb7 \xd8\xa7\xd9\x84\xd9\x86\xd8\xb8\xd8\xa7\xd9\x85",
++    "\xd8\xaf\xd9\x85\xd8\xb4\xd9\x82",
++    "\xd8\xaf\xd9\x8a\xd9\x88\xd8\xa7\xd9\x86 \xd8\xab\xd9\x84\xd8\xab",
++    "\xd8\xaf\xd9\x8a\xd9\x88\xd8\xa7\xd9\x86 \xd9\x83\xd9\x88\xd9\x81\xd9\x8a",
++    "\xd8\xb5\xd9\x86\xd8\xb9\xd8\xa7\xd8\xa1",
++    "\xd9\x81\xd8\xa7\xd8\xb1\xd8\xb3\xd9\x8a",
++    "\xd9\x81\xd8\xb1\xd8\xad",
++    "\xd9\x83\xd9\x88\xd9\x81\xd9\x8a",
++    "\xd9\x85\xd9\x86\xd9\x89",
++    "\xd9\x85\xd9\x90\xd8\xb5\xd8\xad\xd9\x81\xd9\x8a",
++    "\xd9\x85\xd9\x90\xd8\xb5\xd8\xad\xd9\x81\xd9\x8a \xd8\xb0\xd9\x87\xd8\xa8\xd9\x8a",
++    "\xd9\x86\xd8\xaf\xd9\x8a\xd9\x85",
++    "\xd9\x86\xd8\xb3\xd8\xae",
++    "\xd9\x88\xd8\xb3\xd9\x8a\xd9\x85",
++    "\xe0\xa4\x86\xe0\xa4\x88\xe0\xa5\xb0\xe0\xa4\x9f\xe0\xa5\x80\xe0\xa5\xb0\xe0\xa4\x8f\xe0\xa4\xab\xe0\xa4\xbc\xe0\xa5\xb0 \xe0\xa4\xa6\xe0\xa5\x87\xe0\xa4\xb5\xe0\xa4\xa8\xe0\xa4\xbe\xe0\xa4\x97\xe0\xa4\xb0\xe0\xa5\x80",
++    "\xe0\xa4\x86\xe0\xa4\x88\xe0\xa5\xb0\xe0\xa4\x9f\xe0\xa5\x80\xe0\xa5\xb0\xe0\xa4\x8f\xe0\xa4\xab\xe0\xa4\xbc\xe0\xa5\xb0 \xe0\xa4\xa6\xe0\xa5\x87\xe0\xa4\xb5\xe0\xa4\xa8\xe0\xa4\xbe\xe0\xa4\x97\xe0\xa4\xb0\xe0\xa5\x80 \xe0\xa4\xae\xe0\xa4\xb0\xe0\xa4\xbe\xe0\xa4\xa0\xe0\xa5\x80",
++    "\xe0\xa4\x95\xe0\xa5\x8b\xe0\xa4\xb9\xe0\xa4\xbf\xe0\xa4\xa8\xe0\xa5\x82\xe0\xa4\xb0 \xe0\xa4\xa6\xe0\xa5\x87\xe0\xa4\xb5\xe0\xa4\xa8\xe0\xa4\xbe\xe0\xa4\x97\xe0\xa4\xb0\xe0\xa5\x80",
++    "\xe0\xa4\xa6\xe0\xa5\x87\xe0\xa4\xb5\xe0\xa4\xa8\xe0\xa4\xbe\xe0\xa4\x97\xe0\xa4\xb0\xe0\xa5\x80 \xe0\xa4\x8f\xe0\xa4\xae\xe0\xa5\xb0\xe0\xa4\x9f\xe0\xa5\x80\xe0\xa5\xb0",
++    "\xe0\xa4\xa6\xe0\xa5\x87\xe0\xa4\xb5\xe0\xa4\xa8\xe0\xa4\xbe\xe0\xa4\x97\xe0\xa4\xb0\xe0\xa5\x80 \xe0\xa4\xb8\xe0\xa4\x82\xe0\xa4\x97\xe0\xa4\xae \xe0\xa4\x8f\xe0\xa4\xae\xe0\xa5\xb0\xe0\xa4\x8f\xe0\xa4\xa8\xe0\xa5\xb0",
++    "\xe0\xa4\xb6\xe0\xa5\x8d\xe0\xa4\xb0\xe0\xa5\x80 \xe0\xa4\xa6\xe0\xa5\x87\xe0\xa4\xb5\xe0\xa4\xa8\xe0\xa4\xbe\xe0\xa4\x97\xe0\xa4\xb0\xe0\xa5\x80 \xe0\xa5\xad\xe0\xa5\xa7\xe0\xa5\xaa",
++    "\xe0\xb9\x81\xe0\xb8\x9a\xe0\xb8\x9a\xe0\xb8\xad\xe0\xb8\xb1\xe0\xb8\x81\xe0\xb8\xa9\xe0\xb8\xa3\xe0\xb8\xa3\xe0\xb8\xb0\xe0\xb8\x9a\xe0\xb8\x9a",
++    "\xe2\xb9\x81\xe7\x85\xb5\xe6\x84\xa0\xe8\x8a\xa9\xe8\x8b\x88",
++    "\xe3\x82\xb7\xe3\x82\xb9\xe3\x83\x86\xe3\x83\xa0\xe3\x83\x95\xe3\x82\xa9\xe3\x83\xb3\xe3\x83\x88",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe4\xb8\xb8\xe3\x82\xb4 Pro",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe4\xb8\xb8\xe3\x82\xb4 Pro W4",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe4\xb8\xb8\xe3\x82\xb4 ProN",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe4\xb8\xb8\xe3\x82\xb4 ProN W4",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe6\x98\x8e\xe6\x9c\x9d Pro",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe6\x98\x8e\xe6\x9c\x9d Pro W3",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe6\x98\x8e\xe6\x9c\x9d Pro W6",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe6\x98\x8e\xe6\x9c\x9d ProN",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe6\x98\x8e\xe6\x9c\x9d ProN W3",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe6\x98\x8e\xe6\x9c\x9d ProN W6",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4 Pro",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4 Pro W3",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4 Pro W6",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4 ProN",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4 ProN W3",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4 ProN W6",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4 Std",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4 Std W8",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4 StdN",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4 StdN W8",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4 \xe7\xb0\xa1\xe4\xbd\x93\xe4\xb8\xad\xe6\x96\x87",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4 \xe7\xb0\xa1\xe4\xbd\x93\xe4\xb8\xad\xe6\x96\x87 W3",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4 \xe7\xb0\xa1\xe4\xbd\x93\xe4\xb8\xad\xe6\x96\x87 W6",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4\xe3\x82\xb7\xe3\x83\x83\xe3\x82\xaf",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4\xe3\x82\xb7\xe3\x83\x83\xe3\x82\xaf W0",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4\xe3\x82\xb7\xe3\x83\x83\xe3\x82\xaf W1",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4\xe3\x82\xb7\xe3\x83\x83\xe3\x82\xaf W2",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4\xe3\x82\xb7\xe3\x83\x83\xe3\x82\xaf W3",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4\xe3\x82\xb7\xe3\x83\x83\xe3\x82\xaf W4",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4\xe3\x82\xb7\xe3\x83\x83\xe3\x82\xaf W5",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4\xe3\x82\xb7\xe3\x83\x83\xe3\x82\xaf W6",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4\xe3\x82\xb7\xe3\x83\x83\xe3\x82\xaf W7",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4\xe3\x82\xb7\xe3\x83\x83\xe3\x82\xaf W8",
++    "\xe3\x83\x92\xe3\x83\xa9\xe3\x82\xae\xe3\x83\x8e\xe8\xa7\x92\xe3\x82\xb4\xe3\x82\xb7\xe3\x83\x83\xe3\x82\xaf W9",
++    "\xe5\x86\xac\xe9\x9d\x92\xe9\xbb\x91\xe4\xbd\x93\xe7\xae\x80\xe4\xbd\x93\xe4\xb8\xad\xe6\x96\x87",
++    "\xe5\x86\xac\xe9\x9d\x92\xe9\xbb\x91\xe4\xbd\x93\xe7\xae\x80\xe4\xbd\x93\xe4\xb8\xad\xe6\x96\x87 W3",
++    "\xe5\x86\xac\xe9\x9d\x92\xe9\xbb\x91\xe4\xbd\x93\xe7\xae\x80\xe4\xbd\x93\xe4\xb8\xad\xe6\x96\x87 W6",
++    "\xe5\x86\xac\xe9\x9d\x92\xe9\xbb\x91\xe9\xab\x94\xe7\xb0\xa1\xe9\xab\x94\xe4\xb8\xad\xe6\x96\x87",
++    "\xe5\x86\xac\xe9\x9d\x92\xe9\xbb\x91\xe9\xab\x94\xe7\xb0\xa1\xe9\xab\x94\xe4\xb8\xad\xe6\x96\x87 W3",
++    "\xe5\x86\xac\xe9\x9d\x92\xe9\xbb\x91\xe9\xab\x94\xe7\xb0\xa1\xe9\xab\x94\xe4\xb8\xad\xe6\x96\x87 W6",
++    "\xe5\xae\x8b\xe4\xbd\x93-\xe7\xae\x80",
++    "\xe5\xae\x8b\xe4\xbd\x93-\xe7\xb9\x81",
++    "\xe5\xae\x8b\xe9\xab\x94-\xe7\xb0\xa1",
++    "\xe5\xae\x8b\xe9\xab\x94-\xe7\xb9\x81",
++    "\xe7\xb3\xbb\xe7\xb5\xb1\xe5\xad\x97\xe9\xab\x94",
++    "\xe7\xb3\xbb\xe7\xbb\x9f\xe5\xad\x97\xe4\xbd\x93",
++    "\xe8\x8b\xb9\xe6\x96\xb9-\xe6\xb8\xaf",
++    "\xe8\x8b\xb9\xe6\x96\xb9-\xe7\xae\x80",
++    "\xe8\x8b\xb9\xe6\x96\xb9-\xe7\xb9\x81",
++    "\xe8\x8d\xb1\xe8\x8e\x89\xe8\x8d\x8d\xe8\x8d\xad\xe8\xa9\xb0\xe8\x8d\x93\xe2\x81\x90\xe7\x89\xaf",
++    "\xe8\x8d\xb1\xe8\x8e\x89\xe8\x8d\x8d\xe8\x8d\xad\xe8\xa9\xb0\xe8\x8d\x93\xe2\x81\x93\xe7\x91\xa4",
++    "\xe8\x8d\xb1\xe8\x8e\x89\xe8\x8d\x8d\xe8\x8d\xad\xe8\xa9\xb0\xe8\x8d\x93\xe8\x8d\x96\xe8\x8d\xa2\xe8\x8d\x8e",
++    "\xe8\x8d\xb1\xe8\x8e\x89\xe8\x8d\x8d\xe8\x8d\xad\xe8\xab\x9b\xe8\x8d\x93\xe2\x81\x90\xe7\x89\xaf",
++    "\xe8\x8d\xb1\xe8\x8e\x89\xe8\x8d\x8d\xe8\x8d\xad\xe9\x9a\xbe\xe9\x8a\xa9\xe2\x81\x90\xe7\x89\xaf",
++    "\xe8\x98\x8b\xe6\x96\xb9-\xe6\xb8\xaf",
++    "\xe8\x98\x8b\xe6\x96\xb9-\xe7\xb0\xa1",
++    "\xe8\x98\x8b\xe6\x96\xb9-\xe7\xb9\x81",
++    "\xe9\xbb\x91\xe4\xbd\x93-\xe7\xae\x80",
++    "\xe9\xbb\x91\xe4\xbd\x93-\xe7\xb9\x81",
++    "\xe9\xbb\x91\xe9\xab\x94-\xe7\xb0\xa1",
++    "\xe9\xbb\x91\xe9\xab\x94-\xe7\xb9\x81",
++    "\xe9\xbb\x92\xe4\xbd\x93-\xe7\xb0\xa1",
++    "\xe9\xbb\x92\xe4\xbd\x93-\xe7\xb9\x81",
++    "\xec\x8b\x9c\xec\x8a\xa4\xed\x85\x9c \xec\x84\x9c\xec\xb2\xb4"
++};
++
++constexpr std::string_view kLinuxFonts[] = {
++    "Arimo",
++    "Cousine",
++    "Noto Naskh Arabic",
++    "Noto Sans Adlam",
++    "Noto Sans Armenian",
++    "Noto Sans Balinese",
++    "Noto Sans Bamum",
++    "Noto Sans Bassa Vah",
++    "Noto Sans Batak",
++    "Noto Sans Bengali",
++    "Noto Sans Buginese",
++    "Noto Sans Buhid",
++    "Noto Sans Canadian Aboriginal",
++    "Noto Sans Chakma",
++    "Noto Sans Cham",
++    "Noto Sans Cherokee",
++    "Noto Sans Coptic",
++    "Noto Sans Deseret",
++    "Noto Sans Devanagari",
++    "Noto Sans Elbasan",
++    "Noto Sans Ethiopic",
++    "Noto Sans Georgian",
++    "Noto Sans Grantha",
++    "Noto Sans Gujarati",
++    "Noto Sans Gunjala Gondi",
++    "Noto Sans Gurmukhi",
++    "Noto Sans Hanifi Rohingya",
++    "Noto Sans Hanunoo",
++    "Noto Sans Hebrew",
++    "Noto Sans JP",
++    "Noto Sans Javanese",
++    "Noto Sans KR",
++    "Noto Sans Kannada",
++    "Noto Sans Kayah Li",
++    "Noto Sans Khmer",
++    "Noto Sans Khojki",
++    "Noto Sans Khudawadi",
++    "Noto Sans Lao",
++    "Noto Sans Lepcha",
++    "Noto Sans Limbu",
++    "Noto Sans Lisu",
++    "Noto Sans Mahajani",
++    "Noto Sans Malayalam",
++    "Noto Sans Mandaic",
++    "Noto Sans Masaram Gondi",
++    "Noto Sans Medefaidrin",
++    "Noto Sans Meetei Mayek",
++    "Noto Sans Mende Kikakui",
++    "Noto Sans Miao",
++    "Noto Sans Modi",
++    "Noto Sans Mongolian",
++    "Noto Sans Mro",
++    "Noto Sans Multani",
++    "Noto Sans Myanmar",
++    "Noto Sans NKo",
++    "Noto Sans New Tai Lue",
++    "Noto Sans Newa",
++    "Noto Sans Ol Chiki",
++    "Noto Sans Oriya",
++    "Noto Sans Osage",
++    "Noto Sans Osmanya",
++    "Noto Sans Pahawh Hmong",
++    "Noto Sans Pau Cin Hau",
++    "Noto Sans Rejang",
++    "Noto Sans Runic",
++    "Noto Sans SC",
++    "Noto Sans Samaritan",
++    "Noto Sans Saurashtra",
++    "Noto Sans Sharada",
++    "Noto Sans Shavian",
++    "Noto Sans Sinhala",
++    "Noto Sans Sora Sompeng",
++    "Noto Sans Soyombo",
++    "Noto Sans Sundanese",
++    "Noto Sans Syloti Nagri",
++    "Noto Sans Symbols",
++    "Noto Sans Symbols 2",
++    "Noto Sans Syriac",
++    "Noto Sans TC",
++    "Noto Sans Tagalog",
++    "Noto Sans Tagbanwa",
++    "Noto Sans Tai Le",
++    "Noto Sans Tai Tham",
++    "Noto Sans Tai Viet",
++    "Noto Sans Takri",
++    "Noto Sans Tamil",
++    "Noto Sans Telugu",
++    "Noto Sans Thaana",
++    "Noto Sans Thai",
++    "Noto Sans Tifinagh",
++    "Noto Sans Tifinagh APT",
++    "Noto Sans Tifinagh Adrar",
++    "Noto Sans Tifinagh Agraw Imazighen",
++    "Noto Sans Tifinagh Ahaggar",
++    "Noto Sans Tifinagh Air",
++    "Noto Sans Tifinagh Azawagh",
++    "Noto Sans Tifinagh Ghat",
++    "Noto Sans Tifinagh Hawad",
++    "Noto Sans Tifinagh Rhissa Ixa",
++    "Noto Sans Tifinagh SIL",
++    "Noto Sans Tifinagh Tawellemmet",
++    "Noto Sans Tirhuta",
++    "Noto Sans Vai",
++    "Noto Sans Wancho",
++    "Noto Sans Warang Citi",
++    "Noto Sans Yi",
++    "Noto Sans Zanabazar Square",
++    "Noto Serif Armenian",
++    "Noto Serif Balinese",
++    "Noto Serif Bengali",
++    "Noto Serif Devanagari",
++    "Noto Serif Dogra",
++    "Noto Serif Ethiopic",
++    "Noto Serif Georgian",
++    "Noto Serif Grantha",
++    "Noto Serif Gujarati",
++    "Noto Serif Gurmukhi",
++    "Noto Serif Hebrew",
++    "Noto Serif Kannada",
++    "Noto Serif Khmer",
++    "Noto Serif Khojki",
++    "Noto Serif Lao",
++    "Noto Serif Malayalam",
++    "Noto Serif Myanmar",
++    "Noto Serif NP Hmong",
++    "Noto Serif Sinhala",
++    "Noto Serif Tamil",
++    "Noto Serif Telugu",
++    "Noto Serif Thai",
++    "Noto Serif Tibetan",
++    "Noto Serif Yezidi",
++    "STIX Two Math",
++    "Tinos",
++    "Twemoji Mozilla"
++};
++
++// Builds a case-folded set from the appropriate platform font list.
++// Called once, result is cached for the process lifetime.
++const std::unordered_set<std::string>* BuildWhitelist() {
++  const auto* command_line = base::CommandLine::ForCurrentProcess();
++  if (!command_line->HasSwitch(kFingerprintPlatform))
++    return nullptr;
++
++  std::string platform = base::ToLowerASCII(
++      command_line->GetSwitchValueASCII(kFingerprintPlatform));
++
++  base::span<const std::string_view> fonts;
++
++  if (platform == "windows") {
++    fonts = kWindowsFonts;
++  } else if (platform == "macos") {
++    fonts = kMacFonts;
++  } else if (platform == "linux") {
++    fonts = kLinuxFonts;
++  } else {
++    return nullptr;
++  }
++
++  auto* set = new std::unordered_set<std::string>();
++  set->reserve(fonts.size());
++  for (std::string_view font : fonts) {
++    set->insert(base::ToLowerASCII(font));
++  }
++  return set;
++}
++
++const std::unordered_set<std::string>* GetWhitelist() {
++  static const std::unordered_set<std::string>* cached = BuildWhitelist();
++  return cached;
++}
++
++}  // namespace
++
++bool IsFontBlocked(const std::string& family_name) {
++  const auto* whitelist = GetWhitelist();
++  if (!whitelist)
++    return false;
++
++  for (std::string_view generic : kGenericFamilies) {
++    if (base::EqualsCaseInsensitiveASCII(family_name, generic))
++      return false;
++  }
++
++  std::string lower = base::ToLowerASCII(family_name);
++  return whitelist->find(lower) == whitelist->end();
++}
++
++}  // namespace switches
+\ No newline at end of file
+diff --git a/components/nodriver4j/font_whitelist.h b/components/nodriver4j/font_whitelist.h
+new file mode 100644
+index 0000000000..1558cec30f
+--- /dev/null
++++ b/components/nodriver4j/font_whitelist.h
+@@ -0,0 +1,19 @@
++// components/nodriver4j/font_whitelist.h
++#ifndef COMPONENTS_NODRIVER4J_FONT_WHITELIST_H_
++#define COMPONENTS_NODRIVER4J_FONT_WHITELIST_H_
++
++#include <string>
++
++#include "base/component_export.h"
++
++namespace switches {
++
++// Returns true if the given font family name should be blocked based on
++// the platform-specific font whitelist derived from --fingerprint-platform.
++// Returns false (allow) if no whitelist is active or if the font is in
++// the whitelist. Generic CSS families are always allowed.
++COMPONENT_EXPORT(NODRIVER4J) bool IsFontBlocked(const std::string& family_name);
++
++}  // namespace switches
++
++#endif  // COMPONENTS_NODRIVER4J_FONT_WHITELIST_H_
+\ No newline at end of file
+diff --git a/third_party/blink/renderer/platform/fonts/font_cache.cc b/third_party/blink/renderer/platform/fonts/font_cache.cc
+index 7344fa93eb..473ffef48f 100644
+--- a/third_party/blink/renderer/platform/fonts/font_cache.cc
++++ b/third_party/blink/renderer/platform/fonts/font_cache.cc
+@@ -66,6 +66,7 @@
+ #include "third_party/blink/renderer/platform/wtf/text/string_hash.h"
+ #include "third_party/blink/renderer/platform/wtf/vector.h"
+ #include "ui/gfx/font_list.h"
++#include "components/nodriver4j/font_whitelist.h"
+ 
+ #if BUILDFLAG(IS_WIN)
+ #include "third_party/skia/include/ports/SkTypeface_win.h"
+@@ -141,6 +142,11 @@ const FontPlatformData* FontCache::GetFontPlatformData(
+   }
+ #endif
+ 
++  if (creation_params.CreationType() == kCreateFontByFamily &&
++      switches::IsFontBlocked(creation_params.Family().Utf8())) {
++    return nullptr;
++  }
++
+   return font_platform_data_cache_.GetOrCreateFontPlatformData(
+       this, font_description, creation_params, alternate_font_name);
+ }
+diff --git a/third_party/blink/renderer/platform/fonts/shaping/harfbuzz_shaper.cc b/third_party/blink/renderer/platform/fonts/shaping/harfbuzz_shaper.cc
+index 4f6f231fb1..dfd6a88aa5 100644
+--- a/third_party/blink/renderer/platform/fonts/shaping/harfbuzz_shaper.cc
++++ b/third_party/blink/renderer/platform/fonts/shaping/harfbuzz_shaper.cc
+@@ -65,6 +65,10 @@
+ #include "third_party/blink/renderer/platform/wtf/math_extras.h"
+ #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
+ #include "third_party/blink/renderer/platform/wtf/text/unicode.h"
++#include "base/command_line.h"
++#include "base/strings/string_number_conversions.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
++#include "base/compiler_specific.h"
+ 
+ namespace blink {
+ 
+@@ -296,6 +300,55 @@ void RoundHarfBuzzBufferPositions(hb_buffer_t* buffer) {
+   }
+ }
+ 
++// Returns a deterministic font spacing offset in hb_position_t (16.16 fixed-point),
++// derived from the --canvas-fingerprint seed via LCG. Computed once, cached for
++// the lifetime of the renderer process.
++static hb_position_t GetCachedFontSpacing() {
++  static const hb_position_t cached = []() -> hb_position_t {
++    const auto* command_line = base::CommandLine::ForCurrentProcess();
++    if (!command_line->HasSwitch(switches::kCanvasFingerprint))
++      return 0;
++    std::string seed_str =
++        command_line->GetSwitchValueASCII(switches::kCanvasFingerprint);
++    unsigned seed = 0;
++    if (!base::StringToUint(seed_str, &seed) || seed == 0)
++      return 0;
++    // LCG step to derive a spacing value
++    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
++    // Map to [0, 0.1] pixel range
++    float spacing = (static_cast<float>(seed) / 2147483647.0f) * 0.1f;
++    // Convert to 16.16 fixed-point
++    return static_cast<hb_position_t>(spacing * (1 << 16));
++  }();
++  return cached;
++}
++
++// Applies a uniform per-glyph advance perturbation to defeat font metrics
++// fingerprinting. Adjusts x_advance for horizontal text, y_advance for vertical.
++static void ApplyFontSpacingNoise(hb_buffer_t* buffer) {
++  hb_position_t spacing = GetCachedFontSpacing();
++  if (spacing == 0)
++    return;
++
++  unsigned int glyph_count;
++  hb_glyph_position_t* positions =
++      hb_buffer_get_glyph_positions(buffer, &glyph_count);
++  bool is_vertical =
++      HB_DIRECTION_IS_VERTICAL(hb_buffer_get_direction(buffer));
++
++  // SAFETY: `positions` is a HarfBuzz-owned array of `glyph_count` elements.
++  UNSAFE_BUFFERS({
++    for (unsigned int i = 0; i < glyph_count; ++i) {
++      if (is_vertical) {
++        positions[i].y_advance += spacing;
++      } else {
++        positions[i].x_advance += spacing;
++      }
++    }
++  });
++}
++
++
+ inline bool ShapeRange(hb_buffer_t* buffer,
+                        const FontFeatureRanges& font_features,
+                        const SimpleFontData* current_font,
+@@ -342,6 +395,7 @@ inline bool ShapeRange(hb_buffer_t* buffer,
+   if (!face->ShouldSubpixelPosition()) {
+     RoundHarfBuzzBufferPositions(buffer);
+   }
++  ApplyFontSpacingNoise(buffer);
+ 
+   return true;
+ }
+-- 
+2.45.1.windows.1
+

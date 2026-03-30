@@ -1,0 +1,269 @@
+From 8a2a04290fa7e9671cbafcc7c971a4c1f1a03dc3 Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Mon, 30 Mar 2026 01:24:57 -0700
+Subject: [PATCH 21/24] google headers
+
+---
+ .../request_header_integrity/buildflags.gni   |  2 +-
+ ...st_header_integrity_url_loader_throttle.cc | 75 ++++++++-----------
+ .../variations/net/variations_http_headers.cc | 53 ++++---------
+ 3 files changed, 47 insertions(+), 83 deletions(-)
+
+diff --git a/chrome/common/request_header_integrity/buildflags.gni b/chrome/common/request_header_integrity/buildflags.gni
+index b08c487be9..6950efe261 100644
+--- a/chrome/common/request_header_integrity/buildflags.gni
++++ b/chrome/common/request_header_integrity/buildflags.gni
+@@ -5,7 +5,7 @@
+ import("//build/config/chrome_build.gni")
+ 
+ declare_args() {
+-  enable_request_header_integrity = is_chrome_branded
++  enable_request_header_integrity = true
+ 
+   channel_name_header_name = ""
+   copyright_header_name = ""
+diff --git a/chrome/common/request_header_integrity/request_header_integrity_url_loader_throttle.cc b/chrome/common/request_header_integrity/request_header_integrity_url_loader_throttle.cc
+index 1922b2227c..9679bf5f97 100644
+--- a/chrome/common/request_header_integrity/request_header_integrity_url_loader_throttle.cc
++++ b/chrome/common/request_header_integrity/request_header_integrity_url_loader_throttle.cc
+@@ -7,19 +7,17 @@
+ #include <string>
+ #include <vector>
+ 
+-#include "base/base64.h"
+ #include "base/containers/span.h"
+ #include "base/feature_list.h"
+-#include "base/hash/sha1.h"
+ #include "base/strings/string_util.h"
+ #include "build/branding_buildflags.h"
+-#include "chrome/common/channel_info.h"
+-#include "components/embedder_support/user_agent_utils.h"
+-#include "components/google/core/common/google_util.h"
+-#include "google_apis/google_api_keys.h"
++#include "components/nodriver4j/google_domain_util.h"
+ #include "net/url_request/redirect_info.h"
+ #include "services/network/public/cpp/resource_request.h"
+ #include "services/network/public/mojom/network_context.mojom.h"
++#include "base/command_line.h"
++#include "base/strings/string_split.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
+ 
+ #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+ #include "chrome/common/request_header_integrity/internal/build_derived_values.h"
+@@ -57,50 +55,37 @@ namespace {
+ 
+ BASE_FEATURE(kRequestHeaderIntegrity, base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+-#if !BUILDFLAG(GOOGLE_CHROME_BRANDING)
+-// Seed for header integrity (empty for unbranded builds).
+-constexpr char kIntegritySeed[] = "";
+-#endif
+-
+-// Returns extended, stable, beta, dev, or canary if a channel is available,
+-// otherwise the empty string.
+-std::string GetChannelName() {
+-  std::string channel_name =
+-      chrome::GetChannelName(chrome::WithExtendedStable(true));
+-
+-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+-  if (channel_name.empty()) {
+-    // For branded builds, stable is represented as the empty string.
+-    channel_name = "stable";
++void AddRequestIntegrityHeaders(net::HttpRequestHeaders* headers) {
++  const base::CommandLine* command_line =
++      base::CommandLine::ForCurrentProcess();
++  if (!command_line->HasSwitch(switches::kFingerprintRequestIntegrity)) {
++    return;
+   }
+-#endif
+ 
+-  if (base::ToLowerASCII(channel_name) == "unknown") {
+-    return "";
++  std::string value = command_line->GetSwitchValueASCII(
++      switches::kFingerprintRequestIntegrity);
++  std::vector<std::string> parts = base::SplitString(
++      value, "|", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
++  if (parts.size() != 4) {
++    return;
+   }
+ 
+-  return channel_name;
+-}
+-
+-void AddRequestIntegrityHeaders(net::HttpRequestHeaders* headers) {
+-  const std::string digest =
+-      base::Base64Encode(base::SHA1Hash(base::as_byte_span(
+-          std::string(kIntegritySeed) + google_apis::GetAPIKey() +
+-          embedder_support::GetUserAgent())));
+-  const std::string channel_name = GetChannelName();
+-  if (!channel_name.empty()) {
+-    headers->SetHeader(CHANNEL_NAME_HEADER_NAME, channel_name);
+-  }
+-  headers->SetHeader(LASTCHANGE_YEAR_HEADER_NAME, LASTCHANGE_YEAR);
+-  headers->SetHeader(VALIDATE_HEADER_NAME, digest);
+-  headers->SetHeader(COPYRIGHT_HEADER_NAME, CHROME_COPYRIGHT);
++  headers->SetHeader("X-Browser-Channel", parts[0]);
++  headers->SetHeader("X-Browser-Year", parts[1]);
++  headers->SetHeader("X-Browser-Validation", parts[2]);
++  headers->SetHeader("X-Browser-Copyright", parts[3]);
+ }
+ 
+ void AddRequestIntegrityHeaderNamesToVector(std::vector<std::string>* vector) {
+-  vector->push_back(CHANNEL_NAME_HEADER_NAME);
+-  vector->push_back(LASTCHANGE_YEAR_HEADER_NAME);
+-  vector->push_back(VALIDATE_HEADER_NAME);
+-  vector->push_back(COPYRIGHT_HEADER_NAME);
++  const base::CommandLine* command_line =
++      base::CommandLine::ForCurrentProcess();
++  if (!command_line->HasSwitch(switches::kFingerprintRequestIntegrity)) {
++    return;
++  }
++  vector->push_back("X-Browser-Channel");
++  vector->push_back("X-Browser-Year");
++  vector->push_back("X-Browser-Validation");
++  vector->push_back("X-Browser-Copyright");
+ }
+ 
+ }  // namespace
+@@ -116,7 +101,7 @@ void RequestHeaderIntegrityURLLoaderThrottle::DetachFromCurrentSequence() {}
+ void RequestHeaderIntegrityURLLoaderThrottle::WillStartRequest(
+     network::ResourceRequest* request,
+     bool* defer) {
+-  if (!google_util::IsGoogleAssociatedDomainUrl(request->url)) {
++  if (!nodriver4j::IsGoogleAssociatedDomain(request->url)) {
+     return;
+   }
+ 
+@@ -130,7 +115,7 @@ void RequestHeaderIntegrityURLLoaderThrottle::WillRedirectRequest(
+     std::vector<std::string>* to_be_removed_request_headers,
+     net::HttpRequestHeaders* modified_request_headers,
+     net::HttpRequestHeaders* modified_cors_exempt_request_headers) {
+-  if (google_util::IsGoogleAssociatedDomainUrl(redirect_info->new_url)) {
++  if (nodriver4j::IsGoogleAssociatedDomain(redirect_info->new_url)) {
+     AddRequestIntegrityHeaders(modified_cors_exempt_request_headers);
+   } else {
+     AddRequestIntegrityHeaderNamesToVector(to_be_removed_request_headers);
+diff --git a/components/variations/net/variations_http_headers.cc b/components/variations/net/variations_http_headers.cc
+index cf051df55e..3156423a09 100644
+--- a/components/variations/net/variations_http_headers.cc
++++ b/components/variations/net/variations_http_headers.cc
+@@ -12,6 +12,7 @@
+ #include "base/strings/string_util.h"
+ #include "build/build_config.h"
+ #include "components/google/core/common/google_util.h"
++#include "components/nodriver4j/google_domain_util.h"
+ #include "components/variations/variations_features.h"
+ #include "components/variations/variations_ids_provider.h"
+ #include "net/base/isolation_info.h"
+@@ -22,6 +23,8 @@
+ #include "services/network/public/mojom/network_context.mojom.h"
+ #include "services/network/public/mojom/url_response_head.mojom.h"
+ #include "url/gurl.h"
++#include "base/command_line.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
+ 
+ #if BUILDFLAG(IS_IOS)
+ #include "base/command_line.h"
+@@ -31,8 +34,6 @@
+ 
+ namespace variations {
+ 
+-// The name string for the header for variations information.
+-// Note that prior to M33 this header was named X-Chrome-Variations.
+ const char kClientDataHeader[] = "X-Client-Data";
+ 
+ namespace {
+@@ -116,16 +117,6 @@ URLValidationResult GetUrlValidationResult(const GURL& url) {
+   return URLValidationResult::kShouldAppend;
+ }
+ 
+-// Returns true if the request to |url| should include a variations header.
+-// Also, logs the result of validating |url| in histograms, one of which ends in
+-// |suffix|.
+-bool ShouldAppendVariationsHeader(const GURL& url, const std::string& suffix) {
+-  URLValidationResult result = GetUrlValidationResult(url);
+-  base::UmaHistogramEnumeration(
+-      "Variations.Headers.URLValidationResult." + suffix, result);
+-  return result == URLValidationResult::kShouldAppend;
+-}
+-
+ // Returns true if the request is sent from a Google web property, i.e. from a
+ // first-party context.
+ //
+@@ -252,27 +243,21 @@ class VariationsHeaderHelper {
+   VariationsHeaderHelper& operator=(const VariationsHeaderHelper&) = delete;
+ 
+   bool AppendHeaderIfNeeded(const GURL& url, InIncognito incognito) {
+-    // Note the criteria for attaching client experiment headers:
+-    // 1. We only transmit to Google owned domains which can evaluate
+-    // experiments.
+-    //    1a. These include hosts which have a standard postfix such as:
+-    //         *.60u613cl1c4.n3t.qjz9zk or *.9oo91esyndication.qjz9zk or
+-    //         exactly www.9oo91eadservices.qjz9zk or
+-    //         international TLD domains *.google.<TLD> or *.youtube.<TLD>.
+-    // 2. Only transmit for non-Incognito profiles.
+-    // 3. For the X-Client-Data header, only include non-empty variation IDs.
++    const base::CommandLine* command_line =
++        base::CommandLine::ForCurrentProcess();
++    if (command_line->HasSwitch(switches::kXClientData)) {
++      variations_header_ =
++          command_line->GetSwitchValueASCII(switches::kXClientData);
++    } else {
++      return false;
++    }
+     if ((incognito == InIncognito::kYes) ||
+-        !ShouldAppendVariationsHeader(url, "Append")) {
++        !nodriver4j::IsGoogleAssociatedDomain(url)) {
+       return false;
+     }
+-
+     if (variations_header_.empty()) {
+       return false;
+     }
+-
+-    // Set the variations header to cors_exempt_headers rather than headers to
+-    // be exempted from CORS checks, and to avoid exposing the header to service
+-    // workers.
+     resource_request_->cors_exempt_headers.SetHeaderIfMissing(
+         kClientDataHeader, variations_header_);
+     return true;
+@@ -341,7 +326,7 @@ void RemoveVariationsHeaderIfNeeded(
+     const net::RedirectInfo& redirect_info,
+     const network::mojom::URLResponseHead& response_head,
+     std::vector<std::string>* to_be_removed_headers) {
+-  if (!ShouldAppendVariationsHeader(redirect_info.new_url, "Remove")) {
++  if (!nodriver4j::IsGoogleAssociatedDomain(redirect_info.new_url)) {
+     to_be_removed_headers->push_back(kClientDataHeader);
+   }
+ }
+@@ -379,24 +364,18 @@ CreateSimpleURLLoaderWithVariationsHeaderUnknownSignedIn(
+ }
+ 
+ bool HasVariationsHeader(const network::ResourceRequest& request) {
+-  std::string unused_header;
+-  return GetVariationsHeader(request, &unused_header);
++  return false;
+ }
+ 
+ bool GetVariationsHeader(const network::ResourceRequest& request,
+                          std::string* out) {
+-  std::optional<std::string> header_value =
+-      request.cors_exempt_headers.GetHeader(kClientDataHeader);
+-  if (header_value) {
+-    out->swap(header_value.value());
+-  }
+-  return header_value.has_value();
++  return false;
+ }
+ 
+ bool ShouldAppendVariationsHeaderForTesting(
+     const GURL& url,
+     const std::string& histogram_suffix) {
+-  return ShouldAppendVariationsHeader(url, histogram_suffix);
++  return false;
+ }
+ 
+ void UpdateCorsExemptHeaderForVariations(
+-- 
+2.45.1.windows.1
+

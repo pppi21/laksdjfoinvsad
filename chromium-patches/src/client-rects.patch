@@ -1,0 +1,166 @@
+From 16465fe8f68b8a5034626528570691174cbe5e53 Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Mon, 30 Mar 2026 01:13:52 -0700
+Subject: [PATCH 10/24] client rects
+
+---
+ .../blink/renderer/core/dom/document.cc       | 19 +++++++++++++++++++
+ .../blink/renderer/core/dom/document.h        |  6 ++++++
+ .../blink/renderer/core/dom/element.cc        |  8 ++++++++
+ third_party/blink/renderer/core/dom/range.cc  | 12 +++++++++---
+ ui/gfx/geometry/quad_f.cc                     |  7 +++++++
+ ui/gfx/geometry/quad_f.h                      |  4 ++++
+ 6 files changed, 53 insertions(+), 3 deletions(-)
+
+diff --git a/third_party/blink/renderer/core/dom/document.cc b/third_party/blink/renderer/core/dom/document.cc
+index dde7e8993c..68f59bb649 100644
+--- a/third_party/blink/renderer/core/dom/document.cc
++++ b/third_party/blink/renderer/core/dom/document.cc
+@@ -405,6 +405,8 @@
+ #include "third_party/blink/renderer/platform/wtf/text/text_encoding_registry.h"
+ #include "third_party/blink/renderer/platform/wtf/text/utf16.h"
+ #include "third_party/perfetto/include/perfetto/tracing/track_event_args.h"
++#include "base/command_line.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
+ 
+ namespace blink {
+ 
+@@ -1043,6 +1045,23 @@ Document::Document(const DocumentInit& initializer,
+       data_(MakeGarbageCollected<DocumentData>(GetExecutionContext())) {
+   TRACE_EVENT("blink", "Document::Document", perfetto::Flow::FromPointer(this));
+   DCHECK(agent_);
++  const base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
++  if (command_line->HasSwitch(switches::kCanvasFingerprint)) {
++    std::string seed_str = command_line->GetSwitchValueASCII(switches::kCanvasFingerprint);
++
++    std::string combined_x = seed_str + "offset_x";
++    std::string combined_y = seed_str + "offset_y";
++
++    uint32_t hash_val_x = static_cast<uint32_t>(std::hash<std::string>{}(combined_x));
++    uint32_t hash_val_y = static_cast<uint32_t>(std::hash<std::string>{}(combined_y));
++
++    double norm_x = hash_val_x / 4294967295.0 - 0.5;
++    double norm_y = hash_val_y / 4294967295.0 - 0.5;
++
++    // ±0.001 pixel offset
++    noise_factor_x_ = norm_x * 0.002;
++    noise_factor_y_ = norm_y * 0.002;
++  }
+   if (base::FeatureList::IsEnabled(features::kDelayAsyncScriptExecution) &&
+       features::kDelayAsyncScriptExecutionDelayByDefaultParam.Get()) {
+     script_runner_delayer_->Activate();
+diff --git a/third_party/blink/renderer/core/dom/document.h b/third_party/blink/renderer/core/dom/document.h
+index 9e37bcf1a4..95957b2014 100644
+--- a/third_party/blink/renderer/core/dom/document.h
++++ b/third_party/blink/renderer/core/dom/document.h
+@@ -571,6 +571,10 @@ class CORE_EXPORT Document : public ContainerNode,
+     has_xml_declaration_ = has_xml_declaration ? 1 : 0;
+   }
+ 
++  // Values for get*ClientRect fingerprint deception
++  double GetNoiseFactorX() const { return noise_factor_x_; }
++  double GetNoiseFactorY() const { return noise_factor_y_; }
++
+   V8VisibilityState visibilityState() const;
+   String visibilityStateAsString() const;
+   bool IsPageVisible() const;
+@@ -2841,6 +2845,8 @@ class CORE_EXPORT Document : public ContainerNode,
+   bool is_freezing_in_progress_ = false;
+ 
+   base::ElapsedTimer start_time_;
++  double noise_factor_x_ = 0;
++  double noise_factor_y_ = 0;
+ 
+   // The script runner is used to run scripts of the following scheduling types:
+   // - ScriptSchedulingType::kAsync
+diff --git a/third_party/blink/renderer/core/dom/element.cc b/third_party/blink/renderer/core/dom/element.cc
+index d6ace9895e..636e27de51 100644
+--- a/third_party/blink/renderer/core/dom/element.cc
++++ b/third_party/blink/renderer/core/dom/element.cc
+@@ -3427,6 +3427,11 @@ DOMRectList* Element::getClientRects() {
+     GetDocument().AdjustRectForScrollAndAbsoluteZoom(rect,
+                                                      *element_layout_object);
+   }
++  for (auto& rect : rects) {
++    rect.Offset(GetDocument().GetNoiseFactorX(),
++                GetDocument().GetNoiseFactorY());
++  }
++
+   return MakeGarbageCollected<DOMRectList>(rects);
+ }
+ 
+@@ -3473,6 +3478,9 @@ gfx::RectF Element::GetBoundingClientRectNoLifecycleUpdate() const {
+   DCHECK(element_layout_object);
+   GetDocument().AdjustRectForScrollAndAbsoluteZoom(result,
+                                                    *element_layout_object);
++  result.Offset(GetDocument().GetNoiseFactorX(),
++                GetDocument().GetNoiseFactorY());
++
+   return result;
+ }
+ 
+diff --git a/third_party/blink/renderer/core/dom/range.cc b/third_party/blink/renderer/core/dom/range.cc
+index ce8fea5cf7..ae7bb57c8c 100644
+--- a/third_party/blink/renderer/core/dom/range.cc
++++ b/third_party/blink/renderer/core/dom/range.cc
+@@ -1655,15 +1655,21 @@ DOMRectList* Range::getClientRects() const {
+ 
+   Vector<gfx::QuadF> quads;
+   GetBorderAndTextQuads(quads);
++  for (gfx::QuadF& quad : quads) {
++    quad.Offset(owner_document_->GetNoiseFactorX(),
++                owner_document_->GetNoiseFactorY());
++  }
++
+ 
+   return MakeGarbageCollected<DOMRectList>(quads);
+ }
+ 
+ DOMRect* Range::getBoundingClientRect() const {
+-  // TODO(crbug.com/1499981): This should be removed once synchronized scrolling
+-  // impact is understood.
+   SyncScrollAttemptHeuristic::DidAccessScrollOffset();
+-  return DOMRect::FromRectF(BoundingRect());
++  auto rect = BoundingRect();
++  rect.Offset(owner_document_->GetNoiseFactorX(),
++              owner_document_->GetNoiseFactorY());
++  return DOMRect::FromRectF(rect);
+ }
+ 
+ // TODO(editing-dev): We should make
+diff --git a/ui/gfx/geometry/quad_f.cc b/ui/gfx/geometry/quad_f.cc
+index b6306c2cc5..abcd4abca5 100644
+--- a/ui/gfx/geometry/quad_f.cc
++++ b/ui/gfx/geometry/quad_f.cc
+@@ -137,6 +137,13 @@ void QuadF::Scale(float x_scale, float y_scale) {
+   p4_.Scale(x_scale, y_scale);
+ }
+ 
++void QuadF::Offset(float x_offset, float y_offset) {
++  p1_.Offset(x_offset, y_offset);
++  p2_.Offset(x_offset, y_offset);
++  p3_.Offset(x_offset, y_offset);
++  p4_.Offset(x_offset, y_offset);
++}
++
+ void QuadF::operator+=(const Vector2dF& rhs) {
+   p1_ += rhs;
+   p2_ += rhs;
+diff --git a/ui/gfx/geometry/quad_f.h b/ui/gfx/geometry/quad_f.h
+index c9d21e3519..cd2df6d509 100644
+--- a/ui/gfx/geometry/quad_f.h
++++ b/ui/gfx/geometry/quad_f.h
+@@ -106,6 +106,10 @@ class COMPONENT_EXPORT(GEOMETRY) QuadF {
+   // Scale each point in the quad by the scale factors along each axis.
+   void Scale(float x_scale, float y_scale);
+ 
++  // Offset each point in the quad by the offset values.
++  void Offset(float offset) { Offset(offset, offset); }
++  void Offset(float x_offset, float y_offset);
++
+   // Tests whether any part of the rectangle intersects with this quad.
+   // This only works for convex quads.
+   // This intersection is edge-inclusive and will return true even if the
+-- 
+2.45.1.windows.1
+

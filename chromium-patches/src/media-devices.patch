@@ -1,0 +1,122 @@
+From 0f666a510274b39330fccba01e1b38b198d38f61 Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Mon, 30 Mar 2026 01:18:04 -0700
+Subject: [PATCH 16/24] media devices
+
+---
+ .../modules/mediastream/media_devices.cc      | 85 +++++++++++++++++++
+ 1 file changed, 85 insertions(+)
+
+diff --git a/third_party/blink/renderer/modules/mediastream/media_devices.cc b/third_party/blink/renderer/modules/mediastream/media_devices.cc
+index 86a41c16dc..169f7e9c8a 100644
+--- a/third_party/blink/renderer/modules/mediastream/media_devices.cc
++++ b/third_party/blink/renderer/modules/mediastream/media_devices.cc
+@@ -67,6 +67,10 @@
+ #include "third_party/blink/renderer/platform/scheduler/public/event_loop.h"
+ #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
+ #include "third_party/blink/renderer/platform/wtf/functional.h"
++#include "base/command_line.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/string_split.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
+ 
+ namespace blink {
+ 
+@@ -409,6 +413,26 @@ void RecordUma(EnumerateDevicesFirstStateOnContextDestroyed value) {
+       value);
+ }
+ 
++// Generates a deterministic 64-character hex device ID from a type and index.
++// Not cryptographic — just needs to look plausible to fingerprinting scripts.
++String GenerateFakeDeviceId(const char* type_prefix, uint32_t index) {
++  // Build a seed string and produce a simple hash-like hex output.
++  std::string seed = std::string(type_prefix) + std::to_string(index);
++  uint64_t hash = 0xcbf29ce484222325ULL;  // FNV-1a offset basis
++  for (char c : seed) {
++    hash ^= static_cast<uint64_t>(c);
++    hash *= 0x100000001b3ULL;  // FNV-1a prime
++  }
++  // Extend to 64 hex chars by hashing again with different seeds.
++  uint64_t hash2 = hash * 0x9e3779b97f4a7c15ULL;
++  uint64_t hash3 = hash2 * 0x517cc1b727220a95ULL;
++  uint64_t hash4 = hash3 * 0x6c62272e07bb0142ULL;
++  char buf[65];
++  snprintf(buf, sizeof(buf), "%016" PRIx64 "%016" PRIx64 "%016" PRIx64 "%016" PRIx64,
++           hash, hash2, hash3, hash4);
++  return String::FromUTF8(buf);
++}
++
+ }  // namespace
+ 
+ const char MediaDevices::kSupplementName[] = "MediaDevices";
+@@ -1345,6 +1369,67 @@ void MediaDevices::DevicesEnumerated(
+   }
+ 
+   ReportCompletedEnumerateDevices(result_contains_nonempty_input_device_ids);
++
++  // Media device count spoofing via --fingerprint-media=mics,webcams,speakers
++    struct MediaSpoof {
++    uint32_t mics;
++    uint32_t webcams;
++    uint32_t speakers;
++    bool active;
++  };
++  static const MediaSpoof media_spoof = []() -> MediaSpoof {
++    std::string value =
++        base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
++            switches::kFingerprintMedia);
++    if (value.empty())
++      return {0, 0, 0, false};
++    std::vector<std::string> parts = base::SplitString(
++        value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
++    uint32_t m = 1, w = 1, s = 1;
++    if (parts.size() >= 1)
++      base::StringToUint(parts[0], &m);
++    if (parts.size() >= 2)
++      base::StringToUint(parts[1], &w);
++    if (parts.size() >= 3)
++      base::StringToUint(parts[2], &s);
++    return {m, w, s, true};
++  }();
++
++  if (media_spoof.active) {
++    uint32_t num_mics = media_spoof.mics;
++    uint32_t num_webcams = media_spoof.webcams;
++    uint32_t num_speakers = media_spoof.speakers;
++
++    media_devices.clear();
++
++    // Microphones (AudioInput) — use InputDeviceInfo for input devices
++    for (uint32_t i = 0; i < num_mics; ++i) {
++      media_devices.push_back(MakeGarbageCollected<InputDeviceInfo>(
++          GenerateFakeDeviceId("audioinput", i),
++          String(""),  // label (empty = no permission granted)
++          GenerateFakeDeviceId("group_ai", i),
++          mojom::blink::MediaDeviceType::kMediaAudioInput));
++    }
++
++    // Webcams (VideoInput) — use InputDeviceInfo for input devices
++    for (uint32_t i = 0; i < num_webcams; ++i) {
++      media_devices.push_back(MakeGarbageCollected<InputDeviceInfo>(
++          GenerateFakeDeviceId("videoinput", i),
++          String(""),
++          GenerateFakeDeviceId("group_vi", i),
++          mojom::blink::MediaDeviceType::kMediaVideoInput));
++    }
++
++    // Speakers (AudioOutput) — use base MediaDeviceInfo
++    for (uint32_t i = 0; i < num_speakers; ++i) {
++      media_devices.push_back(MakeGarbageCollected<MediaDeviceInfo>(
++          GenerateFakeDeviceId("audiooutput", i),
++          String(""),
++          GenerateFakeDeviceId("group_ao", i),
++          mojom::blink::MediaDeviceType::kMediaAudioOutput));
++    }
++  }
++  
+   result_tracker->Resolve(media_devices);
+   tracer->End();
+ }
+-- 
+2.45.1.windows.1
+

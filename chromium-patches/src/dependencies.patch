@@ -1,0 +1,238 @@
+From 1e1e914e58472aca7794309fc66f7a644f5052c4 Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Mon, 30 Mar 2026 01:00:28 -0700
+Subject: [PATCH 05/24] dependencies
+
+---
+ .../common/request_header_integrity/BUILD.gn  |  1 +
+ components/embedder_support/BUILD.gn          |  1 +
+ components/nodriver4j/BUILD.gn                | 19 +++++++++++++++++++
+ components/variations/net/BUILD.gn            |  1 +
+ content/browser/BUILD.gn                      |  1 +
+ third_party/blink/common/BUILD.gn             |  1 +
+ third_party/blink/renderer/core/BUILD.gn      |  1 +
+ .../blink/renderer/modules/battery/BUILD.gn   |  5 ++++-
+ .../blink/renderer/modules/canvas/BUILD.gn    |  1 +
+ .../renderer/modules/mediastream/BUILD.gn     |  1 +
+ .../blink/renderer/modules/netinfo/BUILD.gn   |  5 ++++-
+ .../renderer/modules/peerconnection/BUILD.gn  |  1 +
+ .../blink/renderer/modules/speech/BUILD.gn    |  1 +
+ .../blink/renderer/modules/webaudio/BUILD.gn  |  1 +
+ .../blink/renderer/modules/webgl/BUILD.gn     |  1 +
+ third_party/blink/renderer/platform/BUILD.gn  |  1 +
+ 16 files changed, 40 insertions(+), 2 deletions(-)
+ create mode 100644 components/nodriver4j/BUILD.gn
+
+diff --git a/chrome/common/request_header_integrity/BUILD.gn b/chrome/common/request_header_integrity/BUILD.gn
+index 7ca63f01c4..86e8b5580a 100644
+--- a/chrome/common/request_header_integrity/BUILD.gn
++++ b/chrome/common/request_header_integrity/BUILD.gn
+@@ -42,6 +42,7 @@ source_set("request_header_integrity") {
+     "//chrome/common:channel_info",
+     "//components/embedder_support:user_agent",
+     "//components/google/core/common",
++    "//components/nodriver4j:nodriver4j_switches",
+     "//google_apis",
+     "//services/network/public/cpp",
+     "//services/network/public/mojom",
+diff --git a/components/embedder_support/BUILD.gn b/components/embedder_support/BUILD.gn
+index 595b42f9df..ade27aec09 100644
+--- a/components/embedder_support/BUILD.gn
++++ b/components/embedder_support/BUILD.gn
+@@ -58,6 +58,7 @@ static_library("user_agent") {
+   deps = [
+     ":embedder_support",
+     "//build:branding_buildflags",
++    "//components/nodriver4j:nodriver4j_switches",
+     "//components/policy/core/common",
+     "//components/prefs",
+     "//components/version_info",
+diff --git a/components/nodriver4j/BUILD.gn b/components/nodriver4j/BUILD.gn
+new file mode 100644
+index 0000000000..240c76c419
+--- /dev/null
++++ b/components/nodriver4j/BUILD.gn
+@@ -0,0 +1,19 @@
++# components\nodriver4j\BUILD.gn
++component("nodriver4j_switches") {
++  sources = [
++    "nodriver4j_switches.h",
++    "nodriver4j_switches.cc",
++    "default_voices.h",
++    "default_voices.cc",
++    "font_whitelist.h",
++    "font_whitelist.cc",
++    "version_blocklist.h",
++    "version_blocklist.cc",
++    "webrtc_ip_spoofer.h",
++    "google_domain_util.h"
++  ]
++
++  defines = [ "IS_NODRIVER4J_IMPL" ]
++
++  deps = [ "//base" ]
++}
+\ No newline at end of file
+diff --git a/components/variations/net/BUILD.gn b/components/variations/net/BUILD.gn
+index acd7fd58d0..ad15873413 100644
+--- a/components/variations/net/BUILD.gn
++++ b/components/variations/net/BUILD.gn
+@@ -25,6 +25,7 @@ static_library("net") {
+   deps = [
+     "//base",
+     "//components/google/core/common",
++    "//components/nodriver4j:nodriver4j_switches",
+     "//components/variations:variations_mojom",
+     "//components/variations/field_trial_config",
+     "//components/variations/proto",
+diff --git a/content/browser/BUILD.gn b/content/browser/BUILD.gn
+index 1a1aa590c7..d5c06978ba 100644
+--- a/content/browser/BUILD.gn
++++ b/content/browser/BUILD.gn
+@@ -295,6 +295,7 @@ source_set("browser") {
+     "//third_party/icu",
+     "//third_party/inspector_protocol:crdtp",
+     "//third_party/libyuv",
++    "//components/nodriver4j:nodriver4j_switches",
+     "//third_party/re2",
+     "//third_party/snappy",
+     "//third_party/sqlite",
+diff --git a/third_party/blink/common/BUILD.gn b/third_party/blink/common/BUILD.gn
+index f56621d3f7..f08224f677 100644
+--- a/third_party/blink/common/BUILD.gn
++++ b/third_party/blink/common/BUILD.gn
+@@ -303,6 +303,7 @@ source_set("common") {
+ 
+   deps = [
+     "//base",
++    "//components/nodriver4j:nodriver4j_switches",
+     "//build:android_buildflags",
+     "//build:chromecast_buildflags",
+     "//media/capture:capture_base",
+diff --git a/third_party/blink/renderer/core/BUILD.gn b/third_party/blink/renderer/core/BUILD.gn
+index e4f491dae1..48fabc5c5b 100644
+--- a/third_party/blink/renderer/core/BUILD.gn
++++ b/third_party/blink/renderer/core/BUILD.gn
+@@ -403,6 +403,7 @@ component("core") {
+     "//base",
+     "//components/attribution_reporting",
+     "//components/attribution_reporting:mojom_blink",
++    "//components/nodriver4j:nodriver4j_switches",
+     "//components/paint_preview/common",
+     "//components/performance_manager/public/mojom:mojom_blink",
+     "//components/shared_highlighting/core/common",
+diff --git a/third_party/blink/renderer/modules/battery/BUILD.gn b/third_party/blink/renderer/modules/battery/BUILD.gn
+index a648fb3384..6f7f5c0341 100644
+--- a/third_party/blink/renderer/modules/battery/BUILD.gn
++++ b/third_party/blink/renderer/modules/battery/BUILD.gn
+@@ -13,5 +13,8 @@ blink_modules_sources("battery") {
+     "battery_status.h",
+   ]
+ 
+-  deps = [ "//services/service_manager/public/cpp" ]
++  deps = [ 
++    "//services/service_manager/public/cpp",
++    "//components/nodriver4j:nodriver4j_switches"
++     ]
+ }
+diff --git a/third_party/blink/renderer/modules/canvas/BUILD.gn b/third_party/blink/renderer/modules/canvas/BUILD.gn
+index b341a6e159..32a14af7f9 100644
+--- a/third_party/blink/renderer/modules/canvas/BUILD.gn
++++ b/third_party/blink/renderer/modules/canvas/BUILD.gn
+@@ -58,6 +58,7 @@ blink_modules_sources("canvas") {
+   ]
+ 
+   deps = [
++    "//components/nodriver4j:nodriver4j_switches",
+     "//third_party/blink/renderer/modules/webcodecs",
+     "//third_party/blink/renderer/modules/webgpu",
+   ]
+diff --git a/third_party/blink/renderer/modules/mediastream/BUILD.gn b/third_party/blink/renderer/modules/mediastream/BUILD.gn
+index 62ef4afc40..540c88f690 100644
+--- a/third_party/blink/renderer/modules/mediastream/BUILD.gn
++++ b/third_party/blink/renderer/modules/mediastream/BUILD.gn
+@@ -129,6 +129,7 @@ blink_modules_sources("mediastream") {
+   ]
+   deps = [
+     "//build:chromecast_buildflags",
++    "//components/nodriver4j:nodriver4j_switches",
+     "//media/capture/mojom:image_capture_blink",
+     "//media/webrtc",
+     "//services/viz/public/cpp/gpu",
+diff --git a/third_party/blink/renderer/modules/netinfo/BUILD.gn b/third_party/blink/renderer/modules/netinfo/BUILD.gn
+index 30e5c847ca..239a89419f 100644
+--- a/third_party/blink/renderer/modules/netinfo/BUILD.gn
++++ b/third_party/blink/renderer/modules/netinfo/BUILD.gn
+@@ -9,4 +9,7 @@ blink_modules_sources("netinfo") {
+     "network_information.cc",
+     "network_information.h",
+   ]
+-}
++  deps = [
++    "//components/nodriver4j:nodriver4j_switches",
++  ]
++}
+\ No newline at end of file
+diff --git a/third_party/blink/renderer/modules/peerconnection/BUILD.gn b/third_party/blink/renderer/modules/peerconnection/BUILD.gn
+index 054a691045..4e8fb661b4 100644
+--- a/third_party/blink/renderer/modules/peerconnection/BUILD.gn
++++ b/third_party/blink/renderer/modules/peerconnection/BUILD.gn
+@@ -176,6 +176,7 @@ blink_modules_sources("peerconnection") {
+   public_deps = [ "//third_party/webrtc_overrides:webrtc_component" ]
+   deps = [
+     "//build:chromecast_buildflags",
++    "//components/nodriver4j:nodriver4j_switches",
+     "//components/webrtc:net_address_utils",
+     "//components/webrtc:thread_wrapper",
+     "//crypto",
+diff --git a/third_party/blink/renderer/modules/speech/BUILD.gn b/third_party/blink/renderer/modules/speech/BUILD.gn
+index e49c0234d1..c138b90c90 100644
+--- a/third_party/blink/renderer/modules/speech/BUILD.gn
++++ b/third_party/blink/renderer/modules/speech/BUILD.gn
+@@ -40,6 +40,7 @@ blink_modules_sources("speech") {
+   ]
+ 
+   deps = [
++    "//components/nodriver4j:nodriver4j_switches",
+     "//media",
+     "//media/mojo/mojom:speech_recognition_audio_forwarder_blink",
+     "//third_party/blink/renderer/modules/mediastream",
+diff --git a/third_party/blink/renderer/modules/webaudio/BUILD.gn b/third_party/blink/renderer/modules/webaudio/BUILD.gn
+index 95e43f8266..b6760373f8 100644
+--- a/third_party/blink/renderer/modules/webaudio/BUILD.gn
++++ b/third_party/blink/renderer/modules/webaudio/BUILD.gn
+@@ -189,6 +189,7 @@ blink_modules_sources("webaudio") {
+     sources += [ "cpu/arm/oscillator_kernel_neon.cc" ]
+   }
+   deps = [
++    "//components/nodriver4j:nodriver4j_switches",
+     "//services/metrics/public/cpp:ukm_builders",
+     "//third_party/blink/renderer/modules/mediastream",
+     "//third_party/blink/renderer/modules/peerconnection",
+diff --git a/third_party/blink/renderer/modules/webgl/BUILD.gn b/third_party/blink/renderer/modules/webgl/BUILD.gn
+index d611207944..9817e98206 100644
+--- a/third_party/blink/renderer/modules/webgl/BUILD.gn
++++ b/third_party/blink/renderer/modules/webgl/BUILD.gn
+@@ -195,6 +195,7 @@ blink_modules_sources("webgl") {
+ 
+   public_deps = [ "//device/vr/public/mojom:vr_service_blink" ]
+   deps = [
++    "//components/nodriver4j:nodriver4j_switches",
+     "//device/vr/buildflags",
+     "//gpu/command_buffer/client:gles2_implementation",
+     "//gpu/command_buffer/client:gles2_interface",
+diff --git a/third_party/blink/renderer/platform/BUILD.gn b/third_party/blink/renderer/platform/BUILD.gn
+index 83ebf4a21a..4684746e60 100644
+--- a/third_party/blink/renderer/platform/BUILD.gn
++++ b/third_party/blink/renderer/platform/BUILD.gn
+@@ -1809,6 +1809,7 @@ component("platform") {
+     "//components/language_detection/content/common:common_blink",
+     "//components/language_detection/content/renderer",
+     "//components/language_detection/core",
++    "//components/nodriver4j:nodriver4j_switches",
+     "//components/paint_preview/common",
+     "//components/search_engines:search_engine_utils",
+     "//components/translate/core/language_detection",
+-- 
+2.45.1.windows.1
+

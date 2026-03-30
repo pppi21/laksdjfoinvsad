@@ -47,3 +47,7 @@ build/
 /chromium-patches/src/0045-pruning-old-files.patch
 /chromium-patches/v8/0003-Stage-4H-complete-all-domain-subs-applied.patch
 /ue-cookies/
+/chromium-patches/v8/pruned-binaries-v8.patch
+/chromium-patches/v8/domain-substitution.patch
+/chromium-patches/src/domain-substitution.patch
+/chromium-patches/src/pruned-binaries.patch

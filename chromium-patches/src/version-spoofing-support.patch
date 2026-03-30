@@ -1,0 +1,120 @@
+From e6162d371968ecb3f362cc05b2421980d6470f5d Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Mon, 30 Mar 2026 01:28:00 -0700
+Subject: [PATCH 22/24] version spoofing support
+
+---
+ components/nodriver4j/version_blocklist.cc | 41 ++++++++++++++++++++++
+ components/nodriver4j/version_blocklist.h  | 15 ++++++++
+ content/child/runtime_features.cc          | 16 +++++++++
+ 3 files changed, 72 insertions(+)
+ create mode 100644 components/nodriver4j/version_blocklist.cc
+ create mode 100644 components/nodriver4j/version_blocklist.h
+
+diff --git a/components/nodriver4j/version_blocklist.cc b/components/nodriver4j/version_blocklist.cc
+new file mode 100644
+index 0000000000..a24766151b
+--- /dev/null
++++ b/components/nodriver4j/version_blocklist.cc
+@@ -0,0 +1,41 @@
++#include "components/nodriver4j/version_blocklist.h"
++
++namespace nodriver4j {
++
++namespace {
++
++// Each entry records the last Chrome major version in which a feature
++// was NOT yet available.  When the spoofed version is <= max_version_absent,
++// the feature will be disabled.
++//
++// Example: {"WebXRLayers", 146} means WebXRLayers first shipped in
++// Chrome 147, so it should be hidden when spoofing version 146 or earlier.
++//
++// Keep entries sorted by max_version_absent descending (newest first)
++// for readability.
++struct VersionGate {
++  const char* feature_name;
++  int max_version_absent;
++};
++
++static constexpr VersionGate kBlocklist[] = {
++    // ── Features that shipped in Chrome 147 (not in 146) ──
++    {"WebXRLayers", 146},
++    {"WebXRLayersCommon", 146},
++    {"WebXRPlaneDetection", 146},
++    {"ScopedViewTransitions", 146},
++};
++
++}  // namespace
++
++std::vector<const char*> GetBlockedFeaturesForVersion(int version) {
++  std::vector<const char*> blocked;
++  for (const auto& gate : kBlocklist) {
++    if (version <= gate.max_version_absent) {
++      blocked.push_back(gate.feature_name);
++    }
++  }
++  return blocked;
++}
++
++}  // namespace nodriver4j
+\ No newline at end of file
+diff --git a/components/nodriver4j/version_blocklist.h b/components/nodriver4j/version_blocklist.h
+new file mode 100644
+index 0000000000..208a5e3e4f
+--- /dev/null
++++ b/components/nodriver4j/version_blocklist.h
+@@ -0,0 +1,15 @@
++#ifndef COMPONENTS_NODRIVER4J_VERSION_BLOCKLIST_H_
++#define COMPONENTS_NODRIVER4J_VERSION_BLOCKLIST_H_
++
++#include <vector>
++
++namespace nodriver4j {
++
++// Returns the list of Blink RuntimeEnabledFeature names that should be
++// disabled when spoofing the given Chrome major version.  Feature names
++// match the "name" field in runtime_enabled_features.json5.
++std::vector<const char*> GetBlockedFeaturesForVersion(int version);
++
++}  // namespace nodriver4j
++
++#endif  // COMPONENTS_NODRIVER4J_VERSION_BLOCKLIST_H_
+\ No newline at end of file
+diff --git a/content/child/runtime_features.cc b/content/child/runtime_features.cc
+index 814df59ee6..8718469cd0 100644
+--- a/content/child/runtime_features.cc
++++ b/content/child/runtime_features.cc
+@@ -49,6 +49,8 @@
+ #include "ui/gl/gl_switches.h"
+ #include "ui/native_theme/features/native_theme_features.h"
+ #include "ui/native_theme/native_theme.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
++#include "components/nodriver4j/version_blocklist.h"
+ 
+ #if BUILDFLAG(IS_ANDROID)
+ #include "base/android/android_info.h"
+@@ -721,6 +723,20 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
+     WebRuntimeFeatures::EnableXSLT(value == "true");
+   }
+ 
++  // Disable features that didn't exist in the spoofed Chrome version.
++  if (command_line.HasSwitch(switches::kFingerprintBrandVersion)) {
++    int spoof_version = 0;
++    base::StringToInt(
++        command_line.GetSwitchValueASCII(switches::kFingerprintBrandVersion),
++        &spoof_version);
++    if (spoof_version > 0) {
++      for (const char* feature :
++           nodriver4j::GetBlockedFeaturesForVersion(spoof_version)) {
++        WebRuntimeFeatures::EnableFeatureFromString(feature, false);
++      }
++    }
++  }
++
+   ResolveInvalidConfigurations();
+ }
+ 
+-- 
+2.45.1.windows.1
+

@@ -1,0 +1,172 @@
+From 91768f86c6ce332e0265e65188a5970a47549c90 Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Mon, 30 Mar 2026 01:23:58 -0700
+Subject: [PATCH 20/24] network
+
+---
+ .../modules/netinfo/network_information.cc    | 88 +++++++++++++++++--
+ 1 file changed, 82 insertions(+), 6 deletions(-)
+
+diff --git a/third_party/blink/renderer/modules/netinfo/network_information.cc b/third_party/blink/renderer/modules/netinfo/network_information.cc
+index 976a3c8c36..e2c1cee039 100644
+--- a/third_party/blink/renderer/modules/netinfo/network_information.cc
++++ b/third_party/blink/renderer/modules/netinfo/network_information.cc
+@@ -22,6 +22,10 @@
+ #include "third_party/blink/renderer/platform/supplementable.h"
+ #include "third_party/blink/renderer/platform/weborigin/kurl.h"
+ #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
++#include "base/command_line.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/string_split.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
+ 
+ namespace blink {
+ 
+@@ -73,6 +77,70 @@ String GetConsoleLogStringForWebHoldback() {
+          "and so may be inaccurate";
+ }
+ 
++struct ConnectionOverride {
++  V8ConnectionType::Enum connection_type;
++  V8EffectiveConnectionType::Enum effective_type;
++  double downlink_mbps;
++  uint32_t rtt_ms;
++  bool save_data;
++};
++
++std::optional<ConnectionOverride> ParseConnectionOverride() {
++  const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++  if (!cl->HasSwitch(::switches::kFingerprintConnection))
++    return std::nullopt;
++
++  std::string value =
++      cl->GetSwitchValueASCII(::switches::kFingerprintConnection);
++  std::vector<std::string> parts = base::SplitString(
++      value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++  if (parts.size() != 5)
++    return std::nullopt;
++
++  ConnectionOverride result;
++
++  // Parse effective type
++  if (parts[0] == "slow-2g")
++    result.effective_type = V8EffectiveConnectionType::Enum::kSlow2G;
++  else if (parts[0] == "2g")
++    result.effective_type = V8EffectiveConnectionType::Enum::k2G;
++  else if (parts[0] == "3g")
++    result.effective_type = V8EffectiveConnectionType::Enum::k3G;
++  else
++    result.effective_type = V8EffectiveConnectionType::Enum::k4G;
++
++  // Parse downlink
++  if (!base::StringToDouble(parts[1], &result.downlink_mbps))
++    return std::nullopt;
++
++  // Parse rtt
++  unsigned rtt;
++  if (!base::StringToUint(parts[2], &rtt))
++    return std::nullopt;
++  result.rtt_ms = rtt;
++
++  // Parse saveData
++  result.save_data = (parts[3] == "true");
++
++  // Parse connection type
++  if (parts[4] == "wifi")
++    result.connection_type = V8ConnectionType::Enum::kWifi;
++  else if (parts[4] == "ethernet")
++    result.connection_type = V8ConnectionType::Enum::kEthernet;
++  else if (parts[4] == "cellular")
++    result.connection_type = V8ConnectionType::Enum::kCellular;
++  else if (parts[4] == "bluetooth")
++    result.connection_type = V8ConnectionType::Enum::kBluetooth;
++  else if (parts[4] == "wimax")
++    result.connection_type = V8ConnectionType::Enum::kWimax;
++  else if (parts[4] == "none")
++    result.connection_type = V8ConnectionType::Enum::kNone;
++  else
++    result.connection_type = V8ConnectionType::Enum::kUnknown;
++
++  return result;
++}
++
+ }  // namespace
+ 
+ NetworkInformation::~NetworkInformation() {
+@@ -84,18 +152,18 @@ bool NetworkInformation::IsObserving() const {
+ }
+ 
+ V8ConnectionType NetworkInformation::type() const {
++  if (auto ovr = ParseConnectionOverride())
++    return V8ConnectionType(ovr->connection_type);
++
+   if (RuntimeEnabledFeatures::NetInfoConstantTypeEnabled()) {
+     return V8ConnectionType(V8ConnectionType::Enum::kUnknown);
+   }
+ 
+-  // type_ is only updated when listening for events, so ask
+-  // networkStateNotifier if not listening (crbug.com/379841).
+   if (!IsObserving()) {
+     return V8ConnectionType(
+         ConnectionTypeToEnum(GetNetworkStateNotifier().ConnectionType()));
+   }
+ 
+-  // If observing, return m_type which changes when the event fires, per spec.
+   return V8ConnectionType(ConnectionTypeToEnum(type_));
+ }
+ 
+@@ -111,6 +179,9 @@ double NetworkInformation::downlinkMax() const {
+ }
+ 
+ V8EffectiveConnectionType NetworkInformation::effectiveType() {
++  if (auto ovr = ParseConnectionOverride())
++    return V8EffectiveConnectionType(ovr->effective_type);
++
+   MaybeShowWebHoldbackConsoleMsg();
+   std::optional<WebEffectiveConnectionType> override_ect =
+       GetNetworkStateNotifier().GetWebHoldbackEffectiveType();
+@@ -119,19 +190,19 @@ V8EffectiveConnectionType NetworkInformation::effectiveType() {
+         EffectiveConnectionTypeToEnum(override_ect.value()));
+   }
+ 
+-  // effective_type_ is only updated when listening for events, so ask
+-  // networkStateNotifier if not listening (crbug.com/379841).
+   if (!IsObserving()) {
+     return V8EffectiveConnectionType(EffectiveConnectionTypeToEnum(
+         GetNetworkStateNotifier().EffectiveType()));
+   }
+ 
+-  // If observing, return m_type which changes when the event fires, per spec.
+   return V8EffectiveConnectionType(
+       EffectiveConnectionTypeToEnum(effective_type_));
+ }
+ 
+ uint32_t NetworkInformation::rtt() {
++  if (auto ovr = ParseConnectionOverride())
++    return GetNetworkStateNotifier().RoundRtt(
++        Host(), base::Milliseconds(ovr->rtt_ms));
+   MaybeShowWebHoldbackConsoleMsg();
+   std::optional<base::TimeDelta> override_rtt =
+       GetNetworkStateNotifier().GetWebHoldbackHttpRtt();
+@@ -148,6 +219,8 @@ uint32_t NetworkInformation::rtt() {
+ }
+ 
+ double NetworkInformation::downlink() {
++  if (auto ovr = ParseConnectionOverride())
++    return GetNetworkStateNotifier().RoundMbps(Host(), ovr->downlink_mbps);
+   MaybeShowWebHoldbackConsoleMsg();
+   std::optional<double> override_downlink_mbps =
+       GetNetworkStateNotifier().GetWebHoldbackDownlinkThroughputMbps();
+@@ -165,6 +238,9 @@ double NetworkInformation::downlink() {
+ }
+ 
+ bool NetworkInformation::saveData() const {
++  if (auto ovr = ParseConnectionOverride())
++    return ovr->save_data;
++
+   bool save_data =
+       IsObserving() ? save_data_ : GetNetworkStateNotifier().SaveDataEnabled();
+ 
+-- 
+2.45.1.windows.1
+

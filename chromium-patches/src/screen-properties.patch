@@ -1,0 +1,489 @@
+From 9ecfcb9c0fed3995ef07efb08c63e923f2f0de39 Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Mon, 30 Mar 2026 01:15:47 -0700
+Subject: [PATCH 12/24] screen properties
+
+---
+ .../blink/renderer/core/css/media_values.cc   | 141 ++++++++++++++++--
+ .../blink/renderer/core/frame/history.cc      |  12 ++
+ .../renderer/core/frame/local_dom_window.cc   |  50 +++++++
+ .../blink/renderer/core/frame/screen.cc       |  78 +++++++++-
+ 4 files changed, 270 insertions(+), 11 deletions(-)
+
+diff --git a/third_party/blink/renderer/core/css/media_values.cc b/third_party/blink/renderer/core/css/media_values.cc
+index 0d60244742..5120705e08 100644
+--- a/third_party/blink/renderer/core/css/media_values.cc
++++ b/third_party/blink/renderer/core/css/media_values.cc
+@@ -30,6 +30,10 @@
+ #include "third_party/blink/renderer/platform/widget/frame_widget.h"
+ #include "ui/base/mojom/window_show_state.mojom-blink.h"
+ #include "ui/display/screen_info.h"
++#include "base/command_line.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/string_split.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
+ 
+ namespace blink {
+ 
+@@ -164,6 +168,22 @@ double MediaValues::CalculateDynamicViewportHeight(LocalFrame* frame) {
+ 
+ int MediaValues::CalculateDeviceWidth(LocalFrame* frame) {
+   DCHECK(frame && frame->View() && frame->GetSettings() && frame->GetPage());
++
++  static const int cached_width = []() -> int {
++    const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++    if (!cl->HasSwitch(::switches::kFingerprintScreen))
++      return -1;
++    std::string value = cl->GetSwitchValueASCII(::switches::kFingerprintScreen);
++    std::vector<std::string> parts = base::SplitString(
++        value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++    int w = -1;
++    if (parts.size() >= 6)
++      base::StringToInt(parts[0], &w);
++    return w;
++  }();
++  if (cached_width >= 0)
++    return cached_width;
++
+   const display::ScreenInfo& screen_info =
+       frame->GetPage()->GetChromeClient().GetScreenInfo(*frame);
+   int device_width = screen_info.rect.width();
+@@ -176,6 +196,22 @@ int MediaValues::CalculateDeviceWidth(LocalFrame* frame) {
+ 
+ int MediaValues::CalculateDeviceHeight(LocalFrame* frame) {
+   DCHECK(frame && frame->View() && frame->GetSettings() && frame->GetPage());
++
++  static const int cached_height = []() -> int {
++    const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++    if (!cl->HasSwitch(::switches::kFingerprintScreen))
++      return -1;
++    std::string value = cl->GetSwitchValueASCII(::switches::kFingerprintScreen);
++    std::vector<std::string> parts = base::SplitString(
++        value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++    int h = -1;
++    if (parts.size() >= 6)
++      base::StringToInt(parts[1], &h);
++    return h;
++  }();
++  if (cached_height >= 0)
++    return cached_height;
++
+   const display::ScreenInfo& screen_info =
+       frame->GetPage()->GetChromeClient().GetScreenInfo(*frame);
+   int device_height = screen_info.rect.height();
+@@ -193,6 +229,17 @@ bool MediaValues::CalculateStrictMode(LocalFrame* frame) {
+ }
+ 
+ float MediaValues::CalculateDevicePixelRatio(LocalFrame* frame) {
++  const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++  if (cl->HasSwitch(::switches::kFingerprintScreen)) {
++    std::string value = cl->GetSwitchValueASCII(::switches::kFingerprintScreen);
++    std::vector<std::string> parts = base::SplitString(
++        value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++    if (parts.size() == 7) {
++      double dpr;
++      if (base::StringToDouble(parts[6], &dpr))
++        return static_cast<float>(dpr);
++    }
++  }
+   return frame->DevicePixelRatio();
+ }
+ 
+@@ -389,8 +436,25 @@ ColorSpaceGamut MediaValues::CalculateColorGamut(LocalFrame* frame) {
+       frame->GetPage()->GetMediaFeatureOverrides();
+   std::optional<ColorSpaceGamut> override_value =
+       overrides ? overrides->GetColorGamut() : std::nullopt;
+-  return override_value.value_or(color_space_utilities::GetColorSpaceGamut(
+-      frame->GetPage()->GetChromeClient().GetScreenInfo(*frame)));
++  if (override_value.has_value())
++    return override_value.value();
++
++  const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++  if (cl->HasSwitch(::switches::kFingerprintMediaFeatures)) {
++    std::string value = cl->GetSwitchValueASCII(::switches::kFingerprintMediaFeatures);
++    std::vector<std::string> parts = base::SplitString(
++        value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++    if (parts.size() == 5) {
++      if (parts[4] == "rec2020")
++        return ColorSpaceGamut::BT2020;
++      if (parts[4] == "p3")
++        return ColorSpaceGamut::P3;
++      return ColorSpaceGamut::SRGB;
++    }
++  }
++
++  return color_space_utilities::GetColorSpaceGamut(
++      frame->GetPage()->GetChromeClient().GetScreenInfo(*frame));
+ }
+ 
+ mojom::blink::PreferredColorScheme MediaValues::CalculatePreferredColorScheme(
+@@ -412,8 +476,23 @@ mojom::blink::PreferredColorScheme MediaValues::CalculatePreferredColorScheme(
+   std::optional<mojom::blink::PreferredColorScheme> preference_override_value =
+       preference_overrides ? preference_overrides->GetPreferredColorScheme()
+                            : std::nullopt;
+-  return preference_override_value.value_or(
+-      frame->GetDocument()->GetStyleEngine().GetPreferredColorScheme());
++if (preference_override_value.has_value())
++    return preference_override_value.value();
++
++  const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++  if (cl->HasSwitch(::switches::kFingerprintMediaFeatures)) {
++    std::string value = cl->GetSwitchValueASCII(::switches::kFingerprintMediaFeatures);
++    std::vector<std::string> parts = base::SplitString(
++        value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++    if (parts.size() == 5) {
++      if (parts[0] == "dark")
++        return mojom::blink::PreferredColorScheme::kDark;
++      if (parts[0] == "light")
++        return mojom::blink::PreferredColorScheme::kLight;
++    }
++  }
++
++  return frame->GetDocument()->GetStyleEngine().GetPreferredColorScheme();
+ }
+ 
+ mojom::blink::PreferredContrast MediaValues::CalculatePreferredContrast(
+@@ -434,8 +513,26 @@ mojom::blink::PreferredContrast MediaValues::CalculatePreferredContrast(
+   std::optional<mojom::blink::PreferredContrast> preference_override_value =
+       preference_overrides ? preference_overrides->GetPreferredContrast()
+                            : std::nullopt;
+-  return preference_override_value.value_or(
+-      frame->GetSettings()->GetPreferredContrast());
++  if (preference_override_value.has_value())
++    return preference_override_value.value();
++
++  const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++  if (cl->HasSwitch(::switches::kFingerprintMediaFeatures)) {
++    std::string value = cl->GetSwitchValueASCII(::switches::kFingerprintMediaFeatures);
++    std::vector<std::string> parts = base::SplitString(
++        value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++    if (parts.size() == 5) {
++      if (parts[2] == "more")
++        return mojom::blink::PreferredContrast::kMore;
++      if (parts[2] == "less")
++        return mojom::blink::PreferredContrast::kLess;
++      if (parts[2] == "custom")
++        return mojom::blink::PreferredContrast::kCustom;
++      return mojom::blink::PreferredContrast::kNoPreference;
++    }
++  }
++
++  return frame->GetSettings()->GetPreferredContrast();
+ }
+ 
+ bool MediaValues::CalculatePrefersReducedMotion(LocalFrame* frame) {
+@@ -454,8 +551,18 @@ bool MediaValues::CalculatePrefersReducedMotion(LocalFrame* frame) {
+   std::optional<bool> preference_override_value =
+       preference_overrides ? preference_overrides->GetPrefersReducedMotion()
+                            : std::nullopt;
+-  return preference_override_value.value_or(
+-      frame->GetSettings()->GetPrefersReducedMotion());
++  if (preference_override_value.has_value())
++    return preference_override_value.value();
++  const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++  if (cl->HasSwitch(::switches::kFingerprintMediaFeatures)) {
++    std::string value = cl->GetSwitchValueASCII(::switches::kFingerprintMediaFeatures);
++    std::vector<std::string> parts = base::SplitString(
++        value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++    if (parts.size() == 5)
++      return parts[1] == "reduce";
++  }
++
++  return frame->GetSettings()->GetPrefersReducedMotion();
+ }
+ 
+ bool MediaValues::CalculatePrefersReducedData(LocalFrame* frame) {
+@@ -506,8 +613,22 @@ ForcedColors MediaValues::CalculateForcedColors(LocalFrame* frame) {
+       frame->GetPage()->GetMediaFeatureOverrides();
+   std::optional<ForcedColors> override_value =
+       overrides ? overrides->GetForcedColors() : std::nullopt;
+-  return override_value.value_or(
+-      frame->GetDocument()->GetStyleEngine().GetForcedColors());
++  if (override_value.has_value())
++    return override_value.value();
++
++  const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++  if (cl->HasSwitch(::switches::kFingerprintMediaFeatures)) {
++    std::string value = cl->GetSwitchValueASCII(::switches::kFingerprintMediaFeatures);
++    std::vector<std::string> parts = base::SplitString(
++        value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++    if (parts.size() == 5) {
++      if (parts[3] == "active")
++        return ForcedColors::kActive;
++      return ForcedColors::kNone;
++    }
++  }
++
++  return frame->GetDocument()->GetStyleEngine().GetForcedColors();
+ }
+ 
+ NavigationControls MediaValues::CalculateNavigationControls(LocalFrame* frame) {
+diff --git a/third_party/blink/renderer/core/frame/history.cc b/third_party/blink/renderer/core/frame/history.cc
+index 97a2dbb24b..94daeebdcc 100644
+--- a/third_party/blink/renderer/core/frame/history.cc
++++ b/third_party/blink/renderer/core/frame/history.cc
+@@ -55,6 +55,9 @@
+ #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
+ #include "third_party/blink/renderer/platform/wtf/text/strcat.h"
+ #include "third_party/blink/renderer/platform/wtf/text/string_view.h"
++#include "base/command_line.h"
++#include "base/strings/string_number_conversions.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
+ 
+ namespace blink {
+ 
+@@ -104,6 +107,15 @@ unsigned History::length(ExceptionState& exception_state) const {
+     return 0;
+   }
+ 
++  const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++  if (cl->HasSwitch(::switches::kFingerprintHistoryLength)) {
++    unsigned value = 0;
++    if (base::StringToUint(
++            cl->GetSwitchValueASCII(::switches::kFingerprintHistoryLength),
++            &value))
++      return value;
++  }
++
+   return DomWindow()->GetFrame()->Client()->BackForwardLength();
+ }
+ 
+diff --git a/third_party/blink/renderer/core/frame/local_dom_window.cc b/third_party/blink/renderer/core/frame/local_dom_window.cc
+index c425735d53..d56c603862 100644
+--- a/third_party/blink/renderer/core/frame/local_dom_window.cc
++++ b/third_party/blink/renderer/core/frame/local_dom_window.cc
+@@ -172,6 +172,10 @@
+ #include "third_party/blink/renderer/platform/wtf/uuid.h"
+ #include "ui/display/screen_info.h"
+ #include "v8/include/v8.h"
++#include "base/command_line.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/string_split.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
+ 
+ namespace blink {
+ 
+@@ -213,6 +217,31 @@ ScriptPromise<IDLUndefined> CreateScrollResolvedPromise(
+   return resolver->Promise();
+ }
+ 
++struct ScreenPositionCache {
++  bool active;
++  int x;
++  int y;
++};
++
++const ScreenPositionCache& GetScreenPosition() {
++  static const ScreenPositionCache cache = []() -> ScreenPositionCache {
++    const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++    if (!cl->HasSwitch(::switches::kFingerprintScreenPosition))
++      return {false, 0, 0};
++    std::string value =
++        cl->GetSwitchValueASCII(::switches::kFingerprintScreenPosition);
++    std::vector<std::string> parts = base::SplitString(
++        value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++    int x = 0, y = 0;
++    if (parts.size() == 2 && base::StringToInt(parts[0], &x) &&
++        base::StringToInt(parts[1], &y))
++      return {true, x, y};
++    return {false, 0, 0};
++  }();
++  return cache;
++}
++
++
+ }  // namespace
+ 
+ class LocalDOMWindow::NetworkStateObserver final
+@@ -1692,6 +1721,10 @@ int LocalDOMWindow::screenX() const {
+   if (!frame)
+     return 0;
+ 
++  const auto& pos = GetScreenPosition();
++  if (pos.active)
++    return pos.x;
++
+   Page* page = frame->GetPage();
+   if (!page)
+     return 0;
+@@ -1710,6 +1743,11 @@ int LocalDOMWindow::screenY() const {
+   if (!frame)
+     return 0;
+ 
++  const auto& pos = GetScreenPosition();
++  if (pos.active)
++    return pos.y;
++
++
+   Page* page = frame->GetPage();
+   if (!page)
+     return 0;
+@@ -1822,6 +1860,18 @@ double LocalDOMWindow::devicePixelRatio() const {
+   if (!GetFrame())
+     return 0.0;
+ 
++  const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++  if (cl->HasSwitch(::switches::kFingerprintScreen)) {
++    std::string value = cl->GetSwitchValueASCII(::switches::kFingerprintScreen);
++    std::vector<std::string> parts = base::SplitString(
++        value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++    if (parts.size() == 7) {
++      double dpr;
++      if (base::StringToDouble(parts[6], &dpr))
++        return dpr;
++    }
++  }
++
+   return GetFrame()->DevicePixelRatio();
+ }
+ 
+diff --git a/third_party/blink/renderer/core/frame/screen.cc b/third_party/blink/renderer/core/frame/screen.cc
+index 69ffc2b05f..9b379ff484 100644
+--- a/third_party/blink/renderer/core/frame/screen.cc
++++ b/third_party/blink/renderer/core/frame/screen.cc
+@@ -28,7 +28,11 @@
+ 
+ #include "third_party/blink/renderer/core/frame/screen.h"
+ 
++#include "base/command_line.h"
+ #include "base/numerics/safe_conversions.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/string_split.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
+ #include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
+ #include "third_party/blink/renderer/core/event_target_names.h"
+ #include "third_party/blink/renderer/core/frame/local_dom_window.h"
+@@ -40,6 +44,57 @@
+ 
+ namespace blink {
+ 
++namespace {
++
++struct ScreenOverride {
++  int width;
++  int height;
++  int avail_width;
++  int avail_height;
++  int avail_top;
++  int color_depth;
++  std::optional<double> device_pixel_ratio;
++};
++
++struct ScreenOverrideCache {
++  bool active;
++  ScreenOverride values;
++};
++
++const ScreenOverrideCache& GetScreenOverride() {
++  static const ScreenOverrideCache cache = []() -> ScreenOverrideCache {
++    const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++    if (!cl->HasSwitch(::switches::kFingerprintScreen))
++      return {false, {}};
++
++    std::string value = cl->GetSwitchValueASCII(::switches::kFingerprintScreen);
++    std::vector<std::string> parts = base::SplitString(
++        value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++    if (parts.size() < 6 || parts.size() > 7)
++      return {false, {}};
++
++    ScreenOverride result;
++    if (!base::StringToInt(parts[0], &result.width) ||
++        !base::StringToInt(parts[1], &result.height) ||
++        !base::StringToInt(parts[2], &result.avail_width) ||
++        !base::StringToInt(parts[3], &result.avail_height) ||
++        !base::StringToInt(parts[4], &result.avail_top) ||
++        !base::StringToInt(parts[5], &result.color_depth))
++      return {false, {}};
++
++    if (parts.size() == 7) {
++      double dpr;
++      if (base::StringToDouble(parts[6], &dpr))
++        result.device_pixel_ratio = dpr;
++    }
++
++    return {true, result};
++  }();
++  return cache;
++}
++
++}  // namespace
++
+ Screen::Screen(LocalDOMWindow* window, int64_t display_id)
+     : ExecutionContextClient(window), display_id_(display_id) {}
+ 
+@@ -81,12 +136,18 @@ bool Screen::AreWebExposedScreenPropertiesEqual(
+ int Screen::height() const {
+   if (!DomWindow())
+     return 0;
++  const auto& scr = GetScreenOverride();
++  if (scr.active)
++    return scr.values.height;
+   return GetRect(/*available=*/false).height();
+ }
+ 
+ int Screen::width() const {
+   if (!DomWindow())
+     return 0;
++  const auto& scr = GetScreenOverride();
++  if (scr.active)
++    return scr.values.width;
+   return GetRect(/*available=*/false).width();
+ }
+ 
+@@ -100,6 +161,9 @@ unsigned Screen::colorDepth() const {
+   if (!DomWindow()) {
+     return unknown_color_depth;
+   }
++  const auto& scr = GetScreenOverride();
++  if (scr.active)
++    return base::saturated_cast<unsigned>(scr.values.color_depth);
+   return GetScreenInfo().depth == 0
+              ? unknown_color_depth
+              : base::saturated_cast<unsigned>(GetScreenInfo().depth);
+@@ -112,24 +176,36 @@ unsigned Screen::pixelDepth() const {
+ int Screen::availLeft() const {
+   if (!DomWindow())
+     return 0;
++  if (GetScreenOverride().active)
++    return 0;
+   return GetRect(/*available=*/true).x();
+ }
+ 
+ int Screen::availTop() const {
+   if (!DomWindow())
+     return 0;
++  const auto& scr = GetScreenOverride();
++  if (scr.active)
++    return scr.values.avail_top;
++
+   return GetRect(/*available=*/true).y();
+ }
+ 
+ int Screen::availHeight() const {
+   if (!DomWindow())
+     return 0;
++  const auto& scr = GetScreenOverride();
++  if (scr.active)
++    return scr.values.avail_height;
+   return GetRect(/*available=*/true).height();
+ }
+ 
+ int Screen::availWidth() const {
+   if (!DomWindow())
+     return 0;
++  const auto& scr = GetScreenOverride();
++  if (scr.active)
++    return scr.values.avail_width;
+   return GetRect(/*available=*/true).width();
+ }
+ 
+@@ -184,4 +260,4 @@ const display::ScreenInfo& Screen::GetScreenInfo() const {
+   return kEmptyScreenInfo;
+ }
+ 
+-}  // namespace blink
++}  // namespace blink
+\ No newline at end of file
+-- 
+2.45.1.windows.1
+

@@ -1,0 +1,118 @@
+From 9c2bbe5a553bb46cc77c905e4aaf467688ebf230 Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Mon, 30 Mar 2026 01:20:09 -0700
+Subject: [PATCH 17/24] hardware
+
+---
+ .../approximated_device_memory.cc             | 54 +++++++++++++++++++
+ .../frame/navigator_concurrent_hardware.cc    | 17 ++++++
+ 2 files changed, 71 insertions(+)
+
+diff --git a/third_party/blink/common/device_memory/approximated_device_memory.cc b/third_party/blink/common/device_memory/approximated_device_memory.cc
+index d5a145bba1..637b6961ae 100644
+--- a/third_party/blink/common/device_memory/approximated_device_memory.cc
++++ b/third_party/blink/common/device_memory/approximated_device_memory.cc
+@@ -8,6 +8,10 @@
+ #include "base/feature_list.h"
+ #include "base/system/sys_info.h"
+ #include "third_party/blink/public/common/features.h"
++#include "base/command_line.h"
++#include "base/strings/string_number_conversions.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
++#include "base/version_info/version_info_values.h"
+ 
+ namespace blink {
+ 
+@@ -26,6 +30,56 @@ void ApproximatedDeviceMemory::Initialize() {
+ 
+ // static
+ float ApproximatedDeviceMemory::GetApproximatedDeviceMemory() {
++  static const float cached = []() -> float {
++    const base::CommandLine* cl =
++        base::CommandLine::ForCurrentProcess();
++
++    if (!cl->HasSwitch(switches::kFingerprintDeviceMemory))
++      return -1.0f;
++
++    int raw_value = 0;
++    base::StringToInt(
++        cl->GetSwitchValueASCII(switches::kFingerprintDeviceMemory),
++        &raw_value);
++
++    if (raw_value <= 0)
++      return -1.0f;
++
++    int spoofed_version = 0;
++    if (cl->HasSwitch(switches::kFingerprintBrandVersion)) {
++      base::StringToInt(
++          cl->GetSwitchValueASCII(switches::kFingerprintBrandVersion),
++          &spoofed_version);
++    } else {
++      std::string product_version = PRODUCT_VERSION;
++      size_t dot = product_version.find('.');
++      if (dot != std::string::npos) {
++        base::StringToInt(product_version.substr(0, dot), &spoofed_version);
++      }
++    }
++
++    float result;
++    if (spoofed_version >= 147) {
++      const float valid[] = {2.0f, 4.0f, 8.0f, 16.0f, 32.0f};
++      result = valid[0];
++      for (float v : valid) {
++        if (v <= static_cast<float>(raw_value))
++          result = v;
++      }
++    } else {
++      const float valid[] = {0.25f, 0.5f, 1.0f, 2.0f, 4.0f, 8.0f};
++      result = valid[0];
++      for (float v : valid) {
++        if (v <= static_cast<float>(raw_value))
++          result = v;
++      }
++    }
++    return result;
++  }();
++
++  if (cached >= 0.0f)
++    return cached;
++
+   return approximated_device_memory_gb_;
+ }
+ 
+diff --git a/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc b/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc
+index f5c0db2d1b..755098f92d 100644
+--- a/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc
++++ b/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc
+@@ -4,11 +4,28 @@
+ 
+ #include "third_party/blink/renderer/core/frame/navigator_concurrent_hardware.h"
+ 
++#include "base/command_line.h"
++#include "base/strings/string_number_conversions.h"
+ #include "base/system/sys_info.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
+ 
+ namespace blink {
+ 
+ unsigned NavigatorConcurrentHardware::hardwareConcurrency() const {
++  const base::CommandLine* command_line =
++      base::CommandLine::ForCurrentProcess();
++
++  if (command_line->HasSwitch(switches::kFingerprintHardwareConcurrency)) {
++    unsigned value = 0;
++    if (base::StringToUint(
++            command_line->GetSwitchValueASCII(
++                switches::kFingerprintHardwareConcurrency),
++            &value) &&
++        value > 0) {
++      return value;
++    }
++  }
++
+   return static_cast<unsigned>(base::SysInfo::NumberOfProcessors());
+ }
+ 
+-- 
+2.45.1.windows.1
+

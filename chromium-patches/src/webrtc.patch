@@ -1,0 +1,330 @@
+From 11eb11e7c71ed9a0bf9539d48ca2406c7849aab1 Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Mon, 30 Mar 2026 01:22:56 -0700
+Subject: [PATCH 19/24] webrtc
+
+---
+ components/nodriver4j/webrtc_ip_spoofer.h     | 228 ++++++++++++++++++
+ .../rtc_peer_connection_handler.cc            |  13 +-
+ .../peerconnection/rtc_stats_report.cc        |  21 ++
+ 3 files changed, 259 insertions(+), 3 deletions(-)
+ create mode 100644 components/nodriver4j/webrtc_ip_spoofer.h
+
+diff --git a/components/nodriver4j/webrtc_ip_spoofer.h b/components/nodriver4j/webrtc_ip_spoofer.h
+new file mode 100644
+index 0000000000..f18bf0aee2
+--- /dev/null
++++ b/components/nodriver4j/webrtc_ip_spoofer.h
+@@ -0,0 +1,228 @@
++// components/nodriver4j/webrtc_ip_spoofer.h
++//
++// Header-only utility for WebRTC IP spoofing. Provides functions to detect
++// whether spoofing is active, classify IPs as exempt (special/reserved),
++// and apply IP replacement to ICE candidate strings and SDP bodies.
++//
++// Usage: Include this header and call WebRtcIpSpoofer::SpoofCandidate() or
++// WebRtcIpSpoofer::SpoofSdp() at the relevant intercept points in Blink.
++
++#ifndef COMPONENTS_NODRIVER4J_WEBRTC_IP_SPOOFER_H_
++#define COMPONENTS_NODRIVER4J_WEBRTC_IP_SPOOFER_H_
++
++#include <string>
++#include <vector>
++
++#include "base/command_line.h"
++#include "base/no_destructor.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
++
++namespace nodriver4j {
++
++class WebRtcIpSpoofer {
++ public:
++  WebRtcIpSpoofer() = delete;
++
++  private:
++  struct Config {
++    std::string ipv4;
++    std::string ipv6;
++    bool active;
++  };
++
++  static inline const Config& GetConfig() {
++    static const base::NoDestructor<Config> config([]() -> Config {
++      const auto* cmd = base::CommandLine::ForCurrentProcess();
++      std::string v4 = cmd->GetSwitchValueASCII(switches::kWebrtcIP4);
++      std::string v6 = cmd->GetSwitchValueASCII(switches::kWebrtcIP6);
++      return {v4, v6, !v4.empty() || !v6.empty()};
++    }());
++    return *config;
++  }
++
++ public:
++  static inline bool IsActive() { return GetConfig().active; }
++  static inline const std::string& SpoofIPv4() { return GetConfig().ipv4; }
++  static inline const std::string& SpoofIPv6() { return GetConfig().ipv6; }
++
++  // Returns true if the address contains a colon (IPv6 notation).
++  static inline bool IsIPv6(const std::string& ip) {
++    return ip.find(':') != std::string::npos;
++  }
++
++  // Returns true if the IP is a reserved address that should not be replaced.
++  // Exempt addresses: any-address, loopback, and link-local ranges.
++  static inline bool IsSpecialIP(const std::string& ip) {
++    if (ip.empty())
++      return true;
++    // Any-address
++    if (ip == "0.0.0.0" || ip == "::")
++      return true;
++    // Loopback
++    if (ip == "127.0.0.1" || ip == "::1")
++      return true;
++    // Link-local IPv4 (169.254.0.0/16)
++    if (ip.compare(0, 8, "169.254.") == 0)
++      return true;
++    // Link-local IPv6 (fe80::/10)
++    if (ip.size() >= 4 && (ip[0] == 'f' || ip[0] == 'F') &&
++        (ip[1] == 'e' || ip[1] == 'E') && ip[2] == '8' && ip[3] == '0')
++      return true;
++    return false;
++  }
++
++  // Returns the spoof address for a given IP, or the original IP if:
++  // - The IP is a special/reserved address
++  // - No spoof is configured for this address family
++  static inline std::string ReplacementForIP(const std::string& ip) {
++    if (IsSpecialIP(ip))
++      return ip;
++    if (IsIPv6(ip)) {
++      std::string spoof = SpoofIPv6();
++      return spoof.empty() ? ip : spoof;
++    }
++    std::string spoof = SpoofIPv4();
++    return spoof.empty() ? ip : spoof;
++  }
++
++  // Replaces IP addresses in an ICE candidate string.
++  //
++  // Handles both bare candidates ("candidate:...") and SDP-prefixed
++  // candidates ("a=candidate:..."). Replaces the connection address at
++  // token index 4 and any related address following the "raddr" keyword.
++  //
++  // ICE candidate format (RFC 5245):
++  //   candidate:foundation component transport priority address port
++  //   typ type [raddr addr rport port] [generation ...]
++  static inline std::string SpoofCandidate(const std::string& candidate) {
++    if (!IsActive() || candidate.empty())
++      return candidate;
++
++    // Find connection address at token index 4
++    size_t pos = 0;
++    for (int i = 0; i < 4; ++i) {
++      pos = candidate.find(' ', pos);
++      if (pos == std::string::npos)
++        return candidate;
++      ++pos;
++    }
++    size_t end = candidate.find(' ', pos);
++    if (end == std::string::npos)
++      return candidate;
++
++    std::string result = candidate;
++    std::string addr = result.substr(pos, end - pos);
++    std::string replacement = ReplacementForIP(addr);
++    if (replacement != addr)
++      result.replace(pos, end - pos, replacement);
++
++    // Replace related address if present (follows "raddr" keyword)
++    size_t raddr_pos = result.find(" raddr ");
++    if (raddr_pos != std::string::npos) {
++      size_t addr_start = raddr_pos + 7;
++      size_t addr_end = result.find(' ', addr_start);
++      if (addr_end == std::string::npos)
++        addr_end = result.size();
++      addr = result.substr(addr_start, addr_end - addr_start);
++      replacement = ReplacementForIP(addr);
++      if (replacement != addr)
++        result.replace(addr_start, addr_end - addr_start, replacement);
++    }
++
++    return result;
++  }
++
++
++  // Replaces IP addresses in a full SDP body.
++  //
++  // Processes three types of SDP lines:
++  //   - a=candidate: lines — delegates to SpoofCandidate()
++  //   - c= connection lines — address at field 2 (c=IN IP4 <addr>)
++  //   - o= origin lines — address at token index 5
++  //     (o=<user> <id> <ver> IN IP4 <addr>)
++  //
++  // Preserves original line endings (\r\n or \n).
++  static inline std::string SpoofSdp(const std::string& sdp) {
++    if (!IsActive() || sdp.empty())
++      return sdp;
++
++    std::string result;
++    result.reserve(sdp.size());
++
++    size_t pos = 0;
++    while (pos < sdp.size()) {
++      size_t eol = sdp.find('\n', pos);
++      if (eol == std::string::npos)
++        eol = sdp.size();
++
++      bool is_candidate = (sdp.compare(pos, 12, "a=candidate:") == 0);
++      bool is_connection = (!is_candidate && sdp.compare(pos, 2, "c=") == 0);
++      bool is_origin = (!is_candidate && !is_connection &&
++                        sdp.compare(pos, 2, "o=") == 0);
++
++      if (!is_candidate && !is_connection && !is_origin) {
++        // Unmodified line — append raw bytes including line ending
++        size_t chunk_end = (eol < sdp.size()) ? eol + 1 : eol;
++        result.append(sdp, pos, chunk_end - pos);
++        pos = (eol < sdp.size()) ? eol + 1 : sdp.size();
++        continue;
++      }
++
++      // Extract line content without \r\n
++      size_t line_end = eol;
++      bool has_cr = (line_end > pos && sdp[line_end - 1] == '\r');
++      if (has_cr)
++        --line_end;
++      std::string line = sdp.substr(pos, line_end - pos);
++
++      if (is_candidate) {
++        line = SpoofCandidate(line);
++
++      } else if (is_connection) {
++        // c=IN IP4 <address> — address after second space
++        auto space1 = line.find(' ');
++        if (space1 != std::string::npos) {
++          auto space2 = line.find(' ', space1 + 1);
++          if (space2 != std::string::npos) {
++            std::string addr = line.substr(space2 + 1);
++            std::string replacement = ReplacementForIP(addr);
++            if (replacement != addr)
++              line.replace(space2 + 1, std::string::npos, replacement);
++          }
++        }
++
++      } else if (is_origin) {
++        // o=<user> <id> <ver> IN IP4 <address> — token index 5
++        size_t tpos = 0;
++        for (int i = 0; i < 5; ++i) {
++          tpos = line.find(' ', tpos);
++          if (tpos == std::string::npos)
++            break;
++          ++tpos;
++        }
++        if (tpos != std::string::npos && tpos < line.size()) {
++          size_t tend = line.find(' ', tpos);
++          if (tend == std::string::npos)
++            tend = line.size();
++          std::string addr = line.substr(tpos, tend - tpos);
++          std::string replacement = ReplacementForIP(addr);
++          if (replacement != addr)
++            line.replace(tpos, tend - tpos, replacement);
++        }
++      }
++
++      result += line;
++      if (has_cr)
++        result += '\r';
++      if (eol < sdp.size())
++        result += '\n';
++      pos = (eol < sdp.size()) ? eol + 1 : sdp.size();
++    }
++
++    return result;
++  }
++};
++
++}  // namespace nodriver4j
++
++#endif  // COMPONENTS_NODRIVER4J_WEBRTC_IP_SPOOFER_H_
+\ No newline at end of file
+diff --git a/third_party/blink/renderer/modules/peerconnection/rtc_peer_connection_handler.cc b/third_party/blink/renderer/modules/peerconnection/rtc_peer_connection_handler.cc
+index 8b6e11b5eb..3175a263bc 100644
+--- a/third_party/blink/renderer/modules/peerconnection/rtc_peer_connection_handler.cc
++++ b/third_party/blink/renderer/modules/peerconnection/rtc_peer_connection_handler.cc
+@@ -77,6 +77,7 @@
+ #include "third_party/webrtc/api/rtc_event_log_output.h"
+ #include "third_party/webrtc/api/units/time_delta.h"
+ #include "third_party/webrtc/pc/session_description.h"
++#include "components/nodriver4j/webrtc_ip_spoofer.h"
+ 
+ using webrtc::DataChannelInterface;
+ using webrtc::IceCandidate;
+@@ -97,8 +98,9 @@ enum class RtcpMux { kDisabled, kEnabled, kNoMedia, kMax };
+ RTCSessionDescriptionPlatform* CreateWebKitSessionDescription(
+     const std::string& sdp,
+     const std::string& type) {
++  std::string spoofed_sdp = nodriver4j::WebRtcIpSpoofer::SpoofSdp(sdp);
+   return MakeGarbageCollected<RTCSessionDescriptionPlatform>(
+-      String::FromUTF8(type), String::FromUTF8(sdp));
++      String::FromUTF8(type), String::FromUTF8(spoofed_sdp));
+ }
+ 
+ RTCSessionDescriptionPlatform* CreateWebKitSessionDescription(
+@@ -598,10 +600,15 @@ class RTCPeerConnectionHandler::Observer
+     }
+   }
+ 
+-  void OnIceCandidate(const IceCandidate* candidate) override {
++  
++void OnIceCandidate(const IceCandidate* candidate) override {
+     DCHECK(native_peer_connection_);
+     std::string sdp = candidate->ToString();
+-   DCHECK(!sdp.empty());
++    DCHECK(!sdp.empty());
++
++    // Spoof IP addresses in the candidate string before surfacing to JS
++    sdp = nodriver4j::WebRtcIpSpoofer::SpoofCandidate(sdp);
++
+     // The generated candidate may have been added to the pending or current
+     // local description, take a snapshot and surface them to the main thread.
+     // Remote descriptions are also surfaced because
+diff --git a/third_party/blink/renderer/modules/peerconnection/rtc_stats_report.cc b/third_party/blink/renderer/modules/peerconnection/rtc_stats_report.cc
+index 6f442e03da..44a3fd1ff8 100644
+--- a/third_party/blink/renderer/modules/peerconnection/rtc_stats_report.cc
++++ b/third_party/blink/renderer/modules/peerconnection/rtc_stats_report.cc
+@@ -42,6 +42,7 @@
+ #include "third_party/webrtc/api/stats/rtcstats_objects.h"
+ #include "v8/include/v8-local-handle.h"
+ #include "v8/include/v8-object.h"
++#include "components/nodriver4j/webrtc_ip_spoofer.h"
+ 
+ namespace blink {
+ 
+@@ -512,6 +513,26 @@ RTCIceCandidateStats* ToV8Stat(
+   // Non-standard and obsolete stats.
+   SET_STAT(webrtc_stat.is_remote, v8_stat->setIsRemote);
+   SET_STAT(webrtc_stat.ip, v8_stat->setIp);
++
++  // Spoof IP fields in local candidate stats
++  if (nodriver4j::WebRtcIpSpoofer::IsActive()) {
++    if (webrtc_stat.address.has_value()) {
++      std::string spoofed = nodriver4j::WebRtcIpSpoofer::ReplacementForIP(
++          webrtc_stat.address.value());
++      v8_stat->setAddress(String::FromUTF8(spoofed));
++    }
++    if (webrtc_stat.ip.has_value()) {
++      std::string spoofed = nodriver4j::WebRtcIpSpoofer::ReplacementForIP(
++          webrtc_stat.ip.value());
++      v8_stat->setIp(String::FromUTF8(spoofed));
++    }
++    if (webrtc_stat.related_address.has_value()) {
++      std::string spoofed = nodriver4j::WebRtcIpSpoofer::ReplacementForIP(
++          webrtc_stat.related_address.value());
++      v8_stat->setRelatedAddress(String::FromUTF8(spoofed));
++    }
++  }
++
+   return v8_stat;
+ }
+ 
+-- 
+2.45.1.windows.1
+

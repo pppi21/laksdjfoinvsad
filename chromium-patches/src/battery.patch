@@ -1,0 +1,121 @@
+From 655e11bc034343f0806f2d8eb092c7b7c020ef70 Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Mon, 30 Mar 2026 01:16:25 -0700
+Subject: [PATCH 14/24] battery
+
+---
+ .../modules/battery/battery_manager.cc        | 79 +++++++++++++++++++
+ 1 file changed, 79 insertions(+)
+
+diff --git a/third_party/blink/renderer/modules/battery/battery_manager.cc b/third_party/blink/renderer/modules/battery/battery_manager.cc
+index 51cdc75cee..0efe59cde1 100644
+--- a/third_party/blink/renderer/modules/battery/battery_manager.cc
++++ b/third_party/blink/renderer/modules/battery/battery_manager.cc
+@@ -13,6 +13,73 @@
+ #include "third_party/blink/renderer/core/frame/navigator.h"
+ #include "third_party/blink/renderer/core/frame/web_feature.h"
+ #include "third_party/blink/renderer/modules/battery/battery_dispatcher.h"
++#include "base/command_line.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/string_split.h"
++#include "base/strings/string_util.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
++
++namespace {
++
++struct BatteryOverride {
++  bool active;
++  bool charging;
++  double level;
++  double charging_time;
++  double discharging_time;
++};
++
++const BatteryOverride& GetBatteryOverride() {
++  static const BatteryOverride ovr = []() -> BatteryOverride {
++    const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++
++    if (cl->HasSwitch(switches::kFingerprintBattery)) {
++      std::string value =
++          cl->GetSwitchValueASCII(switches::kFingerprintBattery);
++      std::vector<std::string> parts = base::SplitString(
++          value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++      if (parts.size() != 4)
++        return {false, false, 0, 0, 0};
++
++      std::string charging_str = base::ToLowerASCII(parts[0]);
++      bool charging = (charging_str == "true" || charging_str == "1");
++
++      double level;
++      if (!base::StringToDouble(parts[1], &level))
++        return {false, false, 0, 0, 0};
++
++      double charging_time;
++      if (base::ToLowerASCII(parts[2]) == "infinity") {
++        charging_time = std::numeric_limits<double>::infinity();
++      } else if (!base::StringToDouble(parts[2], &charging_time)) {
++        return {false, false, 0, 0, 0};
++      }
++
++      double discharging_time;
++      if (base::ToLowerASCII(parts[3]) == "infinity") {
++        discharging_time = std::numeric_limits<double>::infinity();
++      } else if (!base::StringToDouble(parts[3], &discharging_time)) {
++        return {false, false, 0, 0, 0};
++      }
++
++      return {true, charging, level, charging_time, discharging_time};
++    }
++
++    if (cl->HasSwitch(switches::kFingerprintPlatform)) {
++      std::string platform = base::ToLowerASCII(
++          cl->GetSwitchValueASCII(switches::kFingerprintPlatform));
++      if (platform == "windows" || platform == "macos" || platform == "linux") {
++        return {true, true, 1.0, 0.0,
++                std::numeric_limits<double>::infinity()};
++      }
++    }
++
++    return {false, false, 0, 0, 0};
++  }();
++  return ovr;
++}
++
++}  // namespace
+ 
+ namespace blink {
+ 
+@@ -80,18 +147,30 @@ ScriptPromise<BatteryManager> BatteryManager::StartRequest(
+ }
+ 
+ bool BatteryManager::charging() {
++  const auto& ovr = GetBatteryOverride();
++  if (ovr.active)
++    return ovr.charging;
+   return battery_status_.Charging();
+ }
+ 
+ double BatteryManager::chargingTime() {
++  const auto& ovr = GetBatteryOverride();
++  if (ovr.active)
++    return ovr.charging_time;
+   return battery_status_.charging_time().InSecondsF();
+ }
+ 
+ double BatteryManager::dischargingTime() {
++  const auto& ovr = GetBatteryOverride();
++  if (ovr.active)
++    return ovr.discharging_time;
+   return battery_status_.discharging_time().InSecondsF();
+ }
+ 
+ double BatteryManager::level() {
++  const auto& ovr = GetBatteryOverride();
++  if (ovr.active)
++    return ovr.level;
+   return battery_status_.Level();
+ }
+ 
+-- 
+2.45.1.windows.1
+

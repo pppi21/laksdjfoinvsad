@@ -1,0 +1,471 @@
+From 0b7141d72f20f9c90143729828ea19987d545718 Mon Sep 17 00:00:00 2001
+From: Leo Rodarte <leorodarte07@gmail.com>
+Date: Mon, 30 Mar 2026 01:04:02 -0700
+Subject: [PATCH 06/24] user agent
+
+---
+ .../embedder_support/user_agent_utils.cc      | 172 ++++++++++++++++--
+ components/nodriver4j/platform_override.h     |  36 ++++
+ headless/lib/browser/headless_browser_impl.cc |   2 +-
+ .../common/user_agent/user_agent_metadata.cc  |  40 +++-
+ .../common/user_agent/user_agent_metadata.h   |   4 +
+ .../core/execution_context/navigator_base.cc  |   7 +
+ .../blink/renderer/core/frame/navigator.cc    |  11 +-
+ 7 files changed, 254 insertions(+), 18 deletions(-)
+ create mode 100644 components/nodriver4j/platform_override.h
+
+diff --git a/components/embedder_support/user_agent_utils.cc b/components/embedder_support/user_agent_utils.cc
+index 557eadb182..92f3b7cb67 100644
+--- a/components/embedder_support/user_agent_utils.cc
++++ b/components/embedder_support/user_agent_utils.cc
+@@ -34,6 +34,9 @@
+ #include "net/http/http_util.h"
+ #include "third_party/blink/public/common/features.h"
+ #include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
++#include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
++#include "components/nodriver4j/platform_override.h"
+ 
+ #if BUILDFLAG(IS_WIN)
+ #include <windows.h>
+@@ -154,23 +157,91 @@ const std::string& GetWindowsPlatformVersion() {
+ }
+ #endif  // BUILDFLAG(IS_WIN)
+ 
++struct FingerprintBrandConfig {
++  bool active;
++  std::string major_version;
++  std::string full_version;
++  std::string display_brand;
++};
++
++const FingerprintBrandConfig& GetFingerprintBrandConfig() {
++  static const base::NoDestructor<FingerprintBrandConfig> config([]() -> FingerprintBrandConfig {
++    const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++
++    bool has_ver = cl->HasSwitch(switches::kFingerprintBrandVersion);
++    bool has_ver_long = cl->HasSwitch(switches::kFingerprintBrandVersionLong);
++    bool has_brand = cl->HasSwitch(switches::kFingerprintBrand);
++
++    if (!has_ver && !has_ver_long && !has_brand)
++      return {false, "", "", ""};
++
++    // Resolve major version
++    std::string major;
++    if (has_ver) {
++      major = cl->GetSwitchValueASCII(switches::kFingerprintBrandVersion);
++    } else if (has_ver_long) {
++      std::string full = cl->GetSwitchValueASCII(
++          switches::kFingerprintBrandVersionLong);
++      size_t dot = full.find('.');
++      major = (dot != std::string::npos) ? full.substr(0, dot) : full;
++    } else {
++      major = std::string(version_info::GetMajorVersionNumber());
++    }
++
++    // Resolve full version
++    std::string full;
++    if (has_ver_long) {
++      full = cl->GetSwitchValueASCII(switches::kFingerprintBrandVersionLong);
++    } else if (has_ver) {
++      full = major + ".0.0.0";
++    } else {
++      full = std::string(version_info::GetVersionNumber());
++    }
++
++    // Resolve display brand
++    std::string brand = "Google Chrome";
++    if (has_brand) {
++      std::string key = cl->GetSwitchValueASCII(switches::kFingerprintBrand);
++      if (key == "Chrome") brand = "Google Chrome";
++      else if (key == "Edge") brand = "Microsoft Edge";
++      else if (key == "Opera") brand = "Opera";
++      else if (key == "Vivaldi") brand = "Vivaldi";
++      else brand = key;
++    }
++
++    return {true, major, full, brand};
++  }());
++  return *config;
++}
++
+ const blink::UserAgentBrandList GetUserAgentBrandList(
+     const std::string& major_version,
+     const std::string& full_version,
+     blink::UserAgentBrandVersionType output_version_type,
+     std::optional<blink::UserAgentBrandVersion> additional_brand_version) {
++
++  const auto& fp = GetFingerprintBrandConfig();
++
++  const std::string& effective_major = fp.active ? fp.major_version : major_version;
++  const std::string& effective_full = fp.active ? fp.full_version : full_version;
++
+   int major_version_number;
+-  bool parse_result = base::StringToInt(major_version, &major_version_number);
++  bool parse_result = base::StringToInt(effective_major, &major_version_number);
+   DCHECK(parse_result);
++
+   std::optional<std::string> brand;
++  if (fp.active) {
++    brand = fp.display_brand;
++  } else {
+ #if !BUILDFLAG(CHROMIUM_BRANDING)
+-  brand = version_info::GetProductName();
++    brand = version_info::GetProductName();
+ #endif
++  }
+ 
+   std::string brand_version =
+       output_version_type == blink::UserAgentBrandVersionType::kFullVersion
+-          ? full_version
+-          : major_version;
++          ? effective_full
++          : effective_major;
+ 
+   return GenerateBrandVersionList(major_version_number, brand, brand_version,
+                                   output_version_type,
+@@ -215,8 +286,21 @@ const blink::UserAgentBrandList GetUserAgentBrandFullVersionListInternal(
+ // depending on the Reduce User-Agent reduction phase features.
+ std::string GetUserAgentInternal() {
+   std::string product = GetProductAndVersion();
+-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(kHeadless)) {
+-    product.insert(0, "Headless");
++
++  const base::CommandLine* command_line =
++      base::CommandLine::ForCurrentProcess();
++
++  // Override the Chrome/X.X.X.X product token to match the spoofed brand.
++  if (command_line->HasSwitch(switches::kFingerprintBrandVersion) ||
++      command_line->HasSwitch(switches::kFingerprintBrandVersionLong)) {
++    std::string brand = command_line->HasSwitch(switches::kFingerprintBrand)
++        ? command_line->GetSwitchValueASCII(switches::kFingerprintBrand)
++        : "Chrome";
++
++    // UA string always uses the reduced format Chrome/MAJOR.0.0.0
++    // Full version only appears in client hints (Sec-CH-UA-Full-Version-List)
++    product = "Chrome/" + command_line->GetSwitchValueASCII(
++        switches::kFingerprintBrandVersion) + ".0.0.0";
+   }
+ 
+ #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
+@@ -225,9 +309,12 @@ std::string GetUserAgentInternal() {
+   }
+ #endif
+ 
+-  return ShouldSendUserAgentUnifiedPlatform()
++  std::string user_agent = ShouldSendUserAgentUnifiedPlatform()
+              ? BuildUnifiedPlatformUserAgentFromProduct(product)
+              : BuildUserAgentFromProduct(product);
++
++  user_agent += blink::GetUserAgentFingerprintBrandInfo();
++  return user_agent;
+ }
+ 
+ // Generate random order list based on the input size and seed.
+@@ -279,6 +366,12 @@ blink::UserAgentBrandList ShuffleBrandList(
+ }
+ 
+ std::string GetUserAgentPlatform() {
++  switch (nodriver4j::GetSpoofedPlatform()) {
++    case nodriver4j::SpoofedPlatform::kWindows: return "";
++    case nodriver4j::SpoofedPlatform::kLinux: return "X11; ";
++    case nodriver4j::SpoofedPlatform::kMacOS: return "Macintosh; ";
++    case nodriver4j::SpoofedPlatform::kNone: break;
++  }
+ #if BUILDFLAG(IS_WIN)
+   return "";
+ #elif BUILDFLAG(IS_MAC)
+@@ -299,6 +392,12 @@ std::string GetUserAgentPlatform() {
+ }
+ 
+ std::string GetUnifiedPlatform() {
++  switch (nodriver4j::GetSpoofedPlatform()) {
++    case nodriver4j::SpoofedPlatform::kWindows: return "Windows NT 10.0; Win64; x64";
++    case nodriver4j::SpoofedPlatform::kLinux: return "X11; Linux x86_64";
++    case nodriver4j::SpoofedPlatform::kMacOS: return "Macintosh; Intel Mac OS X 10_15_7";
++    case nodriver4j::SpoofedPlatform::kNone: break;
++  }
+ #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX)
+   // This constant is only used on Android (desktop) and Linux.
+   constexpr char kUnifiedPlatformLinuxX64[] = "X11; Linux x86_64";
+@@ -644,12 +743,18 @@ blink::UserAgentMetadata GetUserAgentMetadata(bool only_low_entropy_ch) {
+   metadata.mobile = GetMobileBitForUAMetadata();
+   metadata.platform = GetPlatformForUAMetadata();
+ 
+-  // For users providing a valid user-agent override via the command line:
+-  // If kUACHOverrideBlank is enabled, set user-agent metadata with the
+-  // default blank values, otherwise return the default UserAgentMetadata values
+-  // to populate and send only the low entropy client hints.
+-  // Notes: Sending low entropy hints with empty values may cause requests being
+-  // blocked by web application firewall software, etc.
++  // Override low-entropy platform name if spoofing
++  switch (nodriver4j::GetSpoofedPlatform()) {
++    case nodriver4j::SpoofedPlatform::kWindows:
++      metadata.platform = "Windows"; break;
++    case nodriver4j::SpoofedPlatform::kLinux:
++      metadata.platform = "Linux"; break;
++    case nodriver4j::SpoofedPlatform::kMacOS:
++      metadata.platform = "macOS"; break;
++    case nodriver4j::SpoofedPlatform::kNone:
++      break;
++  }
++
+   std::optional<std::string> custom_ua = GetUserAgentFromCommandLine();
+   if (custom_ua.has_value()) {
+     return base::FeatureList::IsEnabled(blink::features::kUACHOverrideBlank)
+@@ -664,13 +769,52 @@ blink::UserAgentMetadata GetUserAgentMetadata(bool only_low_entropy_ch) {
+   // High entropy client hints.
+   metadata.brand_full_version_list =
+       GetUserAgentBrandFullVersionListInternal(std::nullopt);
+-  metadata.full_version = std::string(version_info::GetVersionNumber());
++
++  const auto& fp = GetFingerprintBrandConfig();
++  metadata.full_version = fp.active
++      ? fp.full_version
++      : std::string(version_info::GetVersionNumber());
++
+   metadata.architecture = GetCpuArchitecture();
+   metadata.model = BuildModelInfo();
+   metadata.form_factors = GetFormFactorsClientHint(metadata, metadata.mobile);
+   metadata.bitness = GetCpuBitness();
+   metadata.wow64 = IsWoW64();
+   metadata.platform_version = GetPlatformVersion();
++
++  // Override high-entropy platform fields if spoofing
++  switch (nodriver4j::GetSpoofedPlatform()) {
++    case nodriver4j::SpoofedPlatform::kWindows:
++      metadata.platform_version = "19.0.0";
++      metadata.architecture = "x86";
++      metadata.bitness = "64";
++      metadata.wow64 = false;
++      break;
++    case nodriver4j::SpoofedPlatform::kLinux:
++      metadata.platform_version = "6.11.0";
++      metadata.architecture = "x86";
++      metadata.bitness = "64";
++      metadata.wow64 = false;
++      break;
++    case nodriver4j::SpoofedPlatform::kMacOS:
++      metadata.platform_version = "15.2.0";
++      metadata.architecture = "arm";
++      metadata.bitness = "64";
++      metadata.wow64 = false;
++      break;
++    case nodriver4j::SpoofedPlatform::kNone:
++      break;
++  }
++
++  // Allow explicit platform version override
++  const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++  if (cl->HasSwitch(switches::kFingerprintPlatformVersion)) {
++    std::string v = cl->GetSwitchValueASCII(
++        switches::kFingerprintPlatformVersion);
++    if (!v.empty())
++      metadata.platform_version = v;
++  }
++
+   return metadata;
+ }
+ 
+diff --git a/components/nodriver4j/platform_override.h b/components/nodriver4j/platform_override.h
+new file mode 100644
+index 0000000000..6e59737f68
+--- /dev/null
++++ b/components/nodriver4j/platform_override.h
+@@ -0,0 +1,36 @@
++#ifndef COMPONENTS_NODRIVER4J_PLATFORM_OVERRIDE_H_
++#define COMPONENTS_NODRIVER4J_PLATFORM_OVERRIDE_H_
++
++#include <string>
++
++#include "base/command_line.h"
++#include "base/strings/string_util.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
++
++namespace nodriver4j {
++
++enum class SpoofedPlatform {
++  kNone,
++  kWindows,
++  kLinux,
++  kMacOS,
++};
++
++inline SpoofedPlatform GetSpoofedPlatform() {
++  static const SpoofedPlatform platform = []() -> SpoofedPlatform {
++    const base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
++    if (!cl->HasSwitch(switches::kFingerprintPlatform))
++      return SpoofedPlatform::kNone;
++    std::string key = base::ToLowerASCII(
++        cl->GetSwitchValueASCII(switches::kFingerprintPlatform));
++    if (key == "windows") return SpoofedPlatform::kWindows;
++    if (key == "linux") return SpoofedPlatform::kLinux;
++    if (key == "macos") return SpoofedPlatform::kMacOS;
++    return SpoofedPlatform::kNone;
++  }();
++  return platform;
++}
++
++}  // namespace nodriver4j
++
++#endif  // COMPONENTS_NODRIVER4J_PLATFORM_OVERRIDE_H_
+\ No newline at end of file
+diff --git a/headless/lib/browser/headless_browser_impl.cc b/headless/lib/browser/headless_browser_impl.cc
+index eb1a52ac99..c2231763ad 100644
+--- a/headless/lib/browser/headless_browser_impl.cc
++++ b/headless/lib/browser/headless_browser_impl.cc
+@@ -70,7 +70,7 @@ namespace headless {
+ namespace {
+ 
+ // Product name for building the default user agent string.
+-const char kHeadlessProductName[] = "HeadlessChrome";
++const char kHeadlessProductName[] = "Chrome";
+ 
+ #if defined(HEADLESS_USE_PREFS)
+ const base::FilePath::CharType kLocalStateFilename[] =
+diff --git a/third_party/blink/common/user_agent/user_agent_metadata.cc b/third_party/blink/common/user_agent/user_agent_metadata.cc
+index 2ad7035348..d6ce0875c7 100644
+--- a/third_party/blink/common/user_agent/user_agent_metadata.cc
++++ b/third_party/blink/common/user_agent/user_agent_metadata.cc
+@@ -6,10 +6,13 @@
+ 
+ #include <algorithm>
+ 
++#include "base/command_line.h"
+ #include "base/containers/span.h"
+ #include "base/pickle.h"
++#include "components/nodriver4j/nodriver4j_switches.h"
+ #include "net/http/structured_headers.h"
+ #include "third_party/blink/public/common/features.h"
++#include "base/no_destructor.h"
+ 
+ namespace blink {
+ 
+@@ -23,7 +26,6 @@ constexpr std::string_view kValidFormFactors[] = {
+     blink::kMobileFormFactor,  blink::kTabletFormFactor,
+     blink::kXRFormFactor,      blink::kEInkFormFactor,
+     blink::kWatchFormFactor};
+-
+ }  // namespace
+ 
+ UserAgentBrandVersion::UserAgentBrandVersion(const std::string& ua_brand,
+@@ -232,4 +234,40 @@ bool operator==(const UserAgentOverride& a, const UserAgentOverride& b) {
+          a.ua_metadata_override == b.ua_metadata_override;
+ }
+ 
++std::string GetUserAgentFingerprintBrandInfo() {
++  static const base::NoDestructor<std::string> cached([]() -> std::string {
++    const base::CommandLine* cl =
++        base::CommandLine::ForCurrentProcess();
++
++    if (!cl->HasSwitch(switches::kFingerprintBrand))
++      return "";
++
++    std::string brand_key =
++        cl->GetSwitchValueASCII(switches::kFingerprintBrand);
++
++    if (brand_key == "Chrome")
++      return "";
++
++    std::string version;
++    if (cl->HasSwitch(switches::kFingerprintBrandVersionLong)) {
++      version = cl->GetSwitchValueASCII(switches::kFingerprintBrandVersionLong);
++    } else if (cl->HasSwitch(switches::kFingerprintBrandVersion)) {
++      version = cl->GetSwitchValueASCII(switches::kFingerprintBrandVersion) +
++                ".0.0.0";
++    }
++
++    if (brand_key == "Edge")
++      return " Edg/" + (version.empty() ? "145.0.0.0" : version);
++    if (brand_key == "Opera")
++      return " OPR/" + (version.empty() ? "123.0.0.0" : version);
++    if (brand_key == "Vivaldi")
++      return " Vivaldi/" + (version.empty() ? "7.5.3735.66" : version);
++    if (!brand_key.empty())
++      return " " + brand_key + "/" + (version.empty() ? "0.0.0.0" : version);
++
++    return "";
++  }());
++  return *cached;
++}
++
+ }  // namespace blink
+diff --git a/third_party/blink/public/common/user_agent/user_agent_metadata.h b/third_party/blink/public/common/user_agent/user_agent_metadata.h
+index fda7b49c11..57f173b836 100644
+--- a/third_party/blink/public/common/user_agent/user_agent_metadata.h
++++ b/third_party/blink/public/common/user_agent/user_agent_metadata.h
+@@ -106,6 +106,10 @@ bool BLINK_COMMON_EXPORT operator==(const UserAgentMetadata& a,
+ bool BLINK_COMMON_EXPORT operator==(const UserAgentOverride& a,
+                                     const UserAgentOverride& b);
+ 
++// Returns the brand suffix to append to the UA string (e.g., " Edg/131.0.0.0").
++// Returns empty string for Chrome or when no brand override is set.
++std::string BLINK_COMMON_EXPORT GetUserAgentFingerprintBrandInfo();
++
+ }  // namespace blink
+ 
+ #endif  // THIRD_PARTY_BLINK_PUBLIC_COMMON_USER_AGENT_USER_AGENT_METADATA_H_
+diff --git a/third_party/blink/renderer/core/execution_context/navigator_base.cc b/third_party/blink/renderer/core/execution_context/navigator_base.cc
+index cccfafe8f9..29d36e0459 100644
+--- a/third_party/blink/renderer/core/execution_context/navigator_base.cc
++++ b/third_party/blink/renderer/core/execution_context/navigator_base.cc
+@@ -12,6 +12,7 @@
+ #include "third_party/blink/renderer/core/probe/core_probes.h"
+ #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+ #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
++#include "components/nodriver4j/platform_override.h"
+ 
+ #if !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_WIN)
+ #include <sys/utsname.h>
+@@ -24,6 +25,12 @@ namespace blink {
+ namespace {
+ 
+ String GetReducedNavigatorPlatform() {
++  switch (nodriver4j::GetSpoofedPlatform()) {
++    case nodriver4j::SpoofedPlatform::kWindows: return "Win32";
++    case nodriver4j::SpoofedPlatform::kLinux: return "Linux x86_64";
++    case nodriver4j::SpoofedPlatform::kMacOS: return "MacIntel";
++    case nodriver4j::SpoofedPlatform::kNone: break;
++  }
+ #if BUILDFLAG(IS_ANDROID)
+   return "Linux armv81";
+ #elif BUILDFLAG(IS_MAC)
+diff --git a/third_party/blink/renderer/core/frame/navigator.cc b/third_party/blink/renderer/core/frame/navigator.cc
+index e8db256968..2863bc9f43 100644
+--- a/third_party/blink/renderer/core/frame/navigator.cc
++++ b/third_party/blink/renderer/core/frame/navigator.cc
+@@ -35,6 +35,7 @@
+ #include "third_party/blink/renderer/core/page/page.h"
+ #include "third_party/blink/renderer/core/probe/core_probes.h"
+ #include "third_party/blink/renderer/platform/language.h"
++#include "components/nodriver4j/platform_override.h"
+ 
+ namespace blink {
+ 
+@@ -57,6 +58,12 @@ String Navigator::vendorSub() const {
+ }
+ 
+ String Navigator::platform() const {
++  switch (nodriver4j::GetSpoofedPlatform()) {
++    case nodriver4j::SpoofedPlatform::kWindows: return "Win32";
++    case nodriver4j::SpoofedPlatform::kLinux: return "Linux x86_64";
++    case nodriver4j::SpoofedPlatform::kMacOS: return "MacIntel";
++    case nodriver4j::SpoofedPlatform::kNone: break;
++  }
+   // TODO(955620): Consider changing devtools overrides to only allow overriding
+   // the platform with a frozen platform to distinguish between
+   // mobile and desktop when ReduceUserAgent is enabled.
+@@ -99,8 +106,8 @@ bool Navigator::cookieEnabled() const {
+ }
+ 
+ bool Navigator::webdriver() const {
+-  if (RuntimeEnabledFeatures::AutomationControlledEnabled())
+-    return true;
++  // if (RuntimeEnabledFeatures::AutomationControlledEnabled())
++  //   return true;
+ 
+   bool automation_enabled = false;
+   probe::ApplyAutomationOverride(GetExecutionContext(), automation_enabled);
+-- 
+2.45.1.windows.1
+

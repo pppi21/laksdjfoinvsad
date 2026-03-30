@@ -1149,7 +1149,7 @@ public class Browser implements AutoCloseable {
 
         // Background service suppression
         args.add("--disable-background-networking");
-        args.add("--disable-component-update");
+        // args.add("--disable-component-update"); // This disables widevine
         args.add("--disable-client-side-phishing-detection");
         args.add("--disable-sync");
         args.add("--disable-domain-reliability");
@@ -1251,12 +1251,12 @@ public class Browser implements AutoCloseable {
             // args.add("--fingerprint-brand-version=" + fp.browserMajorVersion());
             // args.add("--fingerprint-brand-version-long=" + fp.brandVersionLong());
              args.add("--fingerprint-brand=Chrome");
-             args.add("--fingerprint-brand-version=145");
-             args.add("--fingerprint-brand-version-long=145.0.7632." + commit);
+             args.add("--fingerprint-brand-version=146");
+             args.add("--fingerprint-brand-version-long=146.0.7680." + commit);
             // args.add("--fingerprint-platform=" + fp.platform());
             // args.add("--fingerprint-platform-version=" + fp.platformVersion());
-            args.add("--fingerprint-platform=Windows");
-            args.add("--fingerprint-platform-version=15.0.0");
+            // args.add("--fingerprint-request-integrity=stable|2026|NNdAQ4umZKwG7+IzfjmwHCgaZsw=|Copyright 2026 Google LLC. All rights reserved.");
+            // args.add("--x-client-data=CK+1yQEIj7bJAQiltskBCKmdygEInfLKAQiTocsBCIWgzQEIg7TPAQjUt88BGL+pygEY8azPARjrsc8BGPuyzwEYxLPPAQ==");
 
             // Hardware
             args.add("--fingerprint-hardware-concurrency=" + fp.hardwareConcurrency());
