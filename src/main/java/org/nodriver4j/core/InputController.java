@@ -154,31 +154,40 @@ class InputController {
         dispatchMouseButton(position, "mouseReleased", "left", 1);
     }
 
-    private void dispatchMouseMove(Vector position) {
-        try {
-            JsonObject params = new JsonObject();
-            params.addProperty("type", "mouseMoved");
-            params.addProperty("x", position.getX());
-            params.addProperty("y", position.getY());
+    private static final int DISPATCH_RETRIES = 3;
+    private static final int DISPATCH_TIMEOUT_SECONDS = 5;
 
-            page.cdpSession().send("Input.dispatchMouseEvent", params);
-        } catch (TimeoutException e) {
-            throw new ScriptExecutionException("Failed to dispatch mouse move", e);
-        }
+    private void dispatchMouseMove(Vector position) {
+        JsonObject params = new JsonObject();
+        params.addProperty("type", "mouseMoved");
+        params.addProperty("x", position.getX());
+        params.addProperty("y", position.getY());
+
+        dispatchWithRetry("Input.dispatchMouseEvent", params, "Failed to dispatch mouse move");
     }
 
     private void dispatchMouseButton(Vector position, String type, String button, int clickCount) {
-        try {
-            JsonObject params = new JsonObject();
-            params.addProperty("type", type);
-            params.addProperty("x", position.getX());
-            params.addProperty("y", position.getY());
-            params.addProperty("button", button);
-            params.addProperty("clickCount", clickCount);
+        JsonObject params = new JsonObject();
+        params.addProperty("type", type);
+        params.addProperty("x", position.getX());
+        params.addProperty("y", position.getY());
+        params.addProperty("button", button);
+        params.addProperty("clickCount", clickCount);
 
-            page.cdpSession().send("Input.dispatchMouseEvent", params);
-        } catch (TimeoutException e) {
-            throw new ScriptExecutionException("Failed to dispatch mouse button", e);
+        dispatchWithRetry("Input.dispatchMouseEvent", params, "Failed to dispatch mouse button");
+    }
+
+    private void dispatchWithRetry(String method, JsonObject params, String errorMessage) {
+        for (int attempt = 1; attempt <= DISPATCH_RETRIES; attempt++) {
+            try {
+                page.cdpSession().send(method, params, DISPATCH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                return;
+            } catch (TimeoutException e) {
+                if (attempt == DISPATCH_RETRIES) {
+                    throw new ScriptExecutionException(errorMessage, e);
+                }
+                page.sleep(200);
+            }
         }
     }
 
@@ -698,18 +707,14 @@ class InputController {
     }
 
     private void dispatchScroll(int deltaX, int deltaY) {
-        try {
-            JsonObject params = new JsonObject();
-            params.addProperty("type", "mouseWheel");
-            params.addProperty("x", mousePosition.getX());
-            params.addProperty("y", mousePosition.getY());
-            params.addProperty("deltaX", deltaX);
-            params.addProperty("deltaY", deltaY);
+        JsonObject params = new JsonObject();
+        params.addProperty("type", "mouseWheel");
+        params.addProperty("x", mousePosition.getX());
+        params.addProperty("y", mousePosition.getY());
+        params.addProperty("deltaX", deltaX);
+        params.addProperty("deltaY", deltaY);
 
-            page.cdpSession().send("Input.dispatchMouseEvent", params);
-        } catch (TimeoutException e) {
-            throw new ScriptExecutionException("Failed to dispatch scroll", e);
-        }
+        dispatchWithRetry("Input.dispatchMouseEvent", params, "Failed to dispatch scroll");
     }
 
     // ==================== Compound Methods ====================
