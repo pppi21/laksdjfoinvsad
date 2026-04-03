@@ -398,6 +398,7 @@ public class Browser implements AutoCloseable {
 
         if (removed != null) {
             System.out.println("[Browser] Page target destroyed: " + targetId);
+            removed.shutdown();
 
             if (targetId.equals(activePageTargetId)) {
                 activePageTargetId = null;
@@ -872,6 +873,8 @@ public class Browser implements AutoCloseable {
     public void closePage(Page page) throws TimeoutException {
         ensureOpen();
 
+        page.shutdown();
+
         // Close the session if attached
         if (page.isAttached()) {
             page.cdpSession().close();
@@ -1019,6 +1022,11 @@ public class Browser implements AutoCloseable {
             if (browserCdpClient != null) {
                 browserCdpClient.removeAllEventListeners();
                 browserCdpClient.close();
+            }
+
+            // Shut down page background resources (idle drift executors)
+            for (Page p : pages.values()) {
+                p.shutdown();
             }
 
             // Clear page tracking

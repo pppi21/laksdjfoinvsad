@@ -13,10 +13,6 @@ NoDriver4j is a browser automation framework consisting of three components: a C
 - **IDE (Java)**: IntelliJ IDEA
 - **IDE (C++)**: Visual Studio Code
 - **OS**: Windows 11 (WSL available)
-- **Build**: `mvn compile`
-- **Run**: `mvn javafx:run`
-- **Test**: `mvn test`
-- **Package**: `mvn package`
 
 ## Architecture
 
@@ -30,7 +26,7 @@ UI (JavaFX)  -->  Services  -->  Core (Browser/CDP)  -->  Custom Chromium
 
 Owns the browser lifecycle and page-level automation. `Browser` is responsible for launching Chrome, establishing a CDP connection, and tearing everything down on close. `Page` is the high-level automation surface — navigation, clicking, typing, scrolling, waiting — with all interactions modeled on human behavior (Bezier curve mouse paths, Fitts's Law step counts, Gaussian keystroke timing). `BrowserConfig` is the single immutable config object for all browser launch settings. `Fingerprint` provides persistent browser identity by loading fingerprint profiles from a JSONL data file.
 
-`BrowserManager` exists for standalone dev/testing convenience and is **not** used in production task execution — that role belongs to `TaskExecutionService`.
+`BrowserManager` exists for standalone dev/testing convenience and is **not** used in production task execution — that role belongs to `TaskExecutionService`. Some testing may require `TaskExecutionService`. Decide between the two on a case by case basis.
 
 ### CDP (`org.nodriver4j.cdp`)
 
@@ -48,7 +44,7 @@ Orchestration and infrastructure, organized into subpackages:
 - **`captcha/capsolver`** — CapSolver API integration (`CapSolverService`, `CapSolverException`).
 - **`captcha/twocaptcha`** — 2Captcha API integration (`TwoCaptchaService`, `TwoCaptchaException`).
 - **`aycd`** — AutoSolveAI integration (`AutoSolveAIService`, `AutoSolveAIException`).
-- **`imap`** — `GmailClient` provides shared, reference-counted IMAP connections with batch-cached fetching. `EmailPollingBase` is the base for email extractors, with concrete implementations in `imap/impl` (e.g., `FunkoVerificationExtractor`, `UberOtpExtractor`).
+- **`imap`** — `GmailClient` provides shared IMAP connections. `EmailPollingBase` is the base for email extractors, with concrete implementations in `imap/impl` (e.g., `FunkoVerificationExtractor`, `UberOtpExtractor`).
 - **`sms`** — SMS verification providers (`DaisySmsService`, `SmsManService`, `TextVerifiedService`) sharing a common `SmsServiceBase` and `SmsService` interface.
 - **`proxy`** — `ProxyDiagnosticService` for proxy health checks.
 - **`response`** — Response DTOs organized by domain: `response/captcha` (Arkose, AutoSolveAI, ReCaptchaV3), `response/proxy` (diagnostic results), `response/sms` (SMS activations).
@@ -104,9 +100,9 @@ FXML and CSS resources live under `src/main/resources/org/nodriver4j/ui/`.
 ## When Outputting Code Changes
 
 Always state:
-1. What files to **add**
-2. What files to **update**
-3. What files to **remove**
+1. What files were **added**
+2. What files were **updated**
+3. What files were **removed**
 
 ## Adding a New Automation Script
 

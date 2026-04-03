@@ -2,22 +2,25 @@ package org.nodriver4j.core;
 
 import com.google.gson.JsonObject;
 import org.nodriver4j.core.exceptions.ElementNotFoundException;
-import org.nodriver4j.core.exceptions.ElementNotInteractableException;
 import org.nodriver4j.core.exceptions.ScriptExecutionException;
-import org.nodriver4j.math.BoundingBox;
-import org.nodriver4j.math.HumanBehavior;
-import org.nodriver4j.math.Vector;
+import org.nodriver4j.math.*;
 
 import java.util.List;
-import java.util.concurrent.TimeoutException;
+import java.util.Random;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Mouse, keyboard, and scroll input for a browser page.
  *
- * <p>All mouse interactions use human-like movement (Bezier curves, Fitts's Law)
- * and timing (Gaussian delays). Keyboard input uses realistic keystroke timing
- * with context-aware delays.</p>
+ * <p>All mouse interactions use the movement framework: per-profile seeded behavior
+ * (MovementPersona), Fitts's Law timing, sub-movement decomposition, approach
+ * hesitation, physiological tremor, and inter-action pacing via SessionContext.</p>
+ *
+ * <p>Falls back to legacy HumanBehavior paths when {@code simulateMousePath} is false.</p>
  *
  * <p>This is an internal implementation class — scripts interact with
  * these operations through {@link Page}'s public API.</p>
@@ -27,22 +30,64 @@ class InputController {
     private final Page page;
     private volatile Vector mousePosition;
 
+    // ==================== Movement Framework ====================
+
+    private final MovementPersona persona;
+    private final MousePathBuilder pathBuilder;
+    private final SessionContext sessionContext;
+    private final IdleDriftController driftController;
+
+    // ==================== Idle Drift ====================
+
+    private final ScheduledExecutorService driftExecutor;
+    private volatile ScheduledFuture<?> driftTask;
+    private volatile boolean intentionalMovementInProgress;
+
     InputController(Page page) {
         this.page = page;
         this.mousePosition = Vector.ORIGIN;
+
+        // Create persona from a random seed (profile entity integration comes later)
+        long seed = System.nanoTime();
+        this.persona = new MovementPersona(seed);
+        Random random = new Random(seed);
+
+        this.pathBuilder = new MousePathBuilder(persona);
+        this.sessionContext = new SessionContext(persona, random);
+        this.driftController = new IdleDriftController(persona, new Random(seed ^ 0x4452494654L));
+
+        // Daemon thread for idle drift
+        this.driftExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "idle-drift");
+            t.setDaemon(true);
+            return t;
+        });
+        scheduleNextDrift();
     }
 
     Vector mousePosition() {
         return mousePosition;
     }
 
+    /**
+     * The session context tracking inter-action state.
+     * Exposed for page navigation recording.
+     */
+    SessionContext sessionContext() {
+        return sessionContext;
+    }
+
     // ==================== Mouse Interaction ====================
 
     void click(String selector) {
-        click(selector, false);
+        click(selector, false, ActionIntent.DEFAULT);
     }
 
     void click(String selector, boolean force) {
+        click(selector, force, ActionIntent.DEFAULT);
+    }
+
+    void click(String selector, boolean force, ActionIntent intent) {
         if (force) {
             scrollIntoView(selector);
             BoundingBox box = page.waitForSelector(selector);
@@ -50,40 +95,61 @@ class InputController {
             return;
         }
 
+        InteractionOptions options = page.options();
+
+        // Session context delay (inter-action pacing)
+        applySessionDelay(SessionContext.ActionType.CLICK, intent);
+
         Actionability act = page.actionability();
 
-        // Wait for element to be visible, stable, and enabled
         BoundingBox box = act.waitForActionable(selector,
                 new String[]{"visible", "stable", "enabled"},
-                page.options().getDefaultTimeout());
+                options.getDefaultTimeout());
 
-        // Scroll into view if needed
         scrollIntoViewIfNeeded(box);
-
-        // Re-query position after potential scroll
         box = page.waitForSelector(selector, 2000);
 
-        // Determine click point
-        Vector target = box.getRandomPoint(page.options().getPaddingPercentage());
+        if (options.isSimulateMousePath()) {
+            executeClick(box, intent);
+        } else {
+            Vector target = box.getRandomPoint(options.getPaddingPercentage());
+            act.verifyHitTarget(selector, target.getX(), target.getY());
+            dispatchMouseMove(target);
+            mousePosition = target;
+            performLegacyClick(target);
+        }
 
-        // Verify hit target
-        act.verifyHitTarget(selector, target.getX(), target.getY());
-
-        // Perform the click
-        moveMouseTo(target);
-        performClick(target);
+        recordAction(SessionContext.ActionType.CLICK);
     }
 
     void clickAt(double x, double y) {
         Vector target = new Vector(x, y);
-        moveMouseTo(target);
-        performClick(target);
+        InteractionOptions options = page.options();
+
+        if (options.isSimulateMousePath()) {
+            stopDrift();
+            double speed = options.speedMultiplier();
+            List<MousePathBuilder.PathPoint> path = pathBuilder.planMovement(
+                    mousePosition, target, 20, ActionIntent.DEFAULT, speed);
+            dispatchPath(path);
+            performClickFromPath(target, ActionIntent.DEFAULT, speed);
+            startDrift();
+        } else {
+            moveMouseToLegacy(target);
+            performLegacyClick(target);
+        }
     }
 
     void clickAtBox(BoundingBox box) {
-        Vector target = box.getRandomPoint(page.options().getPaddingPercentage());
-        moveMouseTo(target);
-        performClick(target);
+        InteractionOptions options = page.options();
+
+        if (options.isSimulateMousePath()) {
+            executeClick(box, ActionIntent.DEFAULT);
+        } else {
+            Vector target = box.getRandomPoint(options.getPaddingPercentage());
+            moveMouseToLegacy(target);
+            performLegacyClick(target);
+        }
     }
 
     void hover(String selector) {
@@ -93,11 +159,97 @@ class InputController {
                 page.options().getDefaultTimeout());
         scrollIntoViewIfNeeded(box);
         box = page.waitForSelector(selector, 2000);
-        Vector target = box.getRandomPoint(page.options().getPaddingPercentage());
+        Vector target = box.getCenter();
+
+        applySessionDelay(SessionContext.ActionType.HOVER, ActionIntent.DEFAULT);
         moveMouseTo(target);
+        recordAction(SessionContext.ActionType.HOVER);
     }
 
     void moveMouseTo(Vector target) {
+        InteractionOptions options = page.options();
+
+        if (!options.isSimulateMousePath()) {
+            moveMouseToLegacy(target);
+            return;
+        }
+
+        stopDrift();
+
+        double speed = options.speedMultiplier();
+        List<MousePathBuilder.PathPoint> path = pathBuilder.planMovement(
+                mousePosition, target, 100, ActionIntent.DEFAULT, speed);
+
+        double totalDistance = dispatchPath(path);
+
+        if (options.isSessionContextEnabled()) {
+            sessionContext.recordMouseDistance(totalDistance);
+        }
+
+        driftController.resetRestPosition(mousePosition);
+        startDrift();
+    }
+
+    // ==================== Click Execution (New Framework) ====================
+
+    /**
+     * Full click using MousePathBuilder: plans movement + click, then dispatches.
+     */
+    private void executeClick(BoundingBox box, ActionIntent intent) {
+        stopDrift();
+
+        InteractionOptions options = page.options();
+        double speed = options.speedMultiplier();
+
+        MousePathBuilder.ClickResult click = pathBuilder.planClick(
+                mousePosition, box, intent, speed);
+
+        dispatchPath(click.path());
+
+        // Hesitation before click
+        if (click.hesitationMs() > 0) {
+            page.sleep((long) click.hesitationMs());
+        }
+
+        // Mousedown → hold → mouseup
+        dispatchMouseButton(click.mousedownPosition(), "mousePressed", "left", 1);
+        if (click.holdDurationMs() > 0) {
+            page.sleep((long) click.holdDurationMs());
+        }
+        dispatchMouseButton(click.mousedownPosition(), "mouseReleased", "left", 1);
+
+        if (options.isSessionContextEnabled()) {
+            sessionContext.recordMouseDistance(mousePosition.distanceTo(box.getCenter()));
+        }
+
+        driftController.resetRestPosition(mousePosition);
+        startDrift();
+    }
+
+    /**
+     * Click execution after path has already been dispatched (for clickAt).
+     */
+    private void performClickFromPath(Vector position, ActionIntent intent, double speed) {
+        ClickBehavior clickBehavior = new ClickBehavior(persona, new Random(persona.seed() ^ 0x434C4B32L));
+        ClickBehavior.ClickParams params = clickBehavior.compute(
+                BoundingBox.of(position.getX() - 5, position.getY() - 5, 10, 10), 0);
+
+        long hesitation = (long) (params.hesitationMs() / speed);
+        long hold = (long) (params.holdDurationMs() / speed);
+
+        if (hesitation > 0) page.sleep(hesitation);
+        dispatchMouseButton(position, "mousePressed", "left", 1);
+        if (hold > 0) page.sleep(hold);
+        dispatchMouseButton(position, "mouseReleased", "left", 1);
+    }
+
+    // ==================== Legacy Mouse Methods ====================
+
+    /**
+     * Legacy mouse move using HumanBehavior paths (when simulateMousePath is true
+     * but we need the old path for backward-compatible callers).
+     */
+    private void moveMouseToLegacy(Vector target) {
         InteractionOptions options = page.options();
 
         if (!options.isSimulateMousePath()) {
@@ -109,10 +261,10 @@ class InputController {
         if (options.isOvershootEnabled() &&
                 HumanBehavior.shouldOvershoot(mousePosition, target, options.getOvershootThreshold())) {
             Vector overshootPoint = HumanBehavior.calculateOvershoot(target, options.getOvershootRadius());
-            moveAlongPath(mousePosition, overshootPoint, null);
-            moveAlongPath(overshootPoint, target, HumanBehavior.OVERSHOOT_SPREAD);
+            moveAlongLegacyPath(mousePosition, overshootPoint, null);
+            moveAlongLegacyPath(overshootPoint, target, HumanBehavior.OVERSHOOT_SPREAD);
         } else {
-            moveAlongPath(mousePosition, target, null);
+            moveAlongLegacyPath(mousePosition, target, null);
         }
 
         if (options.getMoveDelayMax() > 0) {
@@ -123,7 +275,7 @@ class InputController {
         }
     }
 
-    private void moveAlongPath(Vector from, Vector to, Double spreadOverride) {
+    private void moveAlongLegacyPath(Vector from, Vector to, Double spreadOverride) {
         InteractionOptions options = page.options();
         Integer moveSpeed = options.getMoveSpeed() > 0 ? options.getMoveSpeed() : null;
         List<Vector> path = HumanBehavior.generatePath(from, to, moveSpeed, null, spreadOverride);
@@ -140,7 +292,7 @@ class InputController {
         }
     }
 
-    private void performClick(Vector position) {
+    private void performLegacyClick(Vector position) {
         InteractionOptions options = page.options();
 
         int hesitation = HumanBehavior.hesitationDelay(
@@ -154,6 +306,51 @@ class InputController {
         dispatchMouseButton(position, "mouseReleased", "left", 1);
     }
 
+    // ==================== Path Dispatch ====================
+
+    /**
+     * Dispatches a timed path, sleeping between points.
+     *
+     * @return total distance traveled (for session context recording)
+     */
+    private double dispatchPath(List<MousePathBuilder.PathPoint> path) {
+        double totalDistance = 0;
+        Vector prev = mousePosition;
+
+        for (MousePathBuilder.PathPoint point : path) {
+            if (point.deltaMs() > 0) {
+                page.sleep((long) point.deltaMs());
+            }
+
+            dispatchMouseMove(point.position());
+            totalDistance += prev.distanceTo(point.position());
+            prev = point.position();
+            mousePosition = point.position();
+        }
+
+        return totalDistance;
+    }
+
+    // ==================== Session Context Helpers ====================
+
+    private void applySessionDelay(SessionContext.ActionType type, ActionIntent intent) {
+        InteractionOptions options = page.options();
+        if (!options.isSessionContextEnabled()) return;
+
+        double delay = sessionContext.recommendedDelay(type, intent);
+        if (delay > 0) {
+            page.sleep((long) (delay / options.speedMultiplier()));
+        }
+    }
+
+    private void recordAction(SessionContext.ActionType type) {
+        if (page.options().isSessionContextEnabled()) {
+            sessionContext.recordAction(type);
+        }
+    }
+
+    // ==================== CDP Dispatch ====================
+
     private static final int DISPATCH_RETRIES = 3;
     private static final int DISPATCH_TIMEOUT_SECONDS = 5;
 
@@ -164,6 +361,8 @@ class InputController {
         params.addProperty("y", position.getY());
 
         dispatchWithRetry("Input.dispatchMouseEvent", params, "Failed to dispatch mouse move");
+        // Update cursor overlay position
+        page.updateCursorOverlay(position.getX(), position.getY());
     }
 
     private void dispatchMouseButton(Vector position, String type, String button, int clickCount) {
@@ -243,9 +442,14 @@ class InputController {
             throw new IllegalArgumentException("speedMultiplier must be positive, got: " + speedMultiplier);
         }
 
+        applySessionDelay(SessionContext.ActionType.TYPE, ActionIntent.DEFAULT);
+
         InteractionOptions options = page.options();
-        int burstSize = Math.max(1, (int) Math.floor(speedMultiplier));
-        double delayMultiplier = speedMultiplier / burstSize;
+        double globalSpeed = options.speedMultiplier();
+        double effectiveMultiplier = speedMultiplier * globalSpeed;
+
+        int burstSize = Math.max(1, (int) Math.floor(effectiveMultiplier));
+        double delayMultiplier = effectiveMultiplier / burstSize;
         boolean useBurstMode = burstSize >= 2;
 
         int scaledKeystrokeMin = Math.max(1, (int) (options.getKeystrokeDelayMin() / delayMultiplier));
@@ -302,16 +506,14 @@ class InputController {
 
             page.sleep(delay);
         }
+
+        recordAction(SessionContext.ActionType.TYPE);
     }
 
     private void insertText(String text) {
-        try {
-            JsonObject params = new JsonObject();
-            params.addProperty("text", text);
-            page.cdpSession().send("Input.insertText", params);
-        } catch (TimeoutException e) {
-            throw new ScriptExecutionException("Failed to insert text", e);
-        }
+        JsonObject params = new JsonObject();
+        params.addProperty("text", text);
+        dispatchWithRetry("Input.insertText", params, "Failed to insert text");
     }
 
     void clear(String selector) {
@@ -383,47 +585,44 @@ class InputController {
     }
 
     void pressKey(String key, boolean ctrl, boolean alt, boolean shift) {
-        try {
-            int modifiers = 0;
-            if (alt) modifiers |= 1;
-            if (ctrl) modifiers |= 2;
-            if (shift) modifiers |= 8;
+        int modifiers = 0;
+        if (alt) modifiers |= 1;
+        if (ctrl) modifiers |= 2;
+        if (shift) modifiers |= 8;
 
-            String code = getKeyCode(key);
-            int windowsVirtualKeyCode = getWindowsVirtualKeyCode(key);
+        String code = getKeyCode(key);
+        int windowsVirtualKeyCode = getWindowsVirtualKeyCode(key);
 
-            String textToInsert = null;
-            if (!ctrl && !alt && isPrintableCharacter(key)) {
-                textToInsert = key;
-            } else if ("Enter".equals(key)) {
-                textToInsert = "\r";
-            }
-
-            JsonObject keyDown = new JsonObject();
-            keyDown.addProperty("type", "keyDown");
-            keyDown.addProperty("key", key);
-            keyDown.addProperty("code", code);
-            keyDown.addProperty("windowsVirtualKeyCode", windowsVirtualKeyCode);
-            keyDown.addProperty("nativeVirtualKeyCode", windowsVirtualKeyCode);
-            keyDown.addProperty("modifiers", modifiers);
-
-            if (textToInsert != null) {
-                keyDown.addProperty("text", textToInsert);
-            }
-
-            page.cdpSession().send("Input.dispatchKeyEvent", keyDown, 3, TimeUnit.SECONDS);
-
-            JsonObject keyUp = new JsonObject();
-            keyUp.addProperty("type", "keyUp");
-            keyUp.addProperty("key", key);
-            keyUp.addProperty("code", code);
-            keyUp.addProperty("windowsVirtualKeyCode", windowsVirtualKeyCode);
-            keyUp.addProperty("nativeVirtualKeyCode", windowsVirtualKeyCode);
-            keyUp.addProperty("modifiers", modifiers);
-            page.cdpSession().send("Input.dispatchKeyEvent", keyUp, 3, TimeUnit.SECONDS);
-        } catch (TimeoutException e) {
-            throw new ScriptExecutionException("Failed to dispatch key event", e);
+        String textToInsert = null;
+        if (!ctrl && !alt && isPrintableCharacter(key)) {
+            textToInsert = key;
+        } else if ("Enter".equals(key)) {
+            textToInsert = "\r";
         }
+
+        JsonObject keyDown = new JsonObject();
+        keyDown.addProperty("type", "keyDown");
+        keyDown.addProperty("key", key);
+        keyDown.addProperty("code", code);
+        keyDown.addProperty("windowsVirtualKeyCode", windowsVirtualKeyCode);
+        keyDown.addProperty("nativeVirtualKeyCode", windowsVirtualKeyCode);
+        keyDown.addProperty("modifiers", modifiers);
+
+        if (textToInsert != null) {
+            keyDown.addProperty("text", textToInsert);
+        }
+
+        dispatchWithRetry("Input.dispatchKeyEvent", keyDown, "Failed to dispatch key down");
+
+        JsonObject keyUp = new JsonObject();
+        keyUp.addProperty("type", "keyUp");
+        keyUp.addProperty("key", key);
+        keyUp.addProperty("code", code);
+        keyUp.addProperty("windowsVirtualKeyCode", windowsVirtualKeyCode);
+        keyUp.addProperty("nativeVirtualKeyCode", windowsVirtualKeyCode);
+        keyUp.addProperty("modifiers", modifiers);
+
+        dispatchWithRetry("Input.dispatchKeyEvent", keyUp, "Failed to dispatch key up");
     }
 
     private boolean isPrintableCharacter(String key) {
@@ -579,6 +778,43 @@ class InputController {
 
     void scrollBy(int deltaX, int deltaY) {
         InteractionOptions options = page.options();
+
+        applySessionDelay(SessionContext.ActionType.SCROLL, ActionIntent.DEFAULT);
+        stopDrift();
+
+        if (options.isSimulateMousePath()) {
+            List<MousePathBuilder.ScrollStep> plan = pathBuilder.planScroll(
+                    deltaX, deltaY,
+                    options.getScrollTickPixels(),
+                    options.getScrollDelayMin(), options.getScrollDelayMax(),
+                    options.speedMultiplier());
+
+            for (MousePathBuilder.ScrollStep step : plan) {
+                // Lateral cursor drift during scroll
+                if (step.cursorOffsetX() != 0 || step.cursorOffsetY() != 0) {
+                    Vector drifted = mousePosition.add(
+                            new Vector(step.cursorOffsetX(), step.cursorOffsetY()));
+                    dispatchMouseMove(drifted);
+                    mousePosition = drifted;
+                }
+
+                dispatchScroll(step.scrollDeltaX(), step.scrollDeltaY());
+
+                if (step.delayMs() > 0) {
+                    page.sleep((long) step.delayMs());
+                }
+            }
+        } else {
+            scrollByLegacy(deltaX, deltaY);
+        }
+
+        recordAction(SessionContext.ActionType.SCROLL);
+        driftController.resetRestPosition(mousePosition);
+        startDrift();
+    }
+
+    private void scrollByLegacy(int deltaX, int deltaY) {
+        InteractionOptions options = page.options();
         int tickPixels = options.getScrollTickPixels();
         int tickCount = HumanBehavior.scrollTickCount(
                 Math.max(Math.abs(deltaX), Math.abs(deltaY)), tickPixels);
@@ -651,7 +887,6 @@ class InputController {
             }
 
             scrollBy(deltaX, deltaY);
-            // Allow the browser to finish processing the final wheel event
             page.sleep(150);
         }
     }
@@ -717,6 +952,49 @@ class InputController {
         dispatchWithRetry("Input.dispatchMouseEvent", params, "Failed to dispatch scroll");
     }
 
+    // ==================== Idle Drift ====================
+
+    private void stopDrift() {
+        intentionalMovementInProgress = true;
+        if (driftTask != null) {
+            driftTask.cancel(false);
+            driftTask = null;
+        }
+    }
+
+    private void startDrift() {
+        intentionalMovementInProgress = false;
+        scheduleNextDrift();
+    }
+
+    private void scheduleNextDrift() {
+        long intervalMs = (long) persona.driftIntervalMs();
+        driftTask = driftExecutor.schedule(this::executeDriftStep, intervalMs, TimeUnit.MILLISECONDS);
+    }
+
+    private void executeDriftStep() {
+        try {
+            if (intentionalMovementInProgress) return;
+            if (!driftController.shouldDrift(sessionContext.isTyping())) {
+                scheduleNextDrift();
+                return;
+            }
+
+            IdleDriftController.DriftStep step = driftController.nextDrift(mousePosition);
+            Vector newPos = mousePosition.add(step.offset()).clampPositive();
+
+            dispatchMouseMove(newPos);
+            mousePosition = newPos;
+
+            // Schedule next drift with the step's recommended delay
+            long nextDelay = Math.max(50, (long) step.delayUntilNextMs());
+            driftTask = driftExecutor.schedule(this::executeDriftStep, nextDelay, TimeUnit.MILLISECONDS);
+        } catch (Exception e) {
+            // Drift failure should not crash the session — silently reschedule
+            scheduleNextDrift();
+        }
+    }
+
     // ==================== Compound Methods ====================
 
     void fillFormField(String selector, String value, long preTypeDelay, long postTypeDelay) {
@@ -725,7 +1003,6 @@ class InputController {
 
     void fillFormField(String selector, String value, long preTypeDelay, long postTypeDelay,
                        double speedMultiplier) {
-        // Verify element is editable before attempting to type
         Actionability act = page.actionability();
         act.waitForActionable(selector,
                 new String[]{"visible", "stable", "enabled", "editable"},
@@ -781,5 +1058,13 @@ class InputController {
         } catch (TimeoutException e) {
             throw new ScriptExecutionException("Failed to enable Runtime domain", e);
         }
+    }
+
+    /**
+     * Shuts down the idle drift executor. Called during page/browser teardown.
+     */
+    void shutdown() {
+        stopDrift();
+        driftExecutor.shutdownNow();
     }
 }

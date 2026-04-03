@@ -77,6 +77,12 @@ public final class InteractionOptions {
 
     private final boolean showCursorOverlay;
 
+    // ==================== Movement Framework ====================
+
+    private final double speedMultiplier;
+    private final boolean sessionContextEnabled;
+    private final boolean realisticTyposEnabled;
+
     private InteractionOptions(Builder builder) {
         // Mouse Movement
         this.simulateMousePath = builder.simulateMousePath;
@@ -122,6 +128,11 @@ public final class InteractionOptions {
 
         // Cursor Overlay
         this.showCursorOverlay = builder.showCursorOverlay;
+
+        // Movement Framework
+        this.speedMultiplier = builder.speedMultiplier;
+        this.sessionContextEnabled = builder.sessionContextEnabled;
+        this.realisticTyposEnabled = builder.realisticTyposEnabled;
     }
 
     /**
@@ -167,6 +178,8 @@ public final class InteractionOptions {
                 .scrollDelayMax(50)
                 .moveDelayMin(0)
                 .moveDelayMax(50)
+                .speedMultiplier(3.0)
+                .sessionContextEnabled(false)
                 .build();
     }
 
@@ -215,7 +228,11 @@ public final class InteractionOptions {
                 .moveDelayMax(moveDelayMax)
                 .randomizeMoveDelay(randomizeMoveDelay)
                 // Cursor Overlay
-                .showCursorOverlay(showCursorOverlay);
+                .showCursorOverlay(showCursorOverlay)
+                // Movement Framework
+                .speedMultiplier(speedMultiplier)
+                .sessionContextEnabled(sessionContextEnabled)
+                .realisticTyposEnabled(realisticTyposEnabled);
     }
 
     // ==================== Mouse Movement Getters ====================
@@ -521,6 +538,38 @@ public final class InteractionOptions {
         return showCursorOverlay;
     }
 
+    // ==================== Movement Framework Getters ====================
+
+    /**
+     * Global speed multiplier applied as a final divisor on all computed delays.
+     * At 2.0, everything runs at double speed. At 0.5, half speed.
+     * Does not affect path shape, tremor frequencies, or spatial parameters.
+     *
+     * @return the speed multiplier (default 1.0)
+     */
+    public double speedMultiplier() {
+        return speedMultiplier;
+    }
+
+    /**
+     * Whether automatic inter-action pacing via SessionContext is enabled.
+     * When disabled, no automatic pacing adjustments occur.
+     *
+     * @return true if session context pacing is enabled (default true)
+     */
+    public boolean isSessionContextEnabled() {
+        return sessionContextEnabled;
+    }
+
+    /**
+     * Whether realistic typing mistakes are enabled (placeholder for Component 17).
+     *
+     * @return true if realistic typos are enabled (default false)
+     */
+    public boolean isRealisticTyposEnabled() {
+        return realisticTyposEnabled;
+    }
+
     // ==================== Builder ====================
 
     /**
@@ -574,6 +623,11 @@ public final class InteractionOptions {
 
         // Cursor Overlay - default on
         private boolean showCursorOverlay = true;
+
+        // Movement Framework - defaults
+        private double speedMultiplier = 1.0;
+        private boolean sessionContextEnabled = true;
+        private boolean realisticTyposEnabled = false;
 
         private Builder() {}
 
@@ -937,6 +991,42 @@ public final class InteractionOptions {
             return this;
         }
 
+        // ==================== Movement Framework ====================
+
+        /**
+         * Sets the global speed multiplier (default 1.0).
+         * Applied as a final divisor on all computed delays.
+         *
+         * @param speedMultiplier the multiplier (must be &gt; 0)
+         * @return this builder
+         */
+        public Builder speedMultiplier(double speedMultiplier) {
+            this.speedMultiplier = speedMultiplier;
+            return this;
+        }
+
+        /**
+         * Sets whether SessionContext automatic pacing is enabled (default true).
+         *
+         * @param sessionContextEnabled true to enable
+         * @return this builder
+         */
+        public Builder sessionContextEnabled(boolean sessionContextEnabled) {
+            this.sessionContextEnabled = sessionContextEnabled;
+            return this;
+        }
+
+        /**
+         * Sets whether realistic typing mistakes are enabled (default false).
+         *
+         * @param realisticTyposEnabled true to enable
+         * @return this builder
+         */
+        public Builder realisticTyposEnabled(boolean realisticTyposEnabled) {
+            this.realisticTyposEnabled = realisticTyposEnabled;
+            return this;
+        }
+
         /**
          * Builds the InteractionOptions instance.
          *
@@ -974,6 +1064,9 @@ public final class InteractionOptions {
             }
             if (scrollSpeed < 1 || scrollSpeed > 100) {
                 throw new IllegalArgumentException("scrollSpeed must be between 1 and 100");
+            }
+            if (speedMultiplier <= 0) {
+                throw new IllegalArgumentException("speedMultiplier must be positive");
             }
         }
     }
