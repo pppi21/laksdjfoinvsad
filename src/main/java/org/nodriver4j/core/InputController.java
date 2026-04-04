@@ -47,22 +47,33 @@ class InputController {
         this.page = page;
         this.mousePosition = Vector.ORIGIN;
 
-        // Create persona from a random seed (profile entity integration comes later)
-        long seed = System.nanoTime();
-        this.persona = new MovementPersona(seed);
-        Random random = new Random(seed);
+        boolean automationEnabled = page.options().isSimulateMousePath();
 
-        this.pathBuilder = new MousePathBuilder(persona);
-        this.sessionContext = new SessionContext(persona, random);
-        this.driftController = new IdleDriftController(persona, new Random(seed ^ 0x4452494654L));
+        if (automationEnabled) {
+            // Create persona from a random seed (profile entity integration comes later)
+            long seed = System.nanoTime();
+            this.persona = new MovementPersona(seed);
+            Random random = new Random(seed);
 
-        // Daemon thread for idle drift
-        this.driftExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "idle-drift");
-            t.setDaemon(true);
-            return t;
-        });
-        scheduleNextDrift();
+            this.pathBuilder = new MousePathBuilder(persona);
+            this.sessionContext = new SessionContext(persona, random);
+            this.driftController = new IdleDriftController(persona, new Random(seed ^ 0x4452494654L));
+
+            // Daemon thread for idle drift
+            this.driftExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "idle-drift");
+                t.setDaemon(true);
+                return t;
+            });
+            scheduleNextDrift();
+        } else {
+            // Manual / non-simulated mode — no framework components
+            this.persona = null;
+            this.pathBuilder = null;
+            this.sessionContext = null;
+            this.driftController = null;
+            this.driftExecutor = null;
+        }
     }
 
     Vector mousePosition() {
@@ -809,8 +820,10 @@ class InputController {
         }
 
         recordAction(SessionContext.ActionType.SCROLL);
-        driftController.resetRestPosition(mousePosition);
-        startDrift();
+        if (driftController != null) {
+            driftController.resetRestPosition(mousePosition);
+            startDrift();
+        }
     }
 
     private void scrollByLegacy(int deltaX, int deltaY) {
@@ -1065,6 +1078,8 @@ class InputController {
      */
     void shutdown() {
         stopDrift();
-        driftExecutor.shutdownNow();
+        if (driftExecutor != null) {
+            driftExecutor.shutdownNow();
+        }
     }
 }

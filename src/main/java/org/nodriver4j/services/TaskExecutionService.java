@@ -3,6 +3,7 @@ package org.nodriver4j.services;
 import org.nodriver4j.core.Browser;
 import org.nodriver4j.core.BrowserConfig;
 import org.nodriver4j.core.Fingerprint;
+import org.nodriver4j.core.InteractionOptions;
 import org.nodriver4j.core.monitoring.FingerprintMonitor;
 import org.nodriver4j.core.monitoring.FingerprintReport;
 import org.nodriver4j.persistence.Settings;
@@ -626,6 +627,13 @@ public class TaskExecutionService {
         }
 
         BrowserConfig config = buildConfig(task, headless, diagnostic);
+
+        // Manual browsers: disable all automated movement, idle drift, and cursor overlay
+        if (TaskEntity.STATUS_MANUAL.equals(status)) {
+            config = config.toBuilder()
+                    .interactionOptions(InteractionOptions.manual())
+                    .build();
+        }
 
         Integer port = availablePorts.poll(PORT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         if (port == null) {

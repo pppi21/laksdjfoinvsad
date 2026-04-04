@@ -154,6 +154,25 @@ public final class InteractionOptions {
     }
 
     /**
+     * Returns InteractionOptions for manual browsing (human user at the controls).
+     *
+     * <p>Disables all automated movement, idle drift, cursor overlay, and session
+     * context pacing. The browser behaves as a normal browser with no framework
+     * interference.</p>
+     *
+     * @return manual InteractionOptions
+     */
+    public static InteractionOptions manual() {
+        return builder()
+                .simulateMousePath(false)
+                .overshootEnabled(false)
+                .jitterEnabled(false)
+                .showCursorOverlay(false)
+                .sessionContextEnabled(false)
+                .build();
+    }
+
+    /**
      * Returns InteractionOptions optimized for speed (less human-like).
      *
      * <p>Use this for testing or when stealth is not required.</p>
