@@ -36,12 +36,15 @@ class InputController {
     private final MousePathBuilder pathBuilder;
     private final SessionContext sessionContext;
     private final IdleDriftController driftController;
+    private final Random random;
 
     // ==================== Idle Drift ====================
 
     private final ScheduledExecutorService driftExecutor;
     private volatile ScheduledFuture<?> driftTask;
     private volatile boolean intentionalMovementInProgress;
+    private volatile int cachedViewportWidth = 1280;
+    private volatile int cachedViewportHeight = 720;
 
     InputController(Page page) {
         this.page = page;
@@ -53,11 +56,11 @@ class InputController {
             // Create persona from a random seed (profile entity integration comes later)
             long seed = System.nanoTime();
             this.persona = new MovementPersona(seed);
-            Random random = new Random(seed);
+            this.random = new Random(seed);
 
             this.pathBuilder = new MousePathBuilder(persona);
-            this.sessionContext = new SessionContext(persona, random);
-            this.driftController = new IdleDriftController(persona, new Random(seed ^ 0x4452494654L));
+            this.sessionContext = new SessionContext(persona, new Random(seed ^ 0x53455353L));
+            this.driftController = new IdleDriftController(new Random(seed ^ 0x4452494654L));
 
             // Daemon thread for idle drift
             this.driftExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -65,10 +68,11 @@ class InputController {
                 t.setDaemon(true);
                 return t;
             });
-            scheduleNextDrift();
+            scheduleDrift(2000); // initial delay before first drift
         } else {
             // Manual / non-simulated mode — no framework components
             this.persona = null;
+            this.random = null;
             this.pathBuilder = null;
             this.sessionContext = null;
             this.driftController = null;
@@ -122,6 +126,7 @@ class InputController {
 
         if (options.isSimulateMousePath()) {
             executeClick(box, intent);
+            postClickMovement(options.speedMultiplier());
         } else {
             Vector target = box.getRandomPoint(options.getPaddingPercentage());
             act.verifyHitTarget(selector, target.getX(), target.getY());
@@ -144,6 +149,8 @@ class InputController {
                     mousePosition, target, 20, ActionIntent.DEFAULT, speed);
             dispatchPath(path);
             performClickFromPath(target, ActionIntent.DEFAULT, speed);
+            postClickMovement(speed);
+            driftController.resetForNextIdle();
             startDrift();
         } else {
             moveMouseToLegacy(target);
@@ -197,7 +204,7 @@ class InputController {
             sessionContext.recordMouseDistance(totalDistance);
         }
 
-        driftController.resetRestPosition(mousePosition);
+        driftController.resetForNextIdle();
         startDrift();
     }
 
@@ -233,8 +240,24 @@ class InputController {
             sessionContext.recordMouseDistance(mousePosition.distanceTo(box.getCenter()));
         }
 
-        driftController.resetRestPosition(mousePosition);
+        driftController.resetForNextIdle();
         startDrift();
+    }
+
+    /**
+     * Moves the cursor 100–300px away from the click point in a random direction.
+     * This is part of the click behavior (not a separate user action) — no session
+     * context delay or action recording.
+     */
+    private void postClickMovement(double speed) {
+        double distance = 100 + random.nextDouble() * 200;
+        double angle = random.nextDouble() * 2 * Math.PI;
+        Vector target = mousePosition.add(new Vector(
+                distance * Math.cos(angle), distance * Math.sin(angle)));
+
+        List<MousePathBuilder.PathPoint> path = pathBuilder.planMovement(
+                mousePosition, target, 100, ActionIntent.CASUAL, speed);
+        dispatchPath(path);
     }
 
     /**
@@ -372,8 +395,12 @@ class InputController {
         params.addProperty("y", position.getY());
 
         dispatchWithRetry("Input.dispatchMouseEvent", params, "Failed to dispatch mouse move");
-        // Update cursor overlay position
-        page.updateCursorOverlay(position.getX(), position.getY());
+        // Update cursor overlay position — silently ignore failures (e.g. execution
+        // context destroyed after navigation). The overlay is purely cosmetic.
+        try {
+            page.updateCursorOverlay(position.getX(), position.getY());
+        } catch (Exception ignored) {
+        }
     }
 
     private void dispatchMouseButton(Vector position, String type, String button, int clickCount) {
@@ -453,6 +480,7 @@ class InputController {
             throw new IllegalArgumentException("speedMultiplier must be positive, got: " + speedMultiplier);
         }
 
+        stopDrift(); // Hand moves to keyboard — stop cursor drift
         applySessionDelay(SessionContext.ActionType.TYPE, ActionIntent.DEFAULT);
 
         InteractionOptions options = page.options();
@@ -519,6 +547,7 @@ class InputController {
         }
 
         recordAction(SessionContext.ActionType.TYPE);
+        startDrift(); // Typing done — hand returns to mouse, resume drift
     }
 
     private void insertText(String text) {
@@ -821,7 +850,7 @@ class InputController {
 
         recordAction(SessionContext.ActionType.SCROLL);
         if (driftController != null) {
-            driftController.resetRestPosition(mousePosition);
+            driftController.resetForNextIdle();
             startDrift();
         }
     }
@@ -970,41 +999,79 @@ class InputController {
     private void stopDrift() {
         intentionalMovementInProgress = true;
         if (driftTask != null) {
-            driftTask.cancel(false);
+            driftTask.cancel(true); // interrupt if sleeping inside a drift movement
             driftTask = null;
         }
     }
 
     private void startDrift() {
         intentionalMovementInProgress = false;
-        scheduleNextDrift();
+        if (driftController != null) {
+            scheduleDrift(driftController.initialDelayMs());
+        }
     }
 
-    private void scheduleNextDrift() {
-        long intervalMs = (long) persona.driftIntervalMs();
-        driftTask = driftExecutor.schedule(this::executeDriftStep, intervalMs, TimeUnit.MILLISECONDS);
+    private void scheduleDrift(long delayMs) {
+        if (driftExecutor != null && !driftExecutor.isShutdown()) {
+            driftTask = driftExecutor.schedule(this::executeDriftStep, delayMs, TimeUnit.MILLISECONDS);
+        }
     }
 
+    /**
+     * Executes one step of the burst-then-rest idle drift cycle.
+     *
+     * <p>The IdleDriftController returns either a MOVE action (plan and dispatch a path)
+     * or a WAIT action (do nothing, just re-schedule). After each action, the returned
+     * delay determines when the next step runs — short delays between burst movements,
+     * long delays (9–15s) during rest periods.</p>
+     */
     private void executeDriftStep() {
         try {
             if (intentionalMovementInProgress) return;
             if (!driftController.shouldDrift(sessionContext.isTyping())) {
-                scheduleNextDrift();
+                scheduleDrift(1000);
                 return;
             }
 
-            IdleDriftController.DriftStep step = driftController.nextDrift(mousePosition);
-            Vector newPos = mousePosition.add(step.offset()).clampPositive();
+            IdleDriftController.DriftAction action = driftController.next(
+                    mousePosition, cachedViewportWidth, cachedViewportHeight);
 
-            dispatchMouseMove(newPos);
-            mousePosition = newPos;
+            if (action.type() == IdleDriftController.DriftAction.Type.MOVE) {
+                double speed = page.options().speedMultiplier();
+                List<MousePathBuilder.PathPoint> path = pathBuilder.planMovement(
+                        mousePosition, action.target(), 100, ActionIntent.CASUAL, speed);
 
-            // Schedule next drift with the step's recommended delay
-            long nextDelay = Math.max(50, (long) step.delayUntilNextMs());
-            driftTask = driftExecutor.schedule(this::executeDriftStep, nextDelay, TimeUnit.MILLISECONDS);
+                for (MousePathBuilder.PathPoint point : path) {
+                    if (intentionalMovementInProgress) return;
+                    if (point.deltaMs() > 0) {
+                        Thread.sleep((long) point.deltaMs());
+                    }
+                    if (intentionalMovementInProgress) return;
+                    dispatchMouseMove(point.position());
+                    mousePosition = point.position();
+                }
+            }
+
+            // Schedule next step with the action's delay
+            scheduleDrift(action.delayMs());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         } catch (Exception e) {
-            // Drift failure should not crash the session — silently reschedule
-            scheduleNextDrift();
+            scheduleDrift(2000);
+        }
+    }
+
+    /**
+     * Caches the viewport dimensions for idle drift target selection.
+     * Call after page load and after navigation.
+     */
+    void updateViewportDimensions() {
+        try {
+            enableRuntime();
+            cachedViewportWidth = Integer.parseInt(eval("window.innerWidth"));
+            cachedViewportHeight = Integer.parseInt(eval("window.innerHeight"));
+        } catch (Exception e) {
+            // Keep existing cached values
         }
     }
 

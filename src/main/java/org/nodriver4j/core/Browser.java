@@ -1218,7 +1218,7 @@ public class Browser implements AutoCloseable {
 
         // Headless mode
         if (config.headless()) {
-            args.add("--headless=new");
+            // args.add("--headless=new");
             args.add("--renderer-process-limit=2");
             args.add("--js-flags=--max-old-space-size=512 --expose-gc");
             args.add("--disable-renderer-accessibility");

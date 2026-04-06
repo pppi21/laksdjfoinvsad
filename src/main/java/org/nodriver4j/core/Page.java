@@ -407,18 +407,22 @@ public class Page {
 
     public void navigate(String url) {
         navigation.navigate(url);
+        input.updateViewportDimensions();
     }
 
     public void navigate(String url, int timeoutMs) {
         navigation.navigate(url, timeoutMs);
+        input.updateViewportDimensions();
     }
 
     public void navigate(String url, int timeoutMs, WaitUntil waitUntil) {
         navigation.navigate(url, timeoutMs, waitUntil);
+        input.updateViewportDimensions();
     }
 
     public void reload() {
         navigation.reload();
+        input.updateViewportDimensions();
     }
 
     public void reload(boolean ignoreCache, int timeoutMs) {
